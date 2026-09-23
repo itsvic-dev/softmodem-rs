@@ -3,7 +3,9 @@
 
 use std::fmt::Debug;
 
+use crate::uart::Decoder;
 use crate::v21::V21;
+use crate::v22::V22;
 
 /// Which end of the link this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +18,7 @@ pub enum Role {
 pub enum Modulation {
     #[default]
     V21,
+    V22,
 }
 
 impl Modulation {
@@ -23,6 +26,7 @@ impl Modulation {
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
         match self {
             Self::V21 => Box::new(V21::new(role)),
+            Self::V22 => Box::new(V22::new(role)),
         }
     }
 }
@@ -30,6 +34,9 @@ impl Modulation {
 /// Carries bits over one modulation, from the end of the V.25 answer tone.
 pub trait DataPump: Debug + Send {
     fn bit_rate(&self) -> u32;
+
+    /// A decoder for the start-stop characters this modulation carries.
+    fn decoder(&self) -> Decoder;
 
     /// Queues bits to send. The line idles on mark when none are queued.
     fn push_bits(&mut self, bits: &[bool]);

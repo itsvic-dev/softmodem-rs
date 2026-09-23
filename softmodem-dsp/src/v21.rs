@@ -2,6 +2,7 @@
 
 use crate::fsk::{Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
 use crate::pump::{DataPump, Role};
+use crate::uart::Decoder;
 
 // Longer than the far end's carrier detect, so its first bytes are not lost.
 const ORIGINATE_CARRIER_BEFORE_CONNECT: usize = 4_800;
@@ -39,6 +40,10 @@ impl V21 {
 impl DataPump for V21 {
     fn bit_rate(&self) -> u32 {
         300
+    }
+
+    fn decoder(&self) -> Decoder {
+        Decoder::new()
     }
 
     fn push_bits(&mut self, bits: &[bool]) {

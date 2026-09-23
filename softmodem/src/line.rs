@@ -95,13 +95,14 @@ impl Line {
 
 impl Handshake {
     fn new(modulation: Modulation, role: Role) -> Self {
+        let pump = modulation.pump(role);
         Self {
             role,
             modulation,
-            pump: modulation.pump(role),
+            decoder: pump.decoder(),
+            pump,
             answer_tone: Tone::new(ANSWER_TONE_HZ, ANSWER_TONE_DBM0),
             answer_tone_detector: ToneDetector::new(ANSWER_TONE_HZ),
-            decoder: Decoder::new(),
             sent: 0,
             heard_carrier: false,
             connected: false,

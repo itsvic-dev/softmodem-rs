@@ -8,6 +8,7 @@ pub mod scrambler;
 pub mod tone;
 pub mod uart;
 mod v21;
+mod v22;
 
 pub const SAMPLE_RATE: f64 = 8000.0;
 
