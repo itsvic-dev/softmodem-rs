@@ -1,5 +1,6 @@
 //! Modulators and demodulators over linear 8 kHz samples. No IO.
 
+pub mod ansam;
 mod correlator;
 pub mod dpsk;
 pub mod fsk;
