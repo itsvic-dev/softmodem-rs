@@ -123,6 +123,17 @@ tracked with a fractional accumulator, not an integer sample count. The
 demodulator is a bandpass, a discriminator or a pair of correlators, a slicer,
 and bit timing recovery.
 
+Each modulation is a data pump: its own handshake, modulator and demodulator
+behind one trait, in its own file, chosen for each call by `+MS`. The line
+around it holds only what all of them share: the V.25 answer sequence, the
+start-stop framing, and the bytes that arrive before `CONNECT`.
+
+The V.22 modulator shapes each symbol with a square root raised cosine over
+seven symbols. The demodulator mixes the channel down to baseband, applies
+the same filter, recovers symbol timing with a Gardner detector, and decodes
+each symbol by its phase change from the one before. That needs no carrier
+recovery, as ±7 Hz turns the phase by only 4° a symbol.
+
 ### Terminal
 
 `openpty`, 8N1 async framing, and an AT interpreter.
@@ -164,10 +175,17 @@ command mode, on hook.
 | `X0` to `X4` | Which result codes are used, see below. |
 | `Z` | Hang up and reset to the stored profile. |
 | `Sn=v`, `Sn?` | Write, read an S-register. |
+| `+MS=V21`, `+MS=V22` | Modulation for the next call. V.21 is the default. |
+| `+MS?`, `+MS=?` | Read the modulation, list those supported. |
 
-Extended commands (`&`, `\`, `%` and `+` prefixes) are accepted and return
-`OK` without effect, because chat scripts send chipset-specific strings such
-as `AT&C1&D2` and fail on `ERROR`.
+`+MS` takes the V.250 form `+MS=<carrier>[,<automode>[,<rates>...]]`. The
+rates are accepted and ignored. Automode 1 gives `ERROR`, because there is
+no automode yet. As V.250 requires, a basic command after `+MS` on the same
+line needs a `;` first: `AT+MS=V22;E0`.
+
+Other extended commands (`&`, `\`, `%` and `+` prefixes) are accepted and
+return `OK` without effect, because chat scripts send chipset-specific
+strings such as `AT&C1&D2` and fail on `ERROR`.
 
 The stored profile is the Hayes defaults with the `--init` command line
 applied, for example `--init 'ATS0=1'` on the ISP. It is applied at start
@@ -198,11 +216,12 @@ are configuration, not code.
 | 2 | `RING` | `X0` |
 | 3 | `NO CARRIER` | `X0` |
 | 4 | `ERROR` | `X0` |
+| 5 | `CONNECT 1200` | `X1` |
 | 6 | `NO DIALTONE` | `X2`, `X4` |
 | 7 | `BUSY` | `X3`, `X4` |
 
-At 300 bit/s Hayes reports plain `CONNECT`, so `X1` adds nothing here.
-Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
+At 300 bit/s Hayes reports plain `CONNECT`. Under `X0`, `CONNECT 1200` is
+plain `CONNECT` too. Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
 The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
 framed by CR LF, with `V0` it is the digit and CR, both using `S3` and `S4`.
 
@@ -225,7 +244,8 @@ All 256 hold a value. These have an effect:
 | `S12` | Escape guard time, in fiftieths of a second. | 50 |
 
 `S9`, carrier detect time, is stored but not used: V.21 sets it to 300 to
-700 ms, and the demodulator keeps 400 ms.
+700 ms, and its demodulator keeps 400 ms. V.22 sets 105 to 205 ms, and its
+demodulator keeps 150 ms.
 
 #### Answer sequence
 
@@ -235,6 +255,10 @@ detects channel 1. The originating modem is silent until the answer tone has
 ended and it detects channel 2, then sends channel 1 mark and reports
 `CONNECT`. It ignores carrier while the answer tone lasts, because the tone
 is close enough to channel 2 to trip carrier detect.
+
+Under V.22 the answer tone and the gap are the same, and the V.22 handshake
+follows, as described under V.22 below. Each end reports `CONNECT 1200`
+765 ms after it hears the other's scrambled ones.
 
 #### DCD
 
@@ -368,6 +392,8 @@ dev shell, and the modem itself does not depend on it.
 - spandsp demodulates our V.21, and we demodulate spandsp's, on both
   channels.
 - spandsp's detector hears our answer tone as V.25 ANS.
+- Our V.22 pump trains with spandsp's V.22 and carries data both ways,
+  as caller and as answerer, with and without the guard tone.
 - Whole calls, with spandsp's parts as the far modem: we call one that
   answers with ANS, with ANS and phase reversals, and with V.8 ANSam and
   phase reversals, the tone a modern modem sends. A V.25 caller that waits for
@@ -622,8 +648,9 @@ Everything before it can be built and tested with two instances on one host.
    hang-up and busy, with PPP over it still to try.
 6. Bell 103. Put off, as it is of little use in Europe.
 7. A speaker: call audio on the host sound output, under `L` and `M`. Done.
-8. V.22, selected with `AT+MS`. Automode, which answers V.22 and falls back
-   to V.21, comes later.
+8. V.22, selected with `AT+MS`. Done: between two instances, against
+   spandsp, and with `pppd` in `checks.aarch64-linux.ppp-v22`. Automode,
+   which answers V.22 and falls back to V.21, comes later.
 9. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
