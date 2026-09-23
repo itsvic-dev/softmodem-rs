@@ -12,7 +12,7 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
   loopback, SIP through a registrar, WAV recording, and the speaker on the
   host sound output.
 - `softmodem`: the modem state machine that joins them, and the binary.
-- `softmodem-interop`: tests only, against spandsp's V.21, V.22 and answer tones.
+- `softmodem-interop`: tests only, against spandsp's V.21, V.22, V.22bis and answer tones.
   It links spandsp through pkg-config, which only the dev shell provides.
 
 ## Working here
@@ -39,7 +39,11 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
 - `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.
-  `checks.aarch64-linux.ppp-v22` is the same test at 1200 bit/s.
+  `checks.aarch64-linux.ppp-v22` and `ppp-v22bis` are the same test at 1200
+  and 2400 bit/s.
+- spandsp is LGPL-2.1: call it through `softmodem-interop` only, never read
+  its source to shape our code. The ITU texts in `docs/specs/` are the
+  reference.
 - The CUSE port is Linux only and needs root, so it has its own VM test,
   `checks.aarch64-linux.cuse`, which includes a nested QEMU guest under TCG
   and takes about 3 minutes.

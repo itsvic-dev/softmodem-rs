@@ -134,6 +134,15 @@ the same filter, recovers symbol timing with a Gardner detector, and decodes
 each symbol by its phase change from the one before. That needs no carrier
 recovery, as ±7 Hz turns the phase by only 4° a symbol.
 
+V.22bis shares that transmitter and front end. At 2400 bit/s the point inside
+a quadrant is absolute, so its receiver adds an AGC, a 17-tap equaliser at
+half-symbol spacing adapted by normalised LMS, and a second-order phase
+locked loop, both driven by decisions. They train on the scrambled ones at
+1200 bit/s that follow S1. The handshake signals themselves, S1 during data,
+and the V.22 fallback go through the differential V.22 demodulator running
+beside it: a decision-directed equaliser learns to flatten S1, which repeats
+every two symbols, and so would erase it.
+
 ### Terminal
 
 `openpty`, 8N1 async framing, and an AT interpreter.
@@ -175,7 +184,7 @@ command mode, on hook.
 | `X0` to `X4` | Which result codes are used, see below. |
 | `Z` | Hang up and reset to the stored profile. |
 | `Sn=v`, `Sn?` | Write, read an S-register. |
-| `+MS=V21`, `+MS=V22` | Modulation for the next call. V.21 is the default. |
+| `+MS=V21`, `+MS=V22`, `+MS=V22B` | Modulation for the next call. V.21 is the default. V.22bis falls back to V.22. |
 | `+MS?`, `+MS=?` | Read the modulation, list those supported. |
 
 `+MS` takes the V.250 form `+MS=<carrier>[,<automode>[,<rates>...]]`. The
@@ -219,11 +228,12 @@ are configuration, not code.
 | 5 | `CONNECT 1200` | `X1` |
 | 6 | `NO DIALTONE` | `X2`, `X4` |
 | 7 | `BUSY` | `X3`, `X4` |
+| 10 | `CONNECT 2400` | `X1` |
 
-At 300 bit/s Hayes reports plain `CONNECT`. Under `X0`, `CONNECT 1200` is
-plain `CONNECT` too. Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
+At 300 bit/s Hayes reports plain `CONNECT`. Under `X0`, `CONNECT 1200` and
+`CONNECT 2400` are plain `CONNECT` too. Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
 The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
-framed by CR LF, with `V0` it is the digit and CR, both using `S3` and `S4`.
+framed by CR LF, with `V0` it is the number and CR, both using `S3` and `S4`.
 
 #### S-registers
 
@@ -258,7 +268,9 @@ is close enough to channel 2 to trip carrier detect.
 
 Under V.22 the answer tone and the gap are the same, and the V.22 handshake
 follows, as described under V.22 below. Each end reports `CONNECT 1200`
-765 ms after it hears the other's scrambled ones.
+765 ms after it hears the other's scrambled ones. Under V.22bis each end
+reports `CONNECT 2400` once it has sent scrambled ones at 2400 bit/s for
+200 ms and heard 32 of them, or `CONNECT 1200` when the far end is V.22.
 
 #### DCD
 
@@ -393,7 +405,10 @@ dev shell, and the modem itself does not depend on it.
   channels.
 - spandsp's detector hears our answer tone as V.25 ANS.
 - Our V.22 pump trains with spandsp's V.22 and carries data both ways,
-  as caller and as answerer, with and without the guard tone.
+  as caller and as answerer, with and without the guard tone. spandsp's
+  V.22bis falls back to it at 1200 bit/s.
+- Our V.22bis pump trains with spandsp's at 2400 bit/s as caller and as
+  answerer, and falls back to 1200 bit/s when spandsp is held there.
 - Whole calls, with spandsp's parts as the far modem: we call one that
   answers with ANS, with ANS and phase reversals, and with V.8 ANSam and
   phase reversals, the tone a modern modem sends. A V.25 caller that waits for
@@ -708,9 +723,15 @@ Everything before it can be built and tested with two instances on one host.
 6. Bell 103. Put off, as it is of little use in Europe.
 7. A speaker: call audio on the host sound output, under `L` and `M`. Done.
 8. V.22, selected with `AT+MS`. Done: between two instances, against
-   spandsp, and with `pppd` in `checks.aarch64-linux.ppp-v22`. Automode,
-   which answers V.22 and falls back to V.21, comes later.
-9. A real modem behind the SPA2102 calling the answering side.
+   spandsp, and with `pppd` in `checks.aarch64-linux.ppp-v22`.
+9. V.22bis, selected with `AT+MS=V22B`, with its fallback to V.22 and its
+   answer to a retrain. Done: between two instances, against spandsp in
+   both roles and in fallback, and with `pppd` in
+   `checks.aarch64-linux.ppp-v22bis`. It does not start a retrain itself.
+10. Automode: answer with the fastest modulation and fall back as far as
+    V.21, so that two modems meet at the best rate both have.
+11. V.42 and V.42bis.
+12. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
 
