@@ -39,8 +39,8 @@ A V.21, V.22 and V.22bis modem that places real calls over SIP. The design is `d
 - `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.
-  `checks.aarch64-linux.ppp-v22` and `ppp-v22bis` are the same test at 1200
-  and 2400 bit/s.
+  `ppp` runs fixed V.21, `ppp-v22` and `ppp-v22bis` fixed V.22 and V.22bis,
+  and `ppp-automode` the default, V.8 up to V.22bis.
 - The project is GPL-3.0-or-later under REUSE: `REUSE.toml` covers every
   file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
   licence needs its own annotation there and its text in `LICENSES/`.

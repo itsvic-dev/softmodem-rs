@@ -184,13 +184,15 @@ command mode, on hook.
 | `X0` to `X4` | Which result codes are used, see below. |
 | `Z` | Hang up and reset to the stored profile. |
 | `Sn=v`, `Sn?` | Write, read an S-register. |
-| `+MS=V21`, `+MS=V22`, `+MS=V22B` | Modulation for the next call. V.21 is the default. V.22bis falls back to V.22. |
+| `+MS=<carrier>[,<automode>]` | The highest modulation for the next call, `V21`, `V22` or `V22B`, and whether automode may fall back from it. The default is `V22B` with automode. |
 | `+MS?`, `+MS=?` | Read the modulation, list those supported. |
 
 `+MS` takes the V.250 form `+MS=<carrier>[,<automode>[,<rates>...]]`. The
-rates are accepted and ignored. Automode 1 gives `ERROR`, because there is
-no automode yet. As V.250 requires, a basic command after `+MS` on the same
-line needs a `;` first: `AT+MS=V22;E0`.
+rates are accepted and ignored. As V.250 § 6.4.2 has it, `+MS=<carrier>` on
+its own turns automode on again, so a fixed modulation needs `,0`:
+`AT+MS=V21,0`. Without automode, V.22bis still falls back to V.22, which is
+part of V.22bis itself. As V.250 requires, a basic command after `+MS` on the
+same line needs a `;` first: `AT+MS=V22,0;E0`.
 
 Other extended commands (`&`, `\`, `%` and `+` prefixes) are accepted and
 return `OK` without effect, because chat scripts send chipset-specific
@@ -271,6 +273,10 @@ follows, as described under V.22 below. Each end reports `CONNECT 1200`
 765 ms after it hears the other's scrambled ones. Under V.22bis each end
 reports `CONNECT 2400` once it has sent scrambled ones at 2400 bit/s for
 200 ms and heard 32 of them, or `CONNECT 1200` when the far end is V.22.
+
+With automode, the answering modem sends ANSam in place of the answer tone
+and the calling modem listens for either tone, as described under Automode
+below. The line then leaves the answer tone to the pump.
 
 #### DCD
 
@@ -408,11 +414,12 @@ AT modem by both Windows and Slackware. That says nothing about the chipset.
 `ATI3`, `ATI4` and `ATI6` usually identify it.
 
 A modern modem calls with V.8 and expects ANSam, a 2100 Hz tone with 15 Hz
-amplitude modulation. When it hears a plain V.25 answer tone instead, it falls
-back to the older automode sequence, which probes several modulations before
-it settles on V.21. Whether a given chipset reaches V.21 without help is not
-known. Expect to force it on the calling modem with a chipset-specific command
-(for example `AT+MS=V21` on Rockwell parts), and dial blind with `ATX3`.
+amplitude modulation. In automode this modem sends ANSam and offers V.22bis
+and V.21 in JM, so a V.8 caller should meet it at 2400 bit/s. A V.8 caller
+that also offers V.32bis or V.34 will see only the modes both have. Should a
+chipset still refuse, force it on the calling modem with a chipset-specific
+command (for example `AT+MS=V22B` or `AT+MS=V21` on Rockwell parts), and
+dial blind with `ATX3`.
 
 #### Against spandsp
 
@@ -428,6 +435,15 @@ dev shell, and the modem itself does not depend on it.
   V.22bis falls back to it at 1200 bit/s.
 - Our V.22bis pump trains with spandsp's at 2400 bit/s as caller and as
   answerer, and falls back to 1200 bit/s when spandsp is held there.
+- spandsp hears our ANSam with and without phase reversals, and we tell its
+  four answer tones apart.
+- Our automode negotiates V.8 with spandsp's as answerer and as caller,
+  agrees on V.22bis, and then trains at 2400 bit/s with spandsp's V.22bis.
+  With a spandsp that offers only V.21, V.8 agrees on V.21.
+- Whole calls in automode: a V.25 caller that answers our USB1 as V.21, and
+  an answerer that sends ANSam but speaks only V.21, both reach V.21. Each
+  hears some of the other modulation first as noise, which is why those two
+  tests allow junk before the data.
 - Whole calls, with spandsp's parts as the far modem: we call one that
   answers with ANS, with ANS and phase reversals, and with V.8 ANSam and
   phase reversals, the tone a modern modem sends. A V.25 caller that waits for
@@ -807,8 +823,10 @@ Everything before it can be built and tested with two instances on one host.
    answer to a retrain. Done: between two instances, against spandsp in
    both roles and in fallback, and with `pppd` in
    `checks.aarch64-linux.ppp-v22bis`. It does not start a retrain itself.
-10. Automode: answer with the fastest modulation and fall back as far as
-    V.21, so that two modems meet at the best rate both have.
+10. Automode: V.8, and V.32bis Annex A with a V.21 step of our own, on by
+    default. Done: two instances meet at the best rate both have in every
+    pairing with a fixed modulation, V.8 works against spandsp in both
+    roles, and `pppd` runs over it in `checks.aarch64-linux.ppp-automode`.
 11. V.42 and V.42bis.
 12. A real modem behind the SPA2102 calling the answering side.
 
