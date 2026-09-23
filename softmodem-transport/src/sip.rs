@@ -4,6 +4,7 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bytesstr::BytesStr;
@@ -12,13 +13,13 @@ use ezk_sip_auth::{DigestAuthenticator, DigestCredentials, DigestUser};
 use ezk_sip_core::transport::TpHandle;
 use ezk_sip_core::{Endpoint, IncomingRequest, Layer, MayTake};
 use ezk_sip_types::header::typed::Contact;
-use ezk_sip_types::uri::{NameAddr, SipUri};
+use ezk_sip_types::uri::{NameAddr, SipUri, SipUriUserPart};
 use ezk_sip_types::{Method, StatusCode};
 use ezk_sip_ua::dialog::DialogLayer;
 use ezk_sip_ua::invite::InviteLayer;
 use ezk_sip_ua::{
     CallEvent, InboundCall, MakeCallCompletionError, MakeCallError, MediaBackend, NoMedia,
-    OutboundCall, RegistrarConfig, Registration,
+    RegistrarConfig, Registration,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
@@ -46,14 +47,17 @@ impl fmt::Debug for Account {
 }
 
 pub struct Sip {
-    registration: Registration,
+    registration: Arc<Registration>,
     credentials: DigestCredentials,
     local_ip: IpAddr,
-    invites: mpsc::UnboundedReceiver<InboundCall<NoMedia>>,
+    invites: mpsc::UnboundedReceiver<Invite>,
     ringing: Option<(u64, InboundCall<NoMedia>)>,
     next_caller: u64,
+    calls_up: Arc<AtomicUsize>,
     _transport: TpHandle,
 }
+
+type Invite = (String, InboundCall<NoMedia>);
 
 impl fmt::Debug for Sip {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,7 +69,8 @@ impl fmt::Debug for Sip {
 
 struct Invites {
     contact: Arc<OnceLock<Contact>>,
-    calls: mpsc::UnboundedSender<InboundCall<NoMedia>>,
+    calls: mpsc::UnboundedSender<Invite>,
+    calls_up: Arc<AtomicUsize>,
 }
 
 #[async_trait::async_trait]
@@ -75,6 +80,15 @@ impl Layer for Invites {
     }
 
     async fn receive(&self, endpoint: &Endpoint, request: MayTake<'_, IncomingRequest>) {
+        if request.line.method == Method::OPTIONS {
+            let mut options = request.take();
+            let response = endpoint.create_response(&options, StatusCode::OK, None);
+            let _ = endpoint
+                .create_server_tsx(&mut options)
+                .respond(response)
+                .await;
+            return;
+        }
         if request.line.method != Method::INVITE {
             return;
         }
@@ -82,12 +96,39 @@ impl Layer for Invites {
             return;
         };
         let invite = request.take();
-        match InboundCall::from_invite(endpoint.clone(), invite, contact) {
-            Ok(call) => {
-                let _ = self.calls.send(call);
+        let number = match &invite.base_headers.from.uri.uri.user_part {
+            SipUriUserPart::User(user) => user.to_string(),
+            _ => String::new(),
+        };
+        let call = match InboundCall::from_invite(endpoint.clone(), invite, contact) {
+            Ok(call) => call,
+            Err(error) => {
+                warn!(error = %error.1, "unusable INVITE");
+                return;
             }
-            Err(error) => warn!(error = %error.1, "unusable INVITE"),
+        };
+        if self.calls_up.load(Ordering::SeqCst) > 0 {
+            info!(number, "busy, refusing a call");
+            let _ = call.decline(StatusCode::BUSY_HERE, None).await;
+            return;
         }
+        let _ = self.calls.send((number, call));
+    }
+}
+
+// Counts a call as up for as long as it lives.
+struct CallUp(Arc<AtomicUsize>);
+
+impl CallUp {
+    fn new(calls_up: &Arc<AtomicUsize>) -> Self {
+        calls_up.fetch_add(1, Ordering::SeqCst);
+        Self(calls_up.clone())
+    }
+}
+
+impl Drop for CallUp {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -103,6 +144,7 @@ impl Sip {
     /// Fails if the registrar cannot be reached or refuses the account.
     pub async fn register(account: Account) -> io::Result<Self> {
         let contact = Arc::new(OnceLock::new());
+        let calls_up = Arc::new(AtomicUsize::new(0));
         let (calls, invites) = mpsc::unbounded_channel();
         let mut builder = Endpoint::builder();
         builder.add_layer(DialogLayer::default());
@@ -110,6 +152,7 @@ impl Sip {
         builder.add_layer(Invites {
             contact: contact.clone(),
             calls,
+            calls_up: calls_up.clone(),
         });
         builder.user_agent(format!("softmodem/{}", env!("CARGO_PKG_VERSION")));
         let endpoint = builder.build();
@@ -141,12 +184,13 @@ impl Sip {
         info!(user = account.user, registrar = account.registrar, %bound, "registered");
 
         Ok(Self {
-            registration,
+            registration: Arc::new(registration),
             credentials,
             local_ip: bound.ip(),
             invites,
             ringing: None,
             next_caller: 0,
+            calls_up,
             _transport: transport,
         })
     }
@@ -156,16 +200,53 @@ impl Sip {
     }
 }
 
-// Sends CANCEL when a dial is dropped before the far end answers.
-struct Abandon(Option<OutboundCall<Pcma>>);
+struct Dial {
+    registration: Arc<Registration>,
+    number: String,
+    authenticator: DigestAuthenticator,
+    media: Pcma,
+    calls_up: Arc<AtomicUsize>,
+}
 
-impl Drop for Abandon {
-    fn drop(&mut self) {
-        if let Some(call) = self.0.take() {
-            tokio::spawn(async move {
-                let _ = Box::pin(call.cancel()).await;
-            });
-        }
+impl Dial {
+    // A task of its own, so a dial given up even before the first response is cancelled.
+    async fn run(self, mut result: oneshot::Sender<Result<Call, DialError>>) {
+        let mut outbound = match self
+            .registration
+            .make_call(self.number.clone(), self.authenticator, self.media)
+            .await
+        {
+            Ok(outbound) => outbound,
+            Err(MakeCallError::Failed(status)) => {
+                let _ = result.send(Err(refused(status.code)));
+                return;
+            }
+            Err(error) => {
+                let _ = result.send(Err(DialError::Io(other(error))));
+                return;
+            }
+        };
+        let completion = tokio::select! {
+            completion = outbound.wait_for_completion() => completion,
+            () = result.closed() => {
+                info!(number = self.number, "dial given up, cancelling");
+                let _ = Box::pin(outbound.cancel()).await;
+                return;
+            }
+        };
+        let answered = match completion {
+            Ok(unacknowledged) => unacknowledged.finish().await.map_err(other),
+            Err(MakeCallCompletionError::Failed(status)) => {
+                let _ = result.send(Err(refused(status.code)));
+                return;
+            }
+            Err(error) => Err(other(error)),
+        };
+        let call = answered.and_then(|call| {
+            info!(number = self.number, "answered");
+            start(call, CallUp::new(&self.calls_up))
+        });
+        let _ = result.send(call.map_err(DialError::Io));
     }
 }
 
@@ -173,32 +254,18 @@ impl Transport for Sip {
     type Caller = u64;
 
     async fn dial(&mut self, number: &str) -> Result<Call, DialError> {
-        let media = Pcma::bind(self.local_ip).await?;
-        let outbound = match self
-            .registration
-            .make_call(number.to_owned(), self.authenticator(), media)
+        let dial = Dial {
+            registration: self.registration.clone(),
+            number: number.to_owned(),
+            authenticator: self.authenticator(),
+            media: Pcma::bind(self.local_ip).await?,
+            calls_up: self.calls_up.clone(),
+        };
+        let (result, outcome) = oneshot::channel();
+        tokio::spawn(Box::pin(dial.run(result)));
+        outcome
             .await
-        {
-            Ok(outbound) => outbound,
-            Err(MakeCallError::Failed(status)) => return Err(refused(status.code)),
-            Err(error) => return Err(DialError::Io(other(error))),
-        };
-        let mut abandon = Abandon(Some(outbound));
-        let completion = abandon
-            .0
-            .as_mut()
-            .expect("set above")
-            .wait_for_completion()
-            .await;
-        abandon.0 = None;
-        let unacknowledged = match completion {
-            Ok(unacknowledged) => unacknowledged,
-            Err(MakeCallCompletionError::Failed(status)) => return Err(refused(status.code)),
-            Err(error) => return Err(DialError::Io(other(error))),
-        };
-        let call = unacknowledged.finish().await.map_err(other)?;
-        info!(number, "answered");
-        start(call).map_err(DialError::Io)
+            .map_err(|_| DialError::Io(other("the dial stopped")))?
     }
 
     async fn incoming(&mut self) -> io::Result<Incoming<u64>> {
@@ -216,7 +283,7 @@ impl Transport for Sip {
                 }
                 None => self.invites.recv().await,
             };
-            let mut invite = invite.ok_or_else(|| other("the SIP endpoint stopped"))?;
+            let (number, mut invite) = invite.ok_or_else(|| other("the SIP endpoint stopped"))?;
             if self.ringing.is_some() {
                 let _ = invite.decline(StatusCode::BUSY_HERE, None).await;
                 continue;
@@ -227,12 +294,9 @@ impl Transport for Sip {
                 .map_err(other)?;
             self.next_caller += 1;
             let id = self.next_caller;
-            info!("incoming call");
+            info!(number, "incoming call");
             self.ringing = Some((id, invite));
-            return Ok(Incoming::Ringing {
-                caller: id,
-                number: String::new(),
-            });
+            return Ok(Incoming::Ringing { caller: id, number });
         }
     }
 
@@ -245,8 +309,9 @@ impl Transport for Sip {
             return Err(other("that call is not ringing"));
         }
         let media = Pcma::bind(self.local_ip).await?;
+        let call_up = CallUp::new(&self.calls_up);
         let call = invite.with_media(media).accept().await.map_err(other)?;
-        start(call)
+        start(call, call_up)
     }
 
     async fn reject(&mut self, caller: &u64) -> io::Result<()> {
@@ -273,7 +338,7 @@ fn refused(code: StatusCode) -> DialError {
 }
 
 /// Joins a SIP call to an RTP session, each ending the other.
-fn start(mut sip: ezk_sip_ua::Call<Pcma>) -> io::Result<Call> {
+fn start(mut sip: ezk_sip_ua::Call<Pcma>, call_up: CallUp) -> io::Result<Call> {
     let media = sip.media();
     let peer = media
         .remote
@@ -290,6 +355,7 @@ fn start(mut sip: ezk_sip_ua::Call<Pcma>) -> io::Result<Call> {
     .start(Some(stopped), Some(ended));
 
     let signalling = tokio::spawn(async move {
+        let _call_up = call_up;
         let mut stop = Some(stop);
         loop {
             tokio::select! {
