@@ -328,6 +328,10 @@ impl DataPump for V22bis {
         self.connected && self.fast.carrier()
     }
 
+    fn engaged(&self) -> bool {
+        self.speed.is_some() || self.send_s1_at.is_some() || self.sent_s1
+    }
+
     fn connected(&self) -> bool {
         self.connected
     }

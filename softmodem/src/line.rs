@@ -33,7 +33,7 @@ struct Handshake {
     pump: Box<dyn DataPump>,
     answer_tone: Tone,
     answer_tone_detector: ToneDetector,
-    decoder: Decoder,
+    decoder: Option<Decoder>,
     sent: usize,
     heard_carrier: bool,
     connected: bool,
@@ -105,7 +105,7 @@ impl Handshake {
         Self {
             role,
             modulation,
-            decoder: pump.decoder(),
+            decoder: None,
             pump,
             answer_tone: Tone::new(ANSWER_TONE_HZ, ANSWER_TONE_DBM0),
             answer_tone_detector: ToneDetector::new(ANSWER_TONE_HZ),
@@ -118,6 +118,7 @@ impl Handshake {
 
     fn transmit(&mut self, samples: &mut [i16]) {
         match self.role {
+            _ if self.pump.sends_own_answer_tone() => self.pump.transmit(samples),
             Role::Answer if self.sent < ANSWER_SILENCE => {}
             Role::Answer if self.sent < ANSWER_SILENCE + ANSWER_TONE => {
                 self.answer_tone.render(samples);
@@ -132,6 +133,7 @@ impl Handshake {
         let mut received = Received::default();
         if self.role == Role::Originate
             && !self.heard_carrier
+            && !self.pump.sends_own_answer_tone()
             && self.answer_tone_detector.process(samples)
         {
             self.pump = self.modulation.pump(self.role);
@@ -140,15 +142,21 @@ impl Handshake {
 
         let mut bits = Vec::new();
         self.pump.receive(samples, &mut bits);
-        let bytes = bits.into_iter().filter_map(|b| self.decoder.push(b));
-        if self.connected {
-            received.bytes.extend(bytes);
-        } else {
-            // The far end may send before we report CONNECT; a real modem keeps it.
-            self.early.extend(bytes);
+        if !bits.is_empty() {
+            let pump = &self.pump;
+            let decoder = self.decoder.get_or_insert_with(|| pump.decoder());
+            let bytes = bits.into_iter().filter_map(|b| decoder.push(b));
+            if self.connected {
+                received.bytes.extend(bytes);
+            } else {
+                // The far end may send before we report CONNECT; a real modem keeps it.
+                self.early.extend(bytes);
+            }
         }
-        if !self.pump.carrier() {
-            self.decoder.reset();
+        if !self.pump.carrier()
+            && let Some(decoder) = &mut self.decoder
+        {
+            decoder.reset();
         }
         if self.connected {
             return received;

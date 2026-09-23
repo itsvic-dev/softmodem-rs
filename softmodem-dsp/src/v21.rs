@@ -75,6 +75,10 @@ impl DataPump for V21 {
         self.demodulator.carrier()
     }
 
+    fn engaged(&self) -> bool {
+        self.heard_carrier
+    }
+
     fn connected(&self) -> bool {
         match self.role {
             Role::Answer => self.heard_carrier,

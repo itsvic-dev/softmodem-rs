@@ -34,8 +34,21 @@ impl Modulation {
     }
 }
 
-/// Carries bits over one modulation, from the end of the V.25 answer tone.
+/// Carries bits over one modulation, from the end of the V.25 answer tone,
+/// or from the start of the call for a pump that sends its own answer tone.
 pub trait DataPump: Debug + Send {
+    /// Whether this pump sends and hears the answer tone itself, so the line
+    /// must not.
+    fn sends_own_answer_tone(&self) -> bool {
+        false
+    }
+
+    /// Whether the far end has answered this modulation's first signal, so
+    /// that it is the one to go on with.
+    fn engaged(&self) -> bool {
+        self.connected()
+    }
+
     fn bit_rate(&self) -> u32;
 
     /// A decoder for the start-stop characters this modulation carries.

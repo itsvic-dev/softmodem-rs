@@ -198,6 +198,10 @@ impl DataPump for V22 {
         self.phase == Phase::Data && self.demodulator.carrier()
     }
 
+    fn engaged(&self) -> bool {
+        !matches!(self.phase, Phase::Listening | Phase::UnscrambledOnes)
+    }
+
     fn connected(&self) -> bool {
         self.phase == Phase::Data
     }
