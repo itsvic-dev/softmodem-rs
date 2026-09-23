@@ -257,8 +257,30 @@ What emulators see, as of 86Box's `char` layer and QEMU's 16550:
   which it does only with reconnect enabled. The guest sees DCD fall at the
   end of a call and nothing else.
 - 86Box's host serial backend and QEMU's `-chardev serial` read DCD and RI
-  with `TIOCMGET`, which a pseudoterminal does not answer. Both would show
-  the real lines only if the port were a character device that does.
+  with `TIOCMGET`, which a pseudoterminal does not answer.
+
+`--cuse NAME` serves the port as `/dev/NAME` through CUSE instead, a
+character device answered from user space, on Linux only. It answers the
+termios ioctls, including `TCGETS2`, `TIOCMGET` with DCD, RI, DSR and CTS,
+and `TIOCMSET`, `TIOCMBIS` and `TIOCMBIC`, which store DTR and RTS. RI is on
+for 2 s of each 6 s ring. `checks.<linux>.cuse` reads the lines directly,
+then boots a QEMU guest with `-chardev serial,path=/dev/ttySM0 -device
+pci-serial`, which dials, and whose own driver reports `CD` only while the
+call is up.
+
+It needs the `cuse` module and access to `/dev/cuse`, and the node it
+creates is root's, mode 0600, unless a udev rule says otherwise. `pppd`
+cannot use it, since it is not a kernel tty and so takes no line
+discipline.
+
+Which port for what:
+
+| Computer | Port |
+|---|---|
+| QEMU, on Linux | `--cuse`, with `-chardev serial` |
+| 86Box, on Linux | `--cuse`, with the host serial backend |
+| 86Box, elsewhere | `--pty`, with the pipe backend, reconnect on |
+| `pppd` on the host | `--pty` |
 
 #### Not modelled
 
