@@ -20,6 +20,7 @@ use crate::line::{Line, Role};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const RING_INTERVAL: Duration = Duration::from_secs(6);
+const RING_ON: Duration = Duration::from_secs(2);
 const LOW_WATER_BITS: usize = 20;
 const COMMAND_READ: usize = 64;
 const DATA_READ: usize = 4;
@@ -55,6 +56,7 @@ pub struct Modem<T: Transport, P, F> {
     carrier_lost_at: Option<Instant>,
     ticker: Interval,
     dcd: bool,
+    ring_off: Option<Instant>,
 }
 
 fn frame_clock() -> Interval {
@@ -87,6 +89,7 @@ where
             carrier_lost_at: None,
             ticker: frame_clock(),
             dcd: false,
+            ring_off: None,
         }
     }
 
@@ -111,6 +114,7 @@ where
             let read_size = if in_data { DATA_READ } else { COMMAND_READ };
             let listening = self.line.is_none();
             let next_ring = self.ringing.as_ref().map(|r| r.next_ring);
+            let ring_off = self.ring_off;
             let on_line = self.line.is_some();
 
             tokio::select! {
@@ -131,6 +135,9 @@ where
                 }
                 () = sleep_until(next_ring.unwrap_or_else(Instant::now)), if next_ring.is_some() => {
                     self.ring().await?;
+                }
+                () = sleep_until(ring_off.unwrap_or_else(Instant::now)), if ring_off.is_some() => {
+                    self.stop_ringing()?;
                 }
                 _ = self.ticker.tick(), if on_line => self.tick().await?,
                 samples = receive(&mut self.line) => self.line_sent(samples).await?,
@@ -222,6 +229,7 @@ where
     }
 
     async fn answer(&mut self) -> io::Result<()> {
+        self.stop_ringing()?;
         let Some(ringing) = self.ringing.take() else {
             return self.report(ResultCode::NoCarrier).await;
         };
@@ -341,6 +349,7 @@ where
             Incoming::Gone(caller) => {
                 if self.ringing.as_ref().is_some_and(|r| r.caller == caller) {
                     info!("caller gave up");
+                    self.stop_ringing()?;
                     self.ringing = None;
                     self.settings.registers[1] = 0;
                 }
@@ -356,10 +365,19 @@ where
         ringing.next_ring += RING_INTERVAL;
         let rings = self.settings.register(1).saturating_add(1);
         self.settings.registers[1] = rings;
+        self.port.set_ring(true)?;
+        self.ring_off = Some(Instant::now() + RING_ON);
         self.report(ResultCode::Ring).await?;
         let auto_answer = self.settings.auto_answer_rings();
         if auto_answer != 0 && rings >= auto_answer {
             self.answer().await?;
+        }
+        Ok(())
+    }
+
+    fn stop_ringing(&mut self) -> io::Result<()> {
+        if self.ring_off.take().is_some() {
+            self.port.set_ring(false)?;
         }
         Ok(())
     }

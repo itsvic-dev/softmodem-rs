@@ -21,6 +21,7 @@ type DcdHistory = Arc<Mutex<Vec<bool>>>;
 struct Port {
     stream: DuplexStream,
     dcd: DcdHistory,
+    ri: DcdHistory,
 }
 
 impl AsyncRead for Port {
@@ -56,6 +57,11 @@ impl SerialPort for Port {
         self.dcd.lock().unwrap().push(on);
         Ok(())
     }
+
+    fn set_ring(&mut self, on: bool) -> io::Result<()> {
+        self.ri.lock().unwrap().push(on);
+        Ok(())
+    }
 }
 
 struct Computer {
@@ -63,6 +69,7 @@ struct Computer {
     seen: Vec<u8>,
     cursor: usize,
     dcd: DcdHistory,
+    ri: DcdHistory,
 }
 
 impl Computer {
@@ -138,9 +145,11 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (computer, modem_side) = duplex(4096);
     let dcd = DcdHistory::default();
+    let ri = DcdHistory::default();
     let port = Port {
         stream: modem_side,
         dcd: dcd.clone(),
+        ri: ri.clone(),
     };
     let modem = Modem::new(transport, port, settings, |call, _| call);
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
@@ -149,6 +158,7 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
         seen: Vec::new(),
         cursor: 0,
         dcd,
+        ri,
     }
 }
 
@@ -336,6 +346,24 @@ impl Computer {
     fn dcd(&self) -> Vec<bool> {
         self.dcd.lock().unwrap().clone()
     }
+
+    fn ri(&self) -> Vec<bool> {
+        self.ri.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn ri_rises_with_each_ring_and_falls_on_answer() {
+    let (mut a, mut b) = two_modems("ATE0", "ATE0");
+    a.command("ATDT0300").await;
+    b.expect("RING").await;
+    assert_eq!(b.ri(), [true]);
+    sleep(Duration::from_secs(3)).await;
+    assert_eq!(b.ri(), [true, false]);
+    b.expect("RING").await;
+    b.command("ATA").await;
+    b.expect("CONNECT").await;
+    assert_eq!(b.ri(), [true, false, true, false]);
 }
 
 #[tokio::test(start_paused = true)]
