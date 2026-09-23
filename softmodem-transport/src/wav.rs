@@ -29,16 +29,18 @@ pub fn record(call: Call, prefix: &Path) -> hound::Result<Call> {
     let Call {
         audio_out,
         audio_in,
+        mut tasks,
     } = call;
 
     let (recorded_out, outgoing) = mpsc::channel(8);
-    tokio::spawn(relay(outgoing, audio_out, tx));
+    tasks.push(tokio::spawn(relay(outgoing, audio_out, tx)));
     let (incoming, recorded_in) = mpsc::channel(64);
-    tokio::spawn(relay(audio_in, incoming, rx));
+    tasks.push(tokio::spawn(relay(audio_in, incoming, rx)));
 
     Ok(Call {
         audio_out: recorded_out,
         audio_in: recorded_in,
+        tasks,
     })
 }
 

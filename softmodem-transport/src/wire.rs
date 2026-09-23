@@ -80,10 +80,10 @@ impl Wire {
             rng: fastrand::Rng::with_seed(self.impairment.seed),
             held_back: None,
         };
-        tokio::spawn(session.run(outgoing, incoming));
         Call {
             audio_out,
             audio_in,
+            tasks: vec![tokio::spawn(session.run(outgoing, incoming))],
         }
     }
 }
