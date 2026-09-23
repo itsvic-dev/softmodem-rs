@@ -3,5 +3,5 @@
 mod line;
 mod modem;
 
-pub use line::Role;
 pub use modem::{Modem, profile};
+pub use softmodem_dsp::pump::Role;

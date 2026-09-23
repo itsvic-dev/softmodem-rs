@@ -4,6 +4,7 @@ use std::io;
 use std::pin::pin;
 use std::time::Duration;
 
+use softmodem_dsp::pump::{Modulation, Role};
 use softmodem_terminal::command::{self, Command, Dial};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
@@ -16,7 +17,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
 use tracing::{debug, info, warn};
 
-use crate::line::{Line, Role};
+use crate::line::Line;
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const RING_INTERVAL: Duration = Duration::from_secs(6);
@@ -323,7 +324,7 @@ where
 
     fn attach(&mut self, call: Call, role: Option<Role>, deadline: Instant) {
         let call = (self.on_call)(call, role.unwrap_or(Role::Originate));
-        self.line = Some(Line::new(call, role));
+        self.line = Some(Line::new(call, Modulation::default(), role));
         self.mode = Mode::Handshake { deadline };
         self.carrier_lost_at = None;
         self.ticker.reset();
@@ -457,7 +458,9 @@ where
         };
         let received = line.receive(&samples);
         if received.connected && matches!(self.mode, Mode::Handshake { .. }) {
-            info!("CONNECT 300");
+            if let Some(bit_rate) = line.bit_rate() {
+                info!("CONNECT {bit_rate}");
+            }
             self.mode = Mode::Data {
                 escape: EscapeDetector::new(Instant::now().into_std()),
             };

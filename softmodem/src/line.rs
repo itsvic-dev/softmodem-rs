@@ -1,34 +1,15 @@
-//! One call's audio: the answer sequence, the carrier handshake and the data.
+//! One call's audio: the answer sequence, then a data pump.
 
-use softmodem_dsp::fsk::{
-    Channel, Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE,
-};
+use softmodem_dsp::pump::{DataPump, Modulation, Role};
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_dsp::uart::{Decoder, frame};
 use softmodem_transport::{Call, FRAME_SAMPLES};
 
-// V.25: silence, answer tone, a short gap, then the answering carrier.
+// V.25: silence, answer tone, a short gap, then the data pump.
 const ANSWER_SILENCE: usize = 16_000;
 const ANSWER_TONE: usize = 26_400;
 const ANSWER_GAP: usize = 600;
-// Longer than the far end's carrier detect, so its first bytes are not lost.
-const ORIGINATE_CARRIER_BEFORE_CONNECT: usize = 4_800;
-
-/// Which end of the V.21 link this is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    Originate,
-    Answer,
-}
-
-impl Role {
-    fn channels(self) -> (Channel, Channel) {
-        match self {
-            Self::Originate => (V21_ORIGINATE, V21_ANSWER),
-            Self::Answer => (V21_ANSWER, V21_ORIGINATE),
-        }
-    }
-}
+const ANSWER_TONE_DBM0: f64 = -13.0;
 
 #[derive(Debug, Default)]
 pub(crate) struct Received {
@@ -39,20 +20,19 @@ pub(crate) struct Received {
 #[derive(Debug)]
 pub(crate) struct Line {
     pub(crate) call: Call,
+    modulation: Modulation,
     handshake: Option<Handshake>,
 }
 
 #[derive(Debug)]
 struct Handshake {
     role: Role,
-    receive_channel: Channel,
-    modulator: Modulator,
-    demodulator: Demodulator,
+    modulation: Modulation,
+    pump: Box<dyn DataPump>,
     answer_tone: Tone,
     answer_tone_detector: ToneDetector,
     decoder: Decoder,
     sent: usize,
-    carrier_since: Option<usize>,
     heard_carrier: bool,
     connected: bool,
     early: Vec<u8>,
@@ -61,37 +41,39 @@ struct Handshake {
 impl Line {
     /// A line in `role`, or silent with no handshake for a call placed with
     /// `;`, until [`Line::start`] is called.
-    pub(crate) fn new(call: Call, role: Option<Role>) -> Self {
+    pub(crate) fn new(call: Call, modulation: Modulation, role: Option<Role>) -> Self {
         Self {
             call,
-            handshake: role.map(Handshake::new),
+            modulation,
+            handshake: role.map(|role| Handshake::new(modulation, role)),
         }
     }
 
     pub(crate) fn start(&mut self, role: Role) {
-        self.handshake = Some(Handshake::new(role));
+        self.handshake = Some(Handshake::new(self.modulation, role));
     }
 
     pub(crate) fn has_handshake(&self) -> bool {
         self.handshake.is_some()
     }
 
+    pub(crate) fn bit_rate(&self) -> Option<u32> {
+        self.handshake.as_ref().map(|h| h.pump.bit_rate())
+    }
+
     pub(crate) fn pending_bits(&self) -> usize {
-        self.handshake.as_ref().map_or(0, |h| h.modulator.pending())
+        self.handshake.as_ref().map_or(0, |h| h.pump.pending())
     }
 
     pub(crate) fn send(&mut self, bytes: &[u8]) {
         if let Some(handshake) = &mut self.handshake {
-            handshake
-                .modulator
-                .push_bits(bytes.iter().flat_map(|&b| frame(b)));
+            let bits: Vec<bool> = bytes.iter().flat_map(|&b| frame(b)).collect();
+            handshake.pump.push_bits(&bits);
         }
     }
 
     pub(crate) fn carrier(&self) -> bool {
-        self.handshake
-            .as_ref()
-            .is_some_and(|h| h.demodulator.carrier())
+        self.handshake.as_ref().is_some_and(|h| h.pump.carrier())
     }
 
     /// The next 20 ms to send.
@@ -112,18 +94,15 @@ impl Line {
 }
 
 impl Handshake {
-    fn new(role: Role) -> Self {
-        let (transmit, receive) = role.channels();
+    fn new(modulation: Modulation, role: Role) -> Self {
         Self {
             role,
-            receive_channel: receive,
-            modulator: Modulator::new(transmit, V21_MAX_LEVEL_DBM0),
-            demodulator: Demodulator::new(receive),
-            answer_tone: Tone::new(ANSWER_TONE_HZ, V21_MAX_LEVEL_DBM0),
+            modulation,
+            pump: modulation.pump(role),
+            answer_tone: Tone::new(ANSWER_TONE_HZ, ANSWER_TONE_DBM0),
             answer_tone_detector: ToneDetector::new(ANSWER_TONE_HZ),
             decoder: Decoder::new(),
             sent: 0,
-            carrier_since: None,
             heard_carrier: false,
             connected: false,
             early: Vec::new(),
@@ -137,12 +116,7 @@ impl Handshake {
                 self.answer_tone.render(samples);
             }
             Role::Answer if self.sent < ANSWER_SILENCE + ANSWER_TONE + ANSWER_GAP => {}
-            Role::Answer => self.modulator.render(samples),
-            Role::Originate if self.heard_carrier => {
-                self.carrier_since.get_or_insert(self.sent);
-                self.modulator.render(samples);
-            }
-            Role::Originate => {}
+            _ => self.pump.transmit(samples),
         }
         self.sent += samples.len();
     }
@@ -153,12 +127,12 @@ impl Handshake {
             && !self.heard_carrier
             && self.answer_tone_detector.process(samples)
         {
-            self.demodulator = Demodulator::new(self.receive_channel);
+            self.pump = self.modulation.pump(self.role);
             return received;
         }
 
         let mut bits = Vec::new();
-        self.demodulator.process(samples, &mut bits);
+        self.pump.receive(samples, &mut bits);
         let bytes = bits.into_iter().filter_map(|b| self.decoder.push(b));
         if self.connected {
             received.bytes.extend(bytes);
@@ -166,21 +140,15 @@ impl Handshake {
             // The far end may send before we report CONNECT; a real modem keeps it.
             self.early.extend(bytes);
         }
-        if !self.demodulator.carrier() {
+        if !self.pump.carrier() {
             self.decoder.reset();
         }
         if self.connected {
             return received;
         }
 
-        self.heard_carrier |= self.demodulator.carrier();
-        let ready = match self.role {
-            Role::Answer => self.heard_carrier,
-            Role::Originate => self
-                .carrier_since
-                .is_some_and(|since| self.sent - since >= ORIGINATE_CARRIER_BEFORE_CONNECT),
-        };
-        if ready {
+        self.heard_carrier |= self.pump.carrier();
+        if self.pump.connected() {
             self.connected = true;
             received.connected = true;
             received.bytes = std::mem::take(&mut self.early);
