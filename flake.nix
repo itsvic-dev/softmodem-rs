@@ -13,6 +13,9 @@
         "aarch64-darwin"
       ];
       forSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      linux = builtins.filter (nixpkgs.lib.hasSuffix "-linux") systems;
+      forLinux = f: nixpkgs.lib.genAttrs linux (system: f nixpkgs.legacyPackages.${system});
     in
     {
       overlays.default = final: _prev: {
@@ -22,6 +25,14 @@
       packages = forSystems (pkgs: rec {
         softmodem = pkgs.callPackage ./nix/softmodem.nix { };
         default = softmodem;
+      });
+
+      checks = forLinux (pkgs: {
+        ppp = pkgs.testers.runNixOSTest (
+          import ./nix/tests/ppp.nix {
+            softmodem = pkgs.callPackage ./nix/softmodem.nix { };
+          }
+        );
       });
 
       devShells = forSystems (pkgs: {
