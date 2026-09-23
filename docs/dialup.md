@@ -321,7 +321,11 @@ Everything before it can be built and tested with two instances on one host.
 2. Transport interface, the wire and WAV dumps. Two instances, raw bytes
    across.
 3. `pppd` on both ptys over the wire, an address, a ping across.
-4. AT layer, so `ATDT` and `ATA` work on the wire transport.
+4. AT command interpreter on the serial port. The computer controls the
+   modem with the basic Hayes command set, as with a real modem: `ATD` makes
+   the modem place a call through its transport, `RING` and `ATA` answer
+   one, `+++` and `ATO` leave and return to data mode. The answering side
+   sends the V.25 answer tone. Until SIP exists, the transport is the wire.
 5. SIP transport, two instances through the PBX.
 6. Bell 103.
 7. A real modem behind the SPA2102 calling the answering side.
