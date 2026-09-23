@@ -9,6 +9,17 @@ license = "MIT"
 
 [workspace.dependencies]
 softmodem-dsp = { path = "softmodem-dsp" }
+softmodem-transport = { path = "softmodem-transport" }
+
+anyhow = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+ezk-rtp = "0.2"
+fastrand = "2"
+hound = "3"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
