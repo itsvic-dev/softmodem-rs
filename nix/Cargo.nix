@@ -1570,6 +1570,10 @@ rec {
             packageId = "tokio";
             features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
           }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
         ];
 
       };

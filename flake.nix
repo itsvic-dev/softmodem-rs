@@ -27,13 +27,16 @@
         default = softmodem;
       });
 
-      checks = forLinux (pkgs: {
-        ppp = pkgs.testers.runNixOSTest (
-          import ./nix/tests/ppp.nix {
-            softmodem = pkgs.callPackage ./nix/softmodem.nix { };
-          }
-        );
-      });
+      checks = forLinux (
+        pkgs:
+        let
+          softmodem = pkgs.callPackage ./nix/softmodem.nix { };
+        in
+        {
+          ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
+          cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
+        }
+      );
 
       devShells = forSystems (pkgs: {
         default = pkgs.mkShell {
