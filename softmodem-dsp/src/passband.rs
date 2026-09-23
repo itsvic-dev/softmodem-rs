@@ -92,9 +92,11 @@ impl Transmitter {
     }
 }
 
-/// One symbol from the receiver front end.
+/// One symbol from the receiver front end, with the sample half a symbol
+/// before it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Strobe {
+    pub(crate) middle: Complex,
     pub(crate) symbol: Complex,
     /// Whether any signal was on the line, before carrier detect agrees.
     pub(crate) present: bool,
@@ -213,6 +215,7 @@ impl Receiver {
             self.symbol_phase += TIMING_GAIN * error;
         }
         Some(Strobe {
+            middle: self.middle,
             symbol,
             present: self.present,
         })

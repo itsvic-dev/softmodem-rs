@@ -5,6 +5,7 @@ pub mod dpsk;
 pub mod fsk;
 mod passband;
 pub mod pump;
+pub mod qam;
 pub mod scrambler;
 pub mod tone;
 pub mod uart;
