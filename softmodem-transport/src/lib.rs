@@ -1,10 +1,12 @@
 //! Carries modem audio between two ends.
 
 pub mod alaw;
+pub mod loopback;
 pub mod reorder;
 pub mod wav;
 pub mod wire;
 
+use std::fmt;
 use std::io;
 
 use tokio::sync::mpsc;
@@ -35,8 +37,53 @@ impl Call {
     }
 }
 
-/// Something that can place and take calls.
+/// What an incoming caller did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Incoming<C> {
+    /// A call arrived and is waiting to be answered.
+    Ringing { caller: C, number: String },
+    /// The caller gave up before an answer.
+    Gone(C),
+}
+
+#[derive(Debug)]
+pub enum DialError {
+    Busy,
+    Io(io::Error),
+}
+
+impl fmt::Display for DialError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Busy => f.write_str("busy"),
+            Self::Io(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for DialError {}
+
+impl From<io::Error> for DialError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+/// A line that can place and take calls.
 pub trait Transport {
-    fn dial(&mut self, number: &str) -> impl Future<Output = io::Result<Call>> + Send;
-    fn accept(&mut self) -> impl Future<Output = io::Result<Call>> + Send;
+    /// Identifies an incoming caller between [`Transport::incoming`] and
+    /// [`Transport::answer`] or [`Transport::reject`].
+    type Caller: Clone + PartialEq + fmt::Debug + Send;
+
+    /// Places a call and waits, without limit, until it is answered or
+    /// refused. Dropping the future abandons the call.
+    fn dial(&mut self, number: &str) -> impl Future<Output = Result<Call, DialError>> + Send;
+
+    /// Waits for the next thing an incoming caller does. While one call
+    /// rings, any other caller is refused as busy.
+    fn incoming(&mut self) -> impl Future<Output = io::Result<Incoming<Self::Caller>>> + Send;
+
+    fn answer(&mut self, caller: &Self::Caller) -> impl Future<Output = io::Result<Call>> + Send;
+
+    fn reject(&mut self, caller: &Self::Caller) -> impl Future<Output = io::Result<()>> + Send;
 }

@@ -2,21 +2,79 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use softmodem_transport::wire::{Impairment, Wire};
-use softmodem_transport::{Call, FRAME_SAMPLES, Transport, alaw, wav};
+use softmodem_transport::{Call, DialError, FRAME_SAMPLES, Incoming, Transport, alaw, wav};
 use tokio::time::timeout;
 
 const LOOPBACK: &str = "127.0.0.1:0";
 
-async fn connect(impairment: Impairment) -> (Call, Call) {
-    let mut answering = Wire::bind(LOOPBACK.parse().unwrap(), None, Impairment::default())
+async fn line(impairment: Impairment) -> (Wire, Wire) {
+    let answering = Wire::bind(LOOPBACK.parse().unwrap(), None, Impairment::default())
         .await
         .unwrap();
     let peer: SocketAddr = answering.local_addr().unwrap();
-    let mut calling = Wire::bind(LOOPBACK.parse().unwrap(), Some(peer), impairment)
+    let calling = Wire::bind(LOOPBACK.parse().unwrap(), Some(peer), impairment)
         .await
         .unwrap();
-    let (outgoing, incoming) = tokio::join!(calling.dial("0300"), answering.accept());
+    (calling, answering)
+}
+
+async fn ringing(answering: &mut Wire) -> SocketAddr {
+    match answering.incoming().await.unwrap() {
+        Incoming::Ringing { caller, number } => {
+            assert_eq!(number, "0300");
+            caller
+        }
+        Incoming::Gone(caller) => panic!("{caller} gave up before ringing"),
+    }
+}
+
+async fn connect(impairment: Impairment) -> (Call, Call) {
+    let (mut calling, mut answering) = line(impairment).await;
+    let answer = async {
+        let caller = ringing(&mut answering).await;
+        answering.answer(&caller).await
+    };
+    let (outgoing, incoming) = tokio::join!(calling.dial("0300"), answer);
     (outgoing.unwrap(), incoming.unwrap())
+}
+
+#[tokio::test]
+async fn a_rejected_call_is_busy() {
+    let (mut calling, mut answering) = line(Impairment::default()).await;
+    let reject = async {
+        let caller = ringing(&mut answering).await;
+        answering.reject(&caller).await.unwrap();
+    };
+    let (dialled, ()) = tokio::join!(calling.dial("0300"), reject);
+    assert!(matches!(dialled, Err(DialError::Busy)));
+}
+
+#[tokio::test]
+async fn a_second_caller_is_busy_while_the_first_rings() {
+    let (mut first, mut answering) = line(Impairment::default()).await;
+    let peer = answering.local_addr().unwrap();
+    let mut second = Wire::bind(LOOPBACK.parse().unwrap(), Some(peer), Impairment::default())
+        .await
+        .unwrap();
+    let first_dial = tokio::spawn(async move { first.dial("0300").await });
+    ringing(&mut answering).await;
+    let (second_dial, still_ringing) = tokio::join!(
+        second.dial("0300"),
+        timeout(Duration::from_secs(1), answering.incoming())
+    );
+    assert!(matches!(second_dial, Err(DialError::Busy)));
+    assert!(still_ringing.is_err(), "the first call stopped ringing");
+    first_dial.abort();
+}
+
+#[tokio::test]
+async fn an_abandoned_call_stops_ringing() {
+    let (mut calling, mut answering) = line(Impairment::default()).await;
+    let dialling = tokio::spawn(async move { calling.dial("0300").await });
+    let caller = ringing(&mut answering).await;
+    dialling.abort();
+    let next = timeout(Duration::from_secs(1), answering.incoming()).await;
+    assert_eq!(next.unwrap().unwrap(), Incoming::Gone(caller));
 }
 
 fn frame(n: usize) -> Vec<i16> {
