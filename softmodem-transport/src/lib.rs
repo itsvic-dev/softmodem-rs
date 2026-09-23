@@ -4,6 +4,7 @@ pub mod alaw;
 pub mod loopback;
 pub mod reorder;
 mod rtp;
+pub mod sip;
 pub mod wav;
 pub mod wire;
 

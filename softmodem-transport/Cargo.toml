@@ -5,8 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 bytes.workspace = true
+bytesstr.workspace = true
 ezk-rtp.workspace = true
+ezk-sdp-types.workspace = true
+ezk-sip-auth.workspace = true
+ezk-sip-core.workspace = true
+ezk-sip-types.workspace = true
+ezk-sip-ua.workspace = true
 fastrand.workspace = true
 hound.workspace = true
 tokio.workspace = true

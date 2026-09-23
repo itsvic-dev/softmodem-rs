@@ -13,9 +13,16 @@ softmodem-terminal = { path = "softmodem-terminal" }
 softmodem-transport = { path = "softmodem-transport" }
 
 anyhow = "1"
+async-trait = "0.1"
 bytes = "1"
+bytesstr = "1"
 clap = { version = "4", features = ["derive"] }
 ezk-rtp = "0.2"
+ezk-sdp-types = "0.6"
+ezk-sip-auth = "0.5"
+ezk-sip-core = "0.9"
+ezk-sip-types = "0.6"
+ezk-sip-ua = { version = "0.9", default-features = false }
 fastrand = "2"
 hound = "3"
 rustix = { version = "1", features = ["fs", "pty", "termios"] }
