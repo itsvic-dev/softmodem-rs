@@ -4,6 +4,15 @@ let
   port = "/run/softmodem/ttyS0";
   # The default 3 s restart is shorter than one round trip at 300 bit/s.
   pppOptions = "nodetach local noauth nocrtscts noccp noipv6 mru 296 mtu 296 asyncmap 0 lcp-restart 15 ipcp-restart 15 debug";
+
+  modemService = extraArgs: {
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      ExecStart = "${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --pty ${port} --dump /var/lib/softmodem ${extraArgs}";
+      RuntimeDirectory = "softmodem";
+      StateDirectory = "softmodem";
+    };
+  };
 in
 {
   name = "softmodem-ppp";
@@ -15,14 +24,8 @@ in
         networking.firewall.allowedUDPPorts = [ 5300 ];
         environment.systemPackages = [ softmodem ];
 
-        systemd.services.softmodem = {
-          wantedBy = [ "multi-user.target" ];
-          serviceConfig = {
-            ExecStart = "${softmodem}/bin/softmodem wire answer --local 0.0.0.0:5300 --pty ${port} --dump /var/lib/softmodem";
-            RuntimeDirectory = "softmodem";
-            StateDirectory = "softmodem";
-          };
-        };
+        # Quiet, so that RING and CONNECT do not reach pppd as line noise.
+        systemd.services.softmodem = modemService "--init ATE0Q1S0=1";
 
         systemd.services.pppd = {
           wantedBy = [ "multi-user.target" ];
@@ -38,17 +41,23 @@ in
 
     caller =
       { pkgs, ... }:
+      let
+        chat = "${pkgs.ppp}/bin/chat";
+      in
       {
+        networking.firewall.allowedUDPPorts = [ 5300 ];
         environment.systemPackages = [ softmodem ];
 
-        systemd.services.softmodem = {
+        systemd.services.softmodem = modemService "" // {
           path = [
             pkgs.getent
             pkgs.coreutils
           ];
           script = ''
-            isp=$(getent ahostsv4 isp | head -n 1 | cut -d ' ' -f 1)
-            exec ${softmodem}/bin/softmodem wire originate --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem
+            until isp=$(getent ahostsv4 isp | head -n 1 | cut -d ' ' -f 1) && [ -n "$isp" ]; do
+              sleep 1
+            done
+            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem
           '';
           serviceConfig = {
             RuntimeDirectory = "softmodem";
@@ -59,7 +68,11 @@ in
         systemd.services.pppd = {
           requires = [ "softmodem.service" ];
           after = [ "softmodem.service" ];
-          serviceConfig.ExecStart = "${pkgs.ppp}/bin/pppd ${port} ${pppOptions} noipdefault";
+          serviceConfig.ExecStart = pkgs.writeShellScript "dial-isp" ''
+            exec ${pkgs.ppp}/bin/pppd ${port} ${pppOptions} noipdefault \
+              connect "${chat} -v -t 60 ''' ATZ OK ATDT0300 CONNECT '\c'" \
+              disconnect "${chat} -v ''' '\d\d+++\d\d\c' OK ATH0 OK"
+          '';
         };
       };
   };
@@ -68,18 +81,21 @@ in
     start_all()
     isp.wait_for_unit("pppd.service")
     isp.wait_until_succeeds("test -L ${port}")
-
-    caller.wait_for_unit("multi-user.target")
-    caller.systemctl("start softmodem.service")
+    caller.wait_for_unit("softmodem.service")
     caller.wait_until_succeeds("test -L ${port}")
-    caller.systemctl("start pppd.service")
 
-    caller.wait_until_succeeds("ip -4 addr show ppp0 | grep -q 10.32.0.2", timeout=180)
-    caller.succeed("ping -c 1 -W 30 10.32.0.1")
-    isp.succeed("ping -c 1 -W 30 10.32.0.2")
+    for attempt in (1, 2):
+        with subtest(f"call {attempt}"):
+            caller.systemctl("start pppd.service")
+            caller.wait_until_succeeds("ip -4 addr show ppp0 | grep -q 10.32.0.2", timeout=180)
+            caller.succeed("ping -c 1 -W 30 10.32.0.1")
+            isp.succeed("ping -c 1 -W 30 10.32.0.2")
+            caller.systemctl("stop pppd.service")
+            for machine in (caller, isp):
+                machine.wait_until_succeeds(f"journalctl -u softmodem | grep -c 'call ended' | grep -qx {attempt}", timeout=90)
 
-    caller.systemctl("stop pppd.service softmodem.service")
-    isp.wait_until_succeeds("journalctl -u softmodem | grep -q 'far end hung up'")
+    caller.systemctl("stop softmodem.service")
+    isp.systemctl("stop softmodem.service")
     caller.copy_from_machine("/var/lib/softmodem", "caller")
     isp.copy_from_machine("/var/lib/softmodem", "isp")
   '';
