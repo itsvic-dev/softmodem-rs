@@ -73,6 +73,9 @@ pub trait DataPump: Debug + Send {
     /// A decoder for the start-stop characters this modulation carries.
     fn decoder(&self) -> Decoder;
 
+    /// Asks the far end to train again, for a modulation that can.
+    fn retrain(&mut self) {}
+
     /// Queues bits to send. The line idles on mark when none are queued.
     fn push_bits(&mut self, bits: &[bool]);
 
