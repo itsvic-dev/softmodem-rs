@@ -5,8 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use softmodem::Role;
+use softmodem_terminal::pty::Pty;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
+use tracing::info;
 
 /// A V.21 modem that places real calls.
 #[derive(Parser)]
@@ -47,6 +49,9 @@ enum WireRole {
 
 #[derive(Args)]
 struct WireOptions {
+    /// Use a pseudoterminal linked from this path instead of stdin and stdout.
+    #[arg(long, global = true)]
+    pty: Option<PathBuf>,
     /// Directory to record each call into, as one WAV file per direction.
     #[arg(long, global = true)]
     dump: Option<PathBuf>,
@@ -79,25 +84,51 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         reorder: options.reorder,
         seed: options.seed,
     };
-    let (call, role) = match role {
+    let pty = options
+        .pty
+        .as_deref()
+        .map(|link| Pty::open(Some(link)))
+        .transpose()?;
+    if let Some(pty) = &pty {
+        info!(path = %pty.path().display(), "serial port ready");
+    }
+    match role {
         WireRole::Originate {
             peer,
             local,
             number,
         } => {
             let mut wire = Wire::bind(local, Some(peer), impairment).await?;
-            (wire.dial(&number).await?, Role::Originate)
+            let call = wire.dial(&number).await?;
+            serve(call, Role::Originate, &options, pty.as_ref()).await
         }
         WireRole::Answer { local } => {
             let mut wire = Wire::bind(local, None, impairment).await?;
-            (wire.accept().await?, Role::Answer)
+            loop {
+                let call = wire.accept().await?;
+                serve(call, Role::Answer, &options, pty.as_ref()).await?;
+                if pty.is_none() {
+                    return Ok(());
+                }
+            }
         }
-    };
-    let call = match options.dump {
-        Some(directory) => record(call, &directory, role)?,
+    }
+}
+
+async fn serve(
+    call: Call,
+    role: Role,
+    options: &WireOptions,
+    pty: Option<&Pty>,
+) -> anyhow::Result<()> {
+    let call = match &options.dump {
+        Some(directory) => record(call, directory, role)?,
         None => call,
     };
-    softmodem::run(call, role, tokio::io::stdin(), tokio::io::stdout()).await?;
+    match pty {
+        Some(pty) => softmodem::run(call, role, pty, pty).await?,
+        None => softmodem::run(call, role, tokio::io::stdin(), tokio::io::stdout()).await?,
+    }
     Ok(())
 }
 

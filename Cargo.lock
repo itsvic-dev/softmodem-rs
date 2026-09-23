@@ -489,6 +489,7 @@ dependencies = [
  "clap",
  "fastrand",
  "softmodem-dsp",
+ "softmodem-terminal",
  "softmodem-transport",
  "tokio",
  "tracing",
