@@ -70,6 +70,7 @@ struct Computer {
     cursor: usize,
     dcd: DcdHistory,
     ri: DcdHistory,
+    speaker: Arc<Mutex<Vec<f32>>>,
 }
 
 impl Computer {
@@ -151,7 +152,10 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
         dcd: dcd.clone(),
         ri: ri.clone(),
     };
-    let modem = Modem::new(transport, port, settings, |call, _| call);
+    let speaker = Arc::<Mutex<Vec<f32>>>::default();
+    let gains = speaker.clone();
+    let modem = Modem::new(transport, port, settings, |call, _| call)
+        .with_speaker(move |gain| gains.lock().unwrap().push(gain));
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
     Computer {
         port: computer,
@@ -159,6 +163,7 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
         cursor: 0,
         dcd,
         ri,
+        speaker,
     }
 }
 
@@ -360,6 +365,30 @@ impl Computer {
     fn ri(&self) -> Vec<bool> {
         self.ri.lock().unwrap().clone()
     }
+
+    fn speaker(&self) -> Vec<f32> {
+        self.speaker.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_speaker_sounds_until_connect_under_m1_and_always_under_m2() {
+    let (mut a, mut b) = two_modems("ATE0", "ATE0M2L3S0=1");
+    a.command("ATDT0300").await;
+    a.expect("CONNECT\r\n").await;
+    b.expect("CONNECT").await;
+    sleep(Duration::from_millis(100)).await;
+    assert_eq!(a.speaker(), [0.5, 0.0]);
+    assert_eq!(b.speaker(), [1.0]);
+
+    a.escape().await;
+    a.expect_next(b"\r\nOK\r\n").await;
+    a.command("ATH").await;
+    a.expect_next(b"\r\nOK\r\n").await;
+    a.command("ATM0").await;
+    a.expect_next(b"\r\nOK\r\n").await;
+    sleep(Duration::from_millis(100)).await;
+    assert_eq!(a.speaker(), [0.5, 0.0, 0.5, 0.0]);
 }
 
 #[tokio::test(start_paused = true)]

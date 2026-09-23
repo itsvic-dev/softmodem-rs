@@ -57,6 +57,8 @@ pub struct Modem<T: Transport, P, F> {
     ticker: Interval,
     dcd: bool,
     ring_off: Option<Instant>,
+    speaker: Option<Box<dyn FnMut(f32) + Send>>,
+    speaker_gain: Option<f32>,
 }
 
 fn frame_clock() -> Interval {
@@ -90,7 +92,17 @@ where
             ticker: frame_clock(),
             dcd: false,
             ring_off: None,
+            speaker: None,
+            speaker_gain: None,
         }
+    }
+
+    /// Calls `set_gain` with the speaker volume each time `L`, `M` or the
+    /// call change it, from 0 for off to 1 for full.
+    #[must_use]
+    pub fn with_speaker(mut self, set_gain: impl FnMut(f32) + Send + 'static) -> Self {
+        self.speaker = Some(Box::new(set_gain));
+        self
     }
 
     /// Serves the computer until its input ends or `stop` completes, and
@@ -105,6 +117,7 @@ where
         self.sync_dcd().await?;
 
         loop {
+            self.sync_speaker();
             let in_data = matches!(self.mode, Mode::Data { .. });
             let want_input = !in_data
                 || self
@@ -489,6 +502,18 @@ where
         }
         self.dcd = dcd;
         self.port.set_carrier(dcd)
+    }
+
+    fn sync_speaker(&mut self) {
+        let Some(set_gain) = &mut self.speaker else {
+            return;
+        };
+        let connected = matches!(self.mode, Mode::Data { .. } | Mode::OnlineCommand);
+        let gain = self.settings.speaker_gain(connected);
+        if self.speaker_gain != Some(gain) {
+            self.speaker_gain = Some(gain);
+            set_gain(gain);
+        }
     }
 
     async fn report(&mut self, code: ResultCode) -> io::Result<()> {
