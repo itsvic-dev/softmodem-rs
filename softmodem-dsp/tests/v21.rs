@@ -1,7 +1,9 @@
+mod common;
+
+use common::{common_subsequence, mix, random_bytes, resample, scale};
 use softmodem_dsp::fsk::{
     Channel, Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE,
 };
-use softmodem_dsp::sine_peak;
 use softmodem_dsp::uart::{Decoder, frame};
 
 const FRAME: usize = 160;
@@ -61,89 +63,6 @@ fn link(channel: Channel, impair: impl FnOnce(Vec<i16>) -> Vec<i16>) -> Received
     demodulate(channel, &impair(modulate(channel, &payload())))
 }
 
-fn random_bytes(count: usize) -> Vec<u8> {
-    let mut noise = Noise(0x2545_F491_4F6C_DD1D);
-    (0..count)
-        .map(|_| {
-            noise.uniform();
-            noise.0.to_le_bytes()[7]
-        })
-        .collect()
-}
-
-fn common_subsequence(a: &[u8], b: &[u8]) -> usize {
-    let mut row = vec![0; b.len() + 1];
-    for &x in a {
-        let mut diagonal = 0;
-        for (j, &y) in b.iter().enumerate() {
-            let above = row[j + 1];
-            row[j + 1] = if x == y {
-                diagonal + 1
-            } else {
-                above.max(row[j])
-            };
-            diagonal = above;
-        }
-    }
-    row[b.len()]
-}
-
-struct Noise(u64);
-
-impl Noise {
-    fn uniform(&mut self) -> f64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        f64::from(u32::try_from(self.0 >> 32).unwrap()) / f64::from(u32::MAX) - 0.5
-    }
-
-    fn gaussian(&mut self) -> f64 {
-        (0..12).map(|_| self.uniform()).sum()
-    }
-}
-
-#[expect(clippy::cast_possible_truncation, reason = "clamped first")]
-fn clamp(x: f64) -> i16 {
-    x.round().clamp(-32768.0, 32767.0) as i16
-}
-
-fn add_noise(samples: Vec<i16>, snr_db: f64) -> Vec<i16> {
-    let sigma = sine_peak(LEVEL) / 2f64.sqrt() / 10f64.powf(snr_db / 20.0);
-    let mut noise = Noise(0x9E37_79B9_7F4A_7C15);
-    samples
-        .into_iter()
-        .map(|s| clamp(f64::from(s) + sigma * noise.gaussian()))
-        .collect()
-}
-
-fn scale(samples: Vec<i16>, gain: f64) -> Vec<i16> {
-    samples
-        .into_iter()
-        .map(|s| clamp(f64::from(s) * gain))
-        .collect()
-}
-
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "sample positions are small and positive"
-)]
-fn resample(samples: &[i16], ratio: f64) -> Vec<i16> {
-    let count = ((samples.len() - 1) as f64 / ratio) as usize;
-    (0..count)
-        .map(|n| {
-            let position = n as f64 * ratio;
-            let i = position as usize;
-            let t = position - i as f64;
-            let a = f64::from(samples[i]);
-            let b = f64::from(samples[i + 1]);
-            clamp(a + (b - a) * t)
-        })
-        .collect()
-}
-
 #[test]
 fn clean_line_round_trips_both_channels() {
     for channel in [V21_ORIGINATE, V21_ANSWER] {
@@ -155,7 +74,7 @@ fn clean_line_round_trips_both_channels() {
 
 #[test]
 fn survives_noise_at_12_db() {
-    let received = link(V21_ORIGINATE, |s| add_noise(s, 12.0));
+    let received = link(V21_ORIGINATE, |s| common::add_noise(s, LEVEL, 12.0));
     assert_eq!(received.bytes, payload());
 }
 
@@ -195,12 +114,7 @@ fn tolerates_the_12_hz_line_drift_v21_requires() {
 #[test]
 fn rejects_the_other_channel_in_full_duplex() {
     let other = modulate(V21_ANSWER, &payload().into_iter().rev().collect::<Vec<_>>());
-    let received = link(V21_ORIGINATE, |s| {
-        s.iter()
-            .zip(other.iter().chain(std::iter::repeat(&0)))
-            .map(|(&a, &b)| clamp(f64::from(a) + f64::from(b)))
-            .collect()
-    });
+    let received = link(V21_ORIGINATE, |s| mix(&s, &other));
     assert_eq!(received.bytes, payload());
 }
 
