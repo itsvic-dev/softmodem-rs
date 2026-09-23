@@ -8,6 +8,7 @@ use softmodem::{Modem, Role};
 use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::Plain;
 use softmodem_terminal::pty::Pty;
+use softmodem_transport::sip::{Account, Sip};
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
@@ -25,6 +26,23 @@ struct Cli {
 enum Command {
     /// Use a direct UDP wire to another softmodem as the phone line.
     Wire(WireArgs),
+    /// Register with a SIP registrar over TCP and use it as the phone line.
+    Sip(SipArgs),
+}
+
+#[derive(Args)]
+struct SipArgs {
+    /// Host name of the registrar.
+    #[arg(long)]
+    registrar: String,
+    /// User name, which is also the number the modem answers on.
+    #[arg(long)]
+    user: String,
+    /// Environment variable that holds the password.
+    #[arg(long, value_name = "VARIABLE")]
+    password_env: String,
+    #[command(flatten)]
+    modem: ModemArgs,
 }
 
 #[derive(Args)]
@@ -76,14 +94,29 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    let Command::Wire(args) = cli.command;
-    let impairment = Impairment {
-        loss: args.loss,
-        reorder: args.reorder,
-        seed: args.seed,
-    };
-    let wire = Wire::bind(args.local, args.peer, impairment).await?;
-    serve(wire, args.modem).await
+    match cli.command {
+        Command::Wire(args) => {
+            let impairment = Impairment {
+                loss: args.loss,
+                reorder: args.reorder,
+                seed: args.seed,
+            };
+            let wire = Wire::bind(args.local, args.peer, impairment).await?;
+            serve(wire, args.modem).await
+        }
+        Command::Sip(args) => {
+            let password = std::env::var(&args.password_env)
+                .with_context(|| format!("reading the password from ${}", args.password_env))?;
+            let sip = Sip::register(Account {
+                registrar: args.registrar,
+                user: args.user,
+                password,
+            })
+            .await
+            .context("registering")?;
+            Box::pin(serve(sip, args.modem)).await
+        }
+    }
 }
 
 async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()> {
