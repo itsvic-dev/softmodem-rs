@@ -149,7 +149,7 @@ async fn records_both_directions() {
     let prefix = directory.join("call");
 
     let (outgoing, incoming) = connect(Impairment::default()).await;
-    let mut outgoing = wav::record(outgoing, &prefix).unwrap();
+    let mut outgoing = wav::Recorder::create(&prefix).unwrap().record(outgoing);
     for n in 0..5 {
         outgoing.audio_out.send(frame(n)).await.unwrap();
         incoming.audio_out.send(frame(n + 5)).await.unwrap();
