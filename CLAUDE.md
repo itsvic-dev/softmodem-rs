@@ -2,11 +2,15 @@
 
 A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
 
-- `softmodem-dsp`: modulators and demodulators over linear 8 kHz samples. No
-  IO, no async, no dependencies on the other crates.
-- `softmodem-transport`: carries audio frames for a call. A-law, the reorder
-  window, the UDP wire and WAV recording.
-- `softmodem`: the data pump that runs the modem over a call, and the binary.
+- `softmodem-dsp`: modulators, demodulators and tones over linear 8 kHz
+  samples. No IO, no async, no dependencies on the other crates.
+- `softmodem-terminal`: what the computer sees. The pseudoterminal, the AT
+  command parser, settings and S-registers, the line editor and the `+++`
+  escape. No IO outside `pty`.
+- `softmodem-transport`: carries audio frames for a call, and rings, answers
+  and refuses calls. A-law, the reorder window, the UDP wire, an in-memory
+  loopback and WAV recording.
+- `softmodem`: the modem state machine that joins them, and the binary.
 
 ## Working here
 
@@ -15,12 +19,14 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
 - `nix/Cargo.nix` is generated, and a dependency change is not picked up by
   `nix build` until it is regenerated and committed:
   `nix develop --command crate2nix generate --output nix/Cargo.nix`.
-- Two instances on one host, recording every call:
-  `softmodem wire answer --local 127.0.0.1:5300 --dump dumps` and
-  `softmodem wire originate --peer 127.0.0.1:5300 --dump dumps < file`.
-  The answering side hangs up when its stdin ends, so keep it open. With
-  `--pty <link>` each side serves a raw pseudoterminal instead, and the
-  answering side takes calls in a loop.
+- Modem tests use the loopback transport on paused tokio time
+  (`start_paused`), so the answer sequence and ring timers cost nothing. Only
+  `softmodem/tests/pty.rs` runs in real time.
+- Two modems on one host, recording every call:
+  `softmodem wire --local 127.0.0.1:5300 --pty /tmp/isp --init ATS0=1 --dump dumps`
+  and `softmodem wire --local 127.0.0.1:5301 --peer 127.0.0.1:5300 --pty /tmp/caller --dump dumps`,
+  then a terminal program on `/tmp/caller` and `ATDT0300`. Without `--pty` the
+  serial port is stdin and stdout.
 - `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.

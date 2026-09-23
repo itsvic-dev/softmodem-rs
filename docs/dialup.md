@@ -359,6 +359,17 @@ and `pppd` runs on the pty. There is at most one call and one `pppd`, so the
 answering side runs one long-lived `pppd` on a pty that `softmodem` keeps open
 for its whole life.
 
+The ISP's modem runs with `--init ATE0Q1S0=1`: no echo, no result codes, and
+auto-answer on the first ring. Without `Q1`, `RING` and `CONNECT` reach the
+waiting `pppd` as line noise. Its `pppd` needs no chat script.
+
+The caller dials and hangs up the way it would with a real modem:
+
+```
+connect    "chat -v -t 60 '' ATZ OK ATDT0300 CONNECT '\c'"
+disconnect "chat -v '' '\d\d+++\d\d\c' OK ATH0 OK"
+```
+
 A pty has no DCD, DTR or RTS/CTS, so `pppd` cannot see carrier and cannot hang
 up by dropping DTR. The options that follow from that:
 
@@ -385,8 +396,14 @@ practice means one TCP retransmit timeout per lost frame. Measure before
 enabling it.
 
 At 300 bit/s, 30 bytes per second, LCP and IPCP exchange a few hundred bytes
-in total. On a clean wire the VM test (`checks.<linux>.ppp`) measures 10.6 s
-from `CONNECT` to an address, and a 64 byte ping takes about 6 s round trip.
+in total. On a clean wire the VM test (`checks.<linux>.ppp`) measures:
+
+- 6.6 s from `ATDT` to `CONNECT`, which is mostly the V.25 answer sequence.
+- 10 s from `CONNECT` to an address on the first call.
+- About 25 s on the next call. The ISP's `pppd` has not seen the first call
+  end, because nothing tells it, so it is still in the old session and has to
+  renegotiate from there. A DCD signal it could watch would fix this.
+- About 6 s round trip for a 64 byte ping.
 
 ## Transport
 
