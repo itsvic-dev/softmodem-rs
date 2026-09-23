@@ -40,6 +40,12 @@
               carrier = "V22";
             }
           );
+          ppp-v22bis = pkgs.testers.runNixOSTest (
+            import ./nix/tests/ppp.nix {
+              inherit softmodem;
+              carrier = "V22B";
+            }
+          );
           cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
         }
       );
