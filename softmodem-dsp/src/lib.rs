@@ -12,6 +12,7 @@ pub mod uart;
 mod v21;
 mod v22;
 mod v22bis;
+pub mod v8;
 
 pub const SAMPLE_RATE: f64 = 8000.0;
 
