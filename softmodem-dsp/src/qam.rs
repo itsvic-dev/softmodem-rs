@@ -160,6 +160,15 @@ impl Demodulator {
         self.rate = rate;
     }
 
+    /// Forgets what the equaliser learned and goes back to 1200 bit/s, for a
+    /// training that starts at the end of S1.
+    pub fn restart(&mut self) {
+        self.taps.fill((0.0, 0.0));
+        self.taps[EQUALIZER_TAPS / 2] = (1.0, 0.0);
+        self.rate = Rate::Bps1200;
+        self.error = 1.0;
+    }
+
     /// The mean square distance of recent symbols from their decisions, on a
     /// constellation of unit mean power.
     #[must_use]

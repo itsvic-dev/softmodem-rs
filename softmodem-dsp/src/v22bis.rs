@@ -3,9 +3,9 @@
 
 use std::collections::VecDeque;
 
-use crate::dpsk::{V22_HIGH_HZ, V22_LOW_HZ, quarter_turns};
+use crate::dpsk::{self, V22_HIGH_HZ, V22_LOW_HZ, quarter_turns};
 use crate::pump::{DataPump, Role};
-use crate::qam::{Demodulator, Modulator, Rate};
+use crate::qam::{self, Modulator, Rate};
 use crate::scrambler::{Descrambler, Scrambler};
 use crate::tone::Tone;
 use crate::uart::Decoder;
@@ -44,9 +44,9 @@ struct S1Detector {
 }
 
 impl S1Detector {
-    // Takes one symbol and tells whether S1 just ended.
-    fn push(&mut self, turns: u8, inner: Option<(bool, bool)>) -> bool {
-        let fits = matches!(turns, 1 | 3) && inner.is_none_or(|i| i == (false, true));
+    // Takes one symbol's quadrant change and tells whether S1 just ended.
+    fn push(&mut self, turns: u8) -> bool {
+        let fits = matches!(turns, 1 | 3);
         self.run = match (fits, self.last) {
             (true, Some(last)) if last != turns => self.run + 1,
             (true, _) => 1,
@@ -69,17 +69,23 @@ impl S1Detector {
 /// S1 end, sends S1 back if it has not yet, and goes to 2400 bit/s 600 ms
 /// later. An end that hears scrambled ones without S1 finishes the V.22
 /// handshake at 1200 bit/s instead.
+///
+/// The handshake signals, S1 during data, and the V.22 fallback are received
+/// by a differential demodulator, which needs no training. A coherent one
+/// beside it trains from the end of S1 and receives 2400 bit/s.
 #[derive(Debug)]
 pub(crate) struct V22bis {
     role: Role,
     transmit: Transmit,
     speed: Option<Speed>,
     modulator: Modulator,
-    demodulator: Demodulator,
+    slow: dpsk::Demodulator,
+    fast: qam::Demodulator,
     receive_rate: Rate,
     guard: Option<Tone>,
     scrambler: Scrambler,
-    descrambler: Descrambler,
+    slow_descrambler: Descrambler,
+    fast_descrambler: Descrambler,
     queue: VecDeque<bool>,
     sent: usize,
     send_s1_at: Option<usize>,
@@ -95,16 +101,16 @@ pub(crate) struct V22bis {
 
 impl V22bis {
     pub(crate) fn new(role: Role) -> Self {
-        let (modulator, demodulator, guard, transmit) = match role {
+        let (modulator, receive_hz, guard, transmit) = match role {
             Role::Originate => (
                 Modulator::new(V22_LOW_HZ, LOW_CHANNEL_DBM0),
-                Demodulator::new(V22_HIGH_HZ),
+                V22_HIGH_HZ,
                 None,
                 Transmit::Silence,
             ),
             Role::Answer => (
                 Modulator::new(V22_HIGH_HZ, HIGH_CHANNEL_DBM0),
-                Demodulator::new(V22_LOW_HZ),
+                V22_LOW_HZ,
                 Some(Tone::new(GUARD_TONE_HZ, GUARD_TONE_DBM0)),
                 Transmit::UnscrambledOnes,
             ),
@@ -116,11 +122,13 @@ impl V22bis {
             transmit,
             speed: None,
             modulator,
-            demodulator,
+            slow: dpsk::Demodulator::new(receive_hz),
+            fast: qam::Demodulator::new(receive_hz),
             receive_rate: Rate::Bps1200,
             guard,
             scrambler,
-            descrambler: Descrambler::new(),
+            slow_descrambler: Descrambler::new(),
+            fast_descrambler: Descrambler::new(),
             queue: VecDeque::new(),
             sent: 0,
             send_s1_at: None,
@@ -149,7 +157,7 @@ impl V22bis {
         }
         self.speed = Some(Speed::Fast { s1_end: self.sent });
         self.receive_rate = Rate::Bps1200;
-        self.demodulator.set_rate(Rate::Bps1200);
+        self.fast.restart();
         self.fast_ones = 0;
         self.ready = false;
     }
@@ -170,7 +178,7 @@ impl V22bis {
             Some(Speed::Fast { s1_end }) => {
                 if self.receive_rate == Rate::Bps1200 && self.sent >= s1_end + DECIDE_16_SAMPLES {
                     self.receive_rate = Rate::Bps2400;
-                    self.demodulator.set_rate(Rate::Bps2400);
+                    self.fast.set_rate(Rate::Bps2400);
                 }
                 if self.transmit == Transmit::Slow && self.sent >= s1_end + FAST_SAMPLES {
                     self.transmit = Transmit::Fast { since: self.sent };
@@ -290,32 +298,34 @@ impl DataPump for V22bis {
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
         let mut line = Vec::new();
-        self.demodulator.process(input, &mut line);
-        let per_symbol = match self.receive_rate {
-            Rate::Bps1200 => 2,
-            Rate::Bps2400 => 4,
-        };
-        for symbol in line.chunks(per_symbol) {
-            let turns = quarter_turns(symbol[0], symbol[1]);
-            let inner = (per_symbol == 4).then(|| (symbol[2], symbol[3]));
-            let s1_ended = self.s1.push(turns, inner);
-            for &bit in symbol {
-                let descrambled = self.descrambler.descramble(bit);
+        self.slow.process(input, &mut line);
+        for dibit in line.chunks(2) {
+            let s1_ended = self.s1.push(quarter_turns(dibit[0], dibit[1]));
+            for &bit in dibit {
+                let descrambled = self.slow_descrambler.descramble(bit);
                 match self.speed {
-                    Some(Speed::Fast { .. }) => self.fast_bit(descrambled, bits),
                     Some(Speed::Slow { .. }) if self.ready => bits.push(descrambled),
-                    Some(Speed::Slow { .. }) => {}
                     None => self.handshake_bit(bit, descrambled),
+                    _ => {}
                 }
             }
             if s1_ended {
                 self.s1_ended();
             }
         }
+
+        line.clear();
+        self.fast.process(input, &mut line);
+        if matches!(self.speed, Some(Speed::Fast { .. })) {
+            for bit in line {
+                let descrambled = self.fast_descrambler.descramble(bit);
+                self.fast_bit(descrambled, bits);
+            }
+        }
     }
 
     fn carrier(&self) -> bool {
-        self.connected && self.demodulator.carrier()
+        self.connected && self.fast.carrier()
     }
 
     fn connected(&self) -> bool {
@@ -416,7 +426,7 @@ mod tests {
         let ended: Vec<bool> = (0..30)
             .map(|n| if n % 2 == 0 { 1 } else { 3 })
             .chain([0, 0])
-            .map(|turns| detector.push(turns, None))
+            .map(|turns| detector.push(turns))
             .collect();
         assert_eq!(ended.iter().filter(|&&e| e).count(), 1);
         assert!(ended[30]);
@@ -425,7 +435,7 @@ mod tests {
     #[test]
     fn unscrambled_ones_are_not_s1() {
         let mut detector = S1Detector::default();
-        assert!(!(0..100).any(|_| detector.push(3, None)));
+        assert!(!(0..100).any(|_| detector.push(3)));
         assert!(!detector.heard);
     }
 }
