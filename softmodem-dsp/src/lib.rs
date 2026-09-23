@@ -2,6 +2,7 @@
 
 mod correlator;
 pub mod fsk;
+pub mod tone;
 pub mod uart;
 
 pub const SAMPLE_RATE: f64 = 8000.0;
