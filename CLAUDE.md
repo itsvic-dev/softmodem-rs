@@ -1,6 +1,6 @@
 # softmodem
 
-A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
+A V.21, V.22 and V.22bis modem that places real calls over SIP. The design is `docs/dialup.md`.
 
 - `softmodem-dsp`: modulators, demodulators and tones over linear 8 kHz
   samples. No IO, no async, no dependencies on the other crates.

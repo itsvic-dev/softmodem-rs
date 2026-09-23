@@ -1,5 +1,5 @@
 {
-  description = "softmodem: a V.21 modem that places real calls over SIP";
+  description = "softmodem: a V.21, V.22 and V.22bis modem that places real calls over SIP";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
