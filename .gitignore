@@ -4,3 +4,4 @@
 .direnv
 .envrc
 .DS_Store
+/docs/specs

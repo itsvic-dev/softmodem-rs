@@ -156,8 +156,15 @@ V.21 uses two channels so that both ends can transmit at once:
 | 1, originating | 980 Hz | 1180 Hz |
 | 2, answering | 1650 Hz | 1850 Hz |
 
-Checked against V.21 (11/88), from CCITT Blue Book Fascicle VIII.1, which
-also sets the other figures the implementation follows:
+Checked against V.21 (11/88), which also sets the other figures the
+implementation follows. The ITU download for it often fails; the same text is
+in CCITT Blue Book Fascicle VIII.1, pages 65 to 69, which also holds V.22 and
+V.25. Local copies go in `docs/specs/`, which is not committed.
+
+- <https://www.itu.int/rec/T-REC-V.21/en>
+- <https://search.itu.int/history/HistoryDigitalCollectionDocLibrary/4.260.43.en.1049.pdf>
+
+The figures:
 
 - Transmit level at most -13 dBm0 (§ 6).
 - The demodulator tolerates ±12 Hz between received and nominal frequencies
