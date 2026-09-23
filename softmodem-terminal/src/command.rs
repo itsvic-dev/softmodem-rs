@@ -179,11 +179,11 @@ impl Parser<'_> {
                 while self.peek().is_some_and(|b| b.is_ascii_alphanumeric()) {
                     self.at += 1;
                 }
-                let carrier = match &self.text[start..self.at] {
-                    b"V21" => Carrier::V21,
-                    b"V22" => Carrier::V22,
-                    _ => return Err(ParseError),
-                };
+                let name = &self.text[start..self.at];
+                let carrier = Carrier::ALL
+                    .into_iter()
+                    .find(|c| c.name().as_bytes() == name)
+                    .ok_or(ParseError)?;
                 if self.peek() == Some(b',') {
                     self.at += 1;
                     if self.number()?.unwrap_or(0) != 0 {
@@ -329,10 +329,11 @@ mod tests {
     #[test]
     fn parses_the_modulation() {
         assert_eq!(
-            parse(b"+ms=v22;+MS=V21,0,300,300;E0").unwrap(),
+            parse(b"+ms=v22;+MS=V21,0,300,300;+MS=V22B;E0").unwrap(),
             [
                 Command::SetCarrier(Carrier::V22),
                 Command::SetCarrier(Carrier::V21),
+                Command::SetCarrier(Carrier::V22bis),
                 Command::Echo(false),
             ]
         );
@@ -344,6 +345,7 @@ mod tests {
     fn rejects_modulations_it_cannot_run() {
         assert_eq!(parse(b"+MS=V32"), Err(ParseError));
         assert_eq!(parse(b"+MS=V22,1"), Err(ParseError));
+        assert_eq!(parse(b"+MS=V22BIS"), Err(ParseError));
         assert_eq!(parse(b"+MS"), Err(ParseError));
         assert_eq!(parse(b"+MS=V22X"), Err(ParseError));
     }

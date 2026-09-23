@@ -219,7 +219,7 @@ async fn identifies_itself() {
     a.expect_next(format!("\r\nsoftmodem {}\r\n\r\nOK\r\n", env!("CARGO_PKG_VERSION")).as_bytes())
         .await;
     a.command("ATI4").await;
-    a.expect_next(b"\r\nV.21 300 bit/s, V.22 1200 bit/s\r\n\r\nOK\r\n")
+    a.expect_next(b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s\r\n\r\nOK\r\n")
         .await;
 }
 
@@ -233,7 +233,8 @@ async fn reads_and_lists_the_modulation() {
     a.command("ATZ+MS?").await;
     a.expect_next(b"\r\n+MS: V22,0\r\n\r\nOK\r\n").await;
     a.command("AT+MS=?").await;
-    a.expect_next(b"\r\n+MS: (V21,V22),(0)\r\n\r\nOK\r\n").await;
+    a.expect_next(b"\r\n+MS: (V21,V22,V22B),(0)\r\n\r\nOK\r\n")
+        .await;
     a.command("AT+MS=V22,1").await;
     a.expect_next(b"\r\nERROR\r\n").await;
 }
@@ -258,6 +259,33 @@ async fn a_v22_call_connects_at_1200_and_carries_data_both_ways() {
     a.expect_next(b"\r\nOK\r\n").await;
     a.command("ATO").await;
     a.expect_next(b"\r\nCONNECT 1200\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_v22bis_call_connects_at_2400_and_carries_data_both_ways() {
+    let (mut a, mut b) = two_modems("ATE0+MS=V22B", "ATE0S0=1+MS=V22B");
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 2400\r\n").await;
+    b.expect("CONNECT 2400\r\n").await;
+
+    let text = (0..40)
+        .map(|n| format!("line {n} from the caller\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    a.send(text.as_bytes()).await;
+    b.expect(&text).await;
+    b.send(b"hello from the answerer").await;
+    a.expect("hello from the answerer").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn v22bis_falls_back_to_a_v22_modem() {
+    let (mut a, mut b) = two_modems("ATE0+MS=V22B", "ATE0S0=1+MS=V22");
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 1200\r\n").await;
+    b.expect("CONNECT 1200\r\n").await;
+    a.send(b"hello at 1200").await;
+    b.expect("hello at 1200").await;
 }
 
 #[tokio::test(start_paused = true)]

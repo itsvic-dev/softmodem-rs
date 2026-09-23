@@ -335,6 +335,7 @@ where
         let modulation = match self.settings.carrier {
             Carrier::V21 => Modulation::V21,
             Carrier::V22 => Modulation::V22,
+            Carrier::V22bis => Modulation::V22bis,
         };
         self.line = Some(Line::new(call, modulation, role));
         self.mode = Mode::Handshake { deadline };
@@ -556,7 +557,7 @@ fn identify(n: u8) -> Option<String> {
     match n {
         0 => Some("softmodem".into()),
         3 => Some(format!("softmodem {}", env!("CARGO_PKG_VERSION"))),
-        4 => Some("V.21 300 bit/s, V.22 1200 bit/s".into()),
+        4 => Some("V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s".into()),
         _ => None,
     }
 }

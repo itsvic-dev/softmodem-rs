@@ -10,6 +10,7 @@ pub enum ResultCode {
     /// A connection at 300 bit/s.
     Connect,
     Connect1200,
+    Connect2400,
     Ring,
     NoCarrier,
     Error,
@@ -21,10 +22,10 @@ impl ResultCode {
     /// The `CONNECT` code for a connection at `bit_rate`.
     #[must_use]
     pub fn connect(bit_rate: u32) -> Self {
-        if bit_rate == 1200 {
-            Self::Connect1200
-        } else {
-            Self::Connect
+        match bit_rate {
+            1200 => Self::Connect1200,
+            2400 => Self::Connect2400,
+            _ => Self::Connect,
         }
     }
 
@@ -38,6 +39,7 @@ impl ResultCode {
             Self::Connect1200 => 5,
             Self::NoDialtone => 6,
             Self::Busy => 7,
+            Self::Connect2400 => 10,
         }
     }
 
@@ -46,6 +48,7 @@ impl ResultCode {
             Self::Ok => "OK",
             Self::Connect => "CONNECT",
             Self::Connect1200 => "CONNECT 1200",
+            Self::Connect2400 => "CONNECT 2400",
             Self::Ring => "RING",
             Self::NoCarrier => "NO CARRIER",
             Self::Error => "ERROR",
@@ -74,16 +77,18 @@ pub enum Carrier {
     #[default]
     V21,
     V22,
+    V22bis,
 }
 
 impl Carrier {
-    pub const ALL: [Self; 2] = [Self::V21, Self::V22];
+    pub const ALL: [Self; 3] = [Self::V21, Self::V22, Self::V22bis];
 
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::V21 => "V21",
             Self::V22 => "V22",
+            Self::V22bis => "V22B",
         }
     }
 }
@@ -237,7 +242,9 @@ impl Settings {
             return Vec::new();
         }
         let code = match code {
-            ResultCode::Connect1200 if self.result_set == 0 => ResultCode::Connect,
+            ResultCode::Connect1200 | ResultCode::Connect2400 if self.result_set == 0 => {
+                ResultCode::Connect
+            }
             ResultCode::Busy if self.result_set < 3 => ResultCode::NoCarrier,
             ResultCode::NoDialtone if !matches!(self.result_set, 2 | 4) => ResultCode::NoCarrier,
             code => code,
@@ -245,7 +252,9 @@ impl Settings {
         if self.verbose {
             self.line(code.words())
         } else {
-            vec![b'0' + code.digit(), self.terminator()]
+            let mut bytes = code.digit().to_string().into_bytes();
+            bytes.push(self.terminator());
+            bytes
         }
     }
 
@@ -316,6 +325,10 @@ mod tests {
             at(4, true).report(ResultCode::connect(300)),
             b"\r\nCONNECT\r\n"
         );
+        let connect = ResultCode::connect(2400);
+        assert_eq!(at(4, true).report(connect), b"\r\nCONNECT 2400\r\n");
+        assert_eq!(at(4, false).report(connect), b"10\r");
+        assert_eq!(at(0, true).report(connect), b"\r\nCONNECT\r\n");
     }
 
     #[test]
