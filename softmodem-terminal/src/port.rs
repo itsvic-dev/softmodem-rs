@@ -14,6 +14,16 @@ pub trait SerialPort: AsyncRead + AsyncWrite + Unpin {
     ///
     /// Fails if the port cannot signal the change.
     fn set_carrier(&mut self, on: bool) -> io::Result<()>;
+
+    /// Raises or drops RI, the ring indicator, on ports that have one.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the port cannot signal the change.
+    fn set_ring(&mut self, on: bool) -> io::Result<()> {
+        let _ = on;
+        Ok(())
+    }
 }
 
 /// A port with no control lines, such as stdin and stdout.

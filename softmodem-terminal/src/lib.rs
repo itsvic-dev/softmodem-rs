@@ -1,6 +1,7 @@
 //! The side of the modem that a computer sees.
 
 pub mod command;
+pub mod cuse;
 pub mod escape;
 pub mod line;
 pub mod port;
