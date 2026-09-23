@@ -113,7 +113,7 @@ unsafe impl Send for FskTx {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for FskRx {}
 // SAFETY: as for `FskTx`.
-unsafe impl Send for V22 {}
+unsafe impl Send for V22bis {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for ToneTx {}
 // SAFETY: as for `FskTx`.
@@ -276,7 +276,7 @@ struct V22Status {
 }
 
 unsafe extern "C" fn v22_status(user: *mut c_void, status: c_int) {
-    // SAFETY: `user` is the boxed `V22Status` owned by the `V22`.
+    // SAFETY: `user` is the boxed `V22Status` owned by the `V22bis`.
     let state = unsafe { &mut *user.cast::<V22Status>() };
     match status {
         SIG_STATUS_CARRIER_UP => state.carrier = true,
@@ -289,9 +289,10 @@ unsafe extern "C" fn v22_status(user: *mut c_void, status: c_int) {
     }
 }
 
-/// spandsp's V.22bis modem held at 1200 bit/s, which is V.22, sending and
-/// receiving 8N1 characters through V.14. It has no answer tone of its own.
-pub struct V22 {
+/// spandsp's V.22bis modem, sending and receiving 8N1 characters through
+/// V.14. Started at 1200 bit/s it is V.22, at 2400 bit/s it is V.22bis with
+/// fallback to V.22. It has no answer tone of its own.
+pub struct V22bis {
     modem: *mut c_void,
     framing: *mut c_void,
     bits: Box<Outgoing>,
@@ -299,9 +300,9 @@ pub struct V22 {
     status: Box<V22Status>,
 }
 
-impl V22 {
+impl V22bis {
     #[must_use]
-    pub fn new(calling: bool, guard: GuardTone) -> Self {
+    pub fn new(bit_rate: c_int, calling: bool, guard: GuardTone) -> Self {
         let mut bits = Box::<Outgoing>::default();
         let mut received = Box::<Received>::default();
         let mut status = Box::<V22Status>::default();
@@ -313,7 +314,7 @@ impl V22 {
             let framing = async_rx_init(ptr::null_mut(), 8, 0, 1, true, put_byte, sink);
             let modem = v22bis_init(
                 ptr::null_mut(),
-                1200,
+                bit_rate,
                 guard as c_int,
                 calling,
                 next_bit,
@@ -384,7 +385,7 @@ impl V22 {
     }
 }
 
-impl Drop for V22 {
+impl Drop for V22bis {
     fn drop(&mut self) {
         // SAFETY: allocated in `new` and not freed before.
         unsafe {
