@@ -7,6 +7,7 @@ use crate::pump::{DataPump, Modulation, Role};
 use crate::tone::ToneDetector;
 use crate::uart::Decoder;
 use crate::v8::{self, Heard, Menu, Modes};
+use crate::v21::V21;
 
 // V.25 § 4.3, and V.8 §§ 8.1.1, 8.1.2, 8.2.2.
 const SILENCE_SAMPLES: usize = 16_000;
@@ -16,6 +17,7 @@ const GAP_SAMPLES: usize = 600;
 // Annex A.2.2 of V.32 bis.
 const TA_SAMPLES: usize = 24_000;
 const MARK_SAMPLES: usize = 1_600;
+const SIGC_BITS: usize = 150;
 const ANSWER_TONE_DBM0: f64 = -13.0;
 const V21_MARK_HZ: f64 = 1650.0;
 
@@ -69,6 +71,7 @@ struct MenuLink {
     demodulator: fsk::Demodulator,
     reader: v8::Reader,
     repeats: Repeats,
+    bits_without_menu: usize,
 }
 
 impl MenuLink {
@@ -82,7 +85,22 @@ impl MenuLink {
             demodulator: fsk::Demodulator::new(receive),
             reader: v8::Reader::new(),
             repeats: Repeats::default(),
+            bits_without_menu: 0,
         }
+    }
+
+    // A V.21 caller's mark or data rather than CM, which repeats every 60 bits.
+    fn plain_v21(&self) -> bool {
+        self.bits_without_menu >= SIGC_BITS
+    }
+
+    fn take_v21(&mut self, role: Role) -> Box<dyn DataPump> {
+        let receive = match role {
+            Role::Originate => V21_ANSWER,
+            Role::Answer => V21_ORIGINATE,
+        };
+        let demodulator = std::mem::replace(&mut self.demodulator, fsk::Demodulator::new(receive));
+        Box::new(V21::resuming(role, demodulator))
     }
 
     fn repeat(&mut self, out: &mut [i16], menu: Menu) {
@@ -95,9 +113,15 @@ impl MenuLink {
     fn hear(&mut self, input: &[i16]) -> Vec<Heard> {
         let mut bits = Vec::new();
         self.demodulator.process(input, &mut bits);
-        bits.into_iter()
+        self.bits_without_menu += bits.len();
+        let heard: Vec<Heard> = bits
+            .into_iter()
             .filter_map(|b| self.reader.push(b))
-            .collect()
+            .collect();
+        if heard.iter().any(|h| matches!(h, Heard::Menu(_))) {
+            self.bits_without_menu = 0;
+        }
+        heard
     }
 
     fn menu(&mut self, input: &[i16]) -> Option<Menu> {
@@ -231,6 +255,12 @@ impl DataPump for Answer {
                             modes,
                         },
                     };
+                } else if self.link.plain_v21() {
+                    // V.8 § 8.2.2: a V.21 caller's sigC during ANSam.
+                    self.stage = AnswerStage::Gap {
+                        until: self.sent + GAP_SAMPLES,
+                        next: Some(self.link.take_v21(Role::Answer)),
+                    };
                 }
             }
             AnswerStage::Jm { menu } => {
@@ -247,6 +277,7 @@ impl DataPump for Answer {
             AnswerStage::Gap { .. } => {}
             AnswerStage::Trying { pump, .. } => {
                 pump.receive(input, bits);
+                self.link.hear(input);
                 if pump.engaged() {
                     let AnswerStage::Trying { pump, .. } =
                         std::mem::replace(&mut self.stage, AnswerStage::Silence)
@@ -254,6 +285,8 @@ impl DataPump for Answer {
                         unreachable!("matched above");
                     };
                     self.stage = AnswerStage::Chosen(pump);
+                } else if self.link.plain_v21() {
+                    self.stage = AnswerStage::Chosen(self.link.take_v21(Role::Answer));
                 }
             }
             AnswerStage::Chosen(pump) => pump.receive(input, bits),
@@ -287,11 +320,50 @@ enum CallStage {
         until: usize,
         next: Box<dyn DataPump>,
     },
-    Legacy {
-        candidate: Option<Box<dyn DataPump>>,
-        mark: usize,
-    },
+    Legacy,
     Chosen(Box<dyn DataPump>),
+}
+
+// V.8 § 8.1.1: the caller goes on as soon as it hears a modulation's own sigA.
+#[derive(Debug)]
+struct SigA {
+    candidate: Option<Box<dyn DataPump>>,
+    mark: ToneDetector,
+    marked: usize,
+}
+
+impl SigA {
+    fn new(top: Modulation) -> Self {
+        Self {
+            candidate: (top != Modulation::V21).then(|| top.pump(Role::Originate)),
+            mark: ToneDetector::new(V21_MARK_HZ),
+            marked: 0,
+        }
+    }
+
+    fn tick(&mut self, samples: usize) {
+        if let Some(pump) = &mut self.candidate {
+            pump.transmit(&mut vec![0; samples]);
+        }
+    }
+
+    fn hear(&mut self, input: &[i16]) -> Option<Box<dyn DataPump>> {
+        if let Some(pump) = &mut self.candidate {
+            pump.receive(input, &mut Vec::new());
+        }
+        self.marked = if self.mark.process(input) {
+            self.marked + input.len()
+        } else {
+            0
+        };
+        if self.candidate.as_ref().is_some_and(|p| p.engaged()) {
+            self.candidate.take()
+        } else if self.marked >= MARK_SAMPLES {
+            Some(Modulation::V21.pump(Role::Originate))
+        } else {
+            None
+        }
+    }
 }
 
 // Calls with V.8 after ANSam, or follows USB1 or V.21 mark after plain ANS.
@@ -300,7 +372,7 @@ struct Call {
     top: Modulation,
     stage: CallStage,
     detector: AnswerToneDetector,
-    mark: ToneDetector,
+    sig_a: SigA,
     link: MenuLink,
     sent: usize,
 }
@@ -311,7 +383,7 @@ impl Call {
             top,
             stage: CallStage::Listening { heard_ans: false },
             detector: AnswerToneDetector::new(),
-            mark: ToneDetector::new(V21_MARK_HZ),
+            sig_a: SigA::new(top),
             link: MenuLink::new(Role::Originate),
             sent: 0,
         }
@@ -394,16 +466,27 @@ impl DataPump for Call {
                     };
                 }
             }
-            CallStage::Legacy { candidate, .. } => match candidate {
-                Some(pump) => pump.transmit(out),
-                None => out.fill(0),
-            },
+            CallStage::Legacy => out.fill(0),
             CallStage::Chosen(pump) => pump.transmit(out),
+        }
+        if matches!(
+            self.stage,
+            CallStage::Te { .. } | CallStage::Cm { .. } | CallStage::Legacy
+        ) {
+            self.sig_a.tick(out.len());
         }
         self.sent += out.len();
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        let waiting = matches!(
+            self.stage,
+            CallStage::Te { .. } | CallStage::Cm { joint: None } | CallStage::Legacy
+        );
+        if waiting && let Some(pump) = self.sig_a.hear(input) {
+            self.stage = CallStage::Chosen(pump);
+            return;
+        }
         match &mut self.stage {
             CallStage::Listening { heard_ans } => match self.detector.process(input) {
                 Some(AnswerToneKind::Ansam) => {
@@ -412,13 +495,7 @@ impl DataPump for Call {
                     };
                 }
                 Some(AnswerToneKind::Ans) => *heard_ans = true,
-                None if *heard_ans => {
-                    self.stage = CallStage::Legacy {
-                        candidate: (self.top != Modulation::V21)
-                            .then(|| self.top.pump(Role::Originate)),
-                        mark: 0,
-                    };
-                }
+                None if *heard_ans => self.stage = CallStage::Legacy,
                 None => {}
             },
             CallStage::Cm { joint } => {
@@ -428,34 +505,11 @@ impl DataPump for Call {
                     *joint = Some(offered(self.top).common(jm.modes));
                 }
             }
-            CallStage::Legacy { candidate, mark } => {
-                if let Some(pump) = candidate {
-                    pump.receive(input, bits);
-                }
-                *mark = if self.mark.process(input) {
-                    *mark + input.len()
-                } else {
-                    0
-                };
-                let engaged = candidate.as_ref().is_some_and(|p| p.engaged());
-                if engaged {
-                    let CallStage::Legacy {
-                        candidate: Some(pump),
-                        ..
-                    } = std::mem::replace(
-                        &mut self.stage,
-                        CallStage::Listening { heard_ans: false },
-                    )
-                    else {
-                        unreachable!("matched above");
-                    };
-                    self.stage = CallStage::Chosen(pump);
-                } else if *mark >= MARK_SAMPLES {
-                    self.stage = CallStage::Chosen(Modulation::V21.pump(Role::Originate));
-                }
-            }
             CallStage::Chosen(pump) => pump.receive(input, bits),
-            CallStage::Te { .. } | CallStage::Cj { .. } | CallStage::Gap { .. } => {}
+            CallStage::Te { .. }
+            | CallStage::Cj { .. }
+            | CallStage::Gap { .. }
+            | CallStage::Legacy => {}
         }
     }
 

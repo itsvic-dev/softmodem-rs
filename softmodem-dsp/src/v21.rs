@@ -35,6 +35,16 @@ impl V21 {
             heard_carrier: false,
         }
     }
+
+    /// A V.21 end that goes on from a demodulator already listening to the
+    /// far end's channel, so it keeps what it has heard.
+    pub(crate) fn resuming(role: Role, demodulator: Demodulator) -> Self {
+        Self {
+            heard_carrier: demodulator.carrier(),
+            demodulator,
+            ..Self::new(role)
+        }
+    }
 }
 
 impl DataPump for V21 {
