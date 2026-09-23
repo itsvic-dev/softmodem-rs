@@ -1,0 +1,42 @@
+{
+  description = "softmodem: a V.21 modem that places real calls over SIP";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs =
+    { self, nixpkgs }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+      forSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+    in
+    {
+      overlays.default = final: _prev: {
+        softmodem = final.callPackage ./nix/softmodem.nix { };
+      };
+
+      packages = forSystems (pkgs: rec {
+        softmodem = pkgs.callPackage ./nix/softmodem.nix { };
+        default = softmodem;
+      });
+
+      devShells = forSystems (pkgs: {
+        default = pkgs.mkShell {
+          packages = with pkgs; [
+            cargo
+            rustc
+            clippy
+            rustfmt
+            rust-analyzer
+            crate2nix
+          ];
+        };
+      });
+
+      formatter = forSystems (pkgs: pkgs.nixfmt);
+    };
+}
