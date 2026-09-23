@@ -11,7 +11,10 @@ pub enum Command {
     Identify(u8),
     Loudness(u8),
     Monitor(u8),
-    Online,
+    /// `O`, and with `O1` a retrain as it returns to data mode.
+    Online {
+        retrain: bool,
+    },
     Quiet(bool),
     Verbose(bool),
     ResultSet(u8),
@@ -123,10 +126,9 @@ impl Parser<'_> {
             b'I' => Command::Identify(self.value(9)?),
             b'L' => Command::Loudness(self.value(3)?),
             b'M' => Command::Monitor(self.value(2)?),
-            b'O' => {
-                self.value(1)?;
-                Command::Online
-            }
+            b'O' => Command::Online {
+                retrain: self.value(1)? == 1,
+            },
             b'Q' => Command::Quiet(self.value(1)? == 1),
             b'V' => Command::Verbose(self.value(1)? == 1),
             b'X' => Command::ResultSet(self.value(4)?),
@@ -331,6 +333,19 @@ mod tests {
                 Command::Echo(true),
             ]
         );
+    }
+
+    #[test]
+    fn o1_asks_for_a_retrain() {
+        assert_eq!(
+            parse(b"OO0O1").unwrap(),
+            [
+                Command::Online { retrain: false },
+                Command::Online { retrain: false },
+                Command::Online { retrain: true },
+            ]
+        );
+        assert_eq!(parse(b"O2"), Err(ParseError));
     }
 
     #[test]

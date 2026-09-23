@@ -203,7 +203,7 @@ where
             match command {
                 Command::Answer => return self.answer().await,
                 Command::Dial(dial) => return self.dial(dial).await,
-                Command::Online => return self.online().await,
+                Command::Online { retrain } => return self.online(retrain).await,
                 Command::Reset => {
                     self.hang_up().await;
                     self.settings = self.profile.clone();
@@ -352,7 +352,7 @@ where
         self.ticker.reset();
     }
 
-    async fn online(&mut self) -> io::Result<()> {
+    async fn online(&mut self, retrain: bool) -> io::Result<()> {
         let Some(line) = &mut self.line else {
             return self.report(ResultCode::NoCarrier).await;
         };
@@ -362,6 +362,9 @@ where
                 deadline: Instant::now() + self.settings.carrier_wait(),
             };
             return Ok(());
+        }
+        if retrain {
+            line.retrain();
         }
         let code = ResultCode::connect(line.bit_rate().unwrap_or_default());
         self.mode = Mode::Data {

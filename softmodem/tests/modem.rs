@@ -281,6 +281,24 @@ async fn a_v22bis_call_connects_at_2400_and_carries_data_both_ways() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn ato1_retrains_and_the_call_goes_on() {
+    let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 2400\r\n").await;
+    b.expect("CONNECT 2400\r\n").await;
+
+    a.escape().await;
+    a.expect_next(b"\r\nOK\r\n").await;
+    a.command("ATO1").await;
+    a.expect_next(b"\r\nCONNECT 2400\r\n").await;
+    sleep(Duration::from_secs(2)).await;
+    a.send(b"after the retrain").await;
+    b.expect("after the retrain").await;
+    b.send(b"and back").await;
+    a.expect("and back").await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn v22bis_falls_back_to_a_v22_modem() {
     let (mut a, mut b) = two_modems("ATE0+MS=V22B", "ATE0S0=1+MS=V22");
     a.command("ATDT0300").await;

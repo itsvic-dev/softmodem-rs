@@ -229,6 +229,12 @@ impl DataPump for Answer {
         }
     }
 
+    fn retrain(&mut self) {
+        if let AnswerStage::Chosen(pump) = &mut self.stage {
+            pump.retrain();
+        }
+    }
+
     fn pending(&self) -> usize {
         self.pump().map_or(0, DataPump::pending)
     }
@@ -417,6 +423,12 @@ impl DataPump for Call {
     fn push_bits(&mut self, bits: &[bool]) {
         if let CallStage::Chosen(pump) = &mut self.stage {
             pump.push_bits(bits);
+        }
+    }
+
+    fn retrain(&mut self) {
+        if let CallStage::Chosen(pump) = &mut self.stage {
+            pump.retrain();
         }
     }
 

@@ -55,6 +55,12 @@ impl Line {
         self.handshake = Some(Handshake::new(self.offer, role));
     }
 
+    pub(crate) fn retrain(&mut self) {
+        if let Some(handshake) = &mut self.handshake {
+            handshake.pump.retrain();
+        }
+    }
+
     pub(crate) fn has_handshake(&self) -> bool {
         self.handshake.is_some()
     }
