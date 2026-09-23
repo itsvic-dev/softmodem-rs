@@ -467,6 +467,24 @@ SIP arrives. The wire can inject loss, reordering and delay.
 **SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. Since the
 media path is shared, this step adds only signalling.
 
+- It registers one user with digest auth, over TCP to port 5060, and keeps
+  the registration alive. The Contact carries `;transport=tcp` and the
+  registration's own address, so the PBX sends incoming INVITEs back over
+  the same connection and nothing has to listen.
+- `ezk-sip-ua` runs without its `rtc` feature. Its `MediaBackend` trait is
+  implemented here: the offer and answer hold PCMA only, and the audio runs
+  on the shared RTP session. That session takes packets from any port on the
+  far end's address, since the PBX need not send from the port it announced.
+- A call that is refused with 486, 600 or 603 is `BUSY`. A dial given up
+  before an answer sends CANCEL. An incoming call gets 180 Ringing, and a
+  second one while it rings gets 486.
+- Either end's hang-up ends the other: a BYE stops the RTP session, and the
+  modem hanging up sends a BYE.
+
+Against the Intraweb PBX, one modem dialling another's extension connects in
+7.4 s from `ATDT`, most of which is the answer sequence.
+`softmodem/tests/pbx.rs` holds the live tests, ignored unless asked for.
+
 ### WAV dumps
 
 A wrapper around any transport writes each call to WAV files: one for the
@@ -494,7 +512,8 @@ Everything before it can be built and tested with two instances on one host.
    the modem place a call through its transport, `RING` and `ATA` answer
    one, `+++` and `ATO` leave and return to data mode. The answering side
    sends the V.25 answer tone. Until SIP exists, the transport is the wire.
-5. SIP transport, two instances through the PBX.
+5. SIP transport, two instances through the PBX. Done: data both ways,
+   hang-up and busy, with PPP over it still to try.
 6. Bell 103.
 7. A speaker: call audio on the host sound output, under `L` and `M`.
 8. A real modem behind the SPA2102 calling the answering side.

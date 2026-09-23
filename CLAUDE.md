@@ -9,7 +9,7 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
   escape. No IO outside `pty`.
 - `softmodem-transport`: carries audio frames for a call, and rings, answers
   and refuses calls. A-law, the reorder window, the UDP wire, an in-memory
-  loopback and WAV recording.
+  loopback, SIP through a registrar, and WAV recording.
 - `softmodem`: the modem state machine that joins them, and the binary.
 
 ## Working here
@@ -27,6 +27,12 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
   and `softmodem wire --local 127.0.0.1:5301 --peer 127.0.0.1:5300 --pty /tmp/caller --dump dumps`,
   then a terminal program on `/tmp/caller` and `ATDT0300`. Without `--pty` the
   serial port is stdin and stdout.
+- `creds.txt` is ignored and holds live accounts for `pbx.vic.iw`. Never read
+  or print it. Load it into the environment and pass variable names:
+  `set -a; . ./creds.txt; set +a`, then
+  `softmodem sip --registrar pbx.vic.iw --user "$USER1" --password-env USER1_PASS --pty /tmp/a`.
+  The live tests run with
+  `SOFTMODEM_PBX=pbx.vic.iw cargo test -p softmodem --test pbx -- --ignored --test-threads=1`.
 - `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.
