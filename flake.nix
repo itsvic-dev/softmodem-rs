@@ -40,17 +40,20 @@
 
       devShells = forSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
-            rust-analyzer
-            crate2nix
-            # Only for softmodem-interop, which tests against spandsp.
-            pkg-config
-            spandsp3
-          ];
+          packages =
+            with pkgs;
+            [
+              cargo
+              rustc
+              clippy
+              rustfmt
+              rust-analyzer
+              crate2nix
+              # Only for softmodem-interop, which tests against spandsp.
+              pkg-config
+              spandsp3
+            ]
+            ++ lib.optional stdenv.hostPlatform.isLinux alsa-lib;
         };
       });
 

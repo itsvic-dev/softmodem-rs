@@ -8,6 +8,7 @@ license.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 bytesstr.workspace = true
+cpal.workspace = true
 ezk-rtp.workspace = true
 ezk-sdp-types.workspace = true
 ezk-sip-auth.workspace = true

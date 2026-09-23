@@ -18,6 +18,7 @@ async-trait = "0.1"
 bytes = "1"
 bytesstr = "1"
 clap = { version = "4", features = ["derive"] }
+cpal = "0.18"
 ezk-rtp = "0.2"
 ezk-sdp-types = "0.6"
 ezk-sip-auth = "0.5"

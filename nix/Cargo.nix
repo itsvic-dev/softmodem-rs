@@ -121,6 +121,66 @@ rec {
     #   inject test dependencies into the build
 
     crates = {
+      "alsa" = rec {
+        crateName = "alsa";
+        version = "0.11.0";
+        edition = "2021";
+        sha256 = "0pdx9k0766lfwnflia3vaxl89rfjc4v3riym5jl71mnwkq24fac1";
+        authors = [
+          "David Henningsson <coding@diwic.se>"
+        ];
+        dependencies = [
+          {
+            name = "alsa-sys";
+            packageId = "alsa-sys";
+          }
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+          }
+          {
+            name = "cfg-if";
+            packageId = "cfg-if";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "alsa-sys" = rec {
+        crateName = "alsa-sys";
+        version = "0.4.0";
+        edition = "2021";
+        links = "alsa";
+        crateBin = [];
+        sha256 = "010yyg1wp3dijm6574s3m0r23azab1scxv7b0zvd6p96b846jxdd";
+        libName = "alsa_sys";
+        authors = [
+          "Pierre Krieger <pierre.krieger1708@gmail.com>"
+          "David Henningsson <coding@diwic.se>"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "pkg-config";
+            packageId = "pkg-config";
+          }
+        ];
+        features = {
+          "bindgen" = [ "dep:bindgen" ];
+          "use-bindgen" = [ "bindgen" ];
+        };
+      };
       "anstream" = rec {
         crateName = "anstream";
         version = "1.0.0";
@@ -362,6 +422,35 @@ rec {
           }
         ];
 
+      };
+      "block2" = rec {
+        crateName = "block2";
+        version = "0.6.2";
+        edition = "2021";
+        sha256 = "1xcfllzx6c3jc554nmb5qy6xmlkl6l6j5ib4wd11800n0n3rvsyd";
+        authors = [
+          "Mads Marquart <mads@marquart.dk>"
+        ];
+        dependencies = [
+          {
+            name = "objc2";
+            packageId = "objc2";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
+        features = {
+          "compiler-rt" = [ "objc2/unstable-compiler-rt" ];
+          "default" = [ "std" ];
+          "gnustep-1-7" = [ "objc2/gnustep-1-7" ];
+          "gnustep-1-8" = [ "gnustep-1-7" "objc2/gnustep-1-8" ];
+          "gnustep-1-9" = [ "gnustep-1-8" "objc2/gnustep-1-9" ];
+          "gnustep-2-0" = [ "gnustep-1-9" "objc2/gnustep-2-0" ];
+          "gnustep-2-1" = [ "gnustep-2-0" "objc2/gnustep-2-1" ];
+          "std" = [ "alloc" ];
+          "unstable-winobjc" = [ "gnustep-1-8" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "default" "std" ];
       };
       "bumpalo" = rec {
         crateName = "bumpalo";
@@ -714,6 +803,224 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "link" ];
       };
+      "coreaudio-rs" = rec {
+        crateName = "coreaudio-rs";
+        version = "0.14.2";
+        edition = "2018";
+        sha256 = "0n5vfpjf3x3qlb978x2kwsg9s6iphm1svjc2al1mmxmw7v57spbx";
+        libName = "coreaudio";
+        authors = [
+          "mitchmindtree <mitchell.nordine@gmail.com>"
+          "yupferris <jake@fusetools.com>"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
+          {
+            name = "objc2-audio-toolbox";
+            packageId = "objc2-audio-toolbox";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" "bitflags" "libc" "objc2-core-foundation" "objc2-core-audio" "objc2-core-audio-types" "AUComponent" "AudioCodec" "AudioComponent" "AudioFormat" "AudioOutputUnit" "AudioUnitProperties" "AudioServices" "AudioSession" ];
+          }
+          {
+            name = "objc2-core-audio";
+            packageId = "objc2-core-audio";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" "objc2-core-audio-types" "AudioHardware" "AudioHardwareDeprecated" ];
+          }
+          {
+            name = "objc2-core-audio-types";
+            packageId = "objc2-core-audio-types";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" "bitflags" "CoreAudioBaseTypes" ];
+          }
+          {
+            name = "objc2-core-foundation";
+            packageId = "objc2-core-foundation";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" "CFString" ];
+          }
+        ];
+        features = {
+          "audio_toolbox" = [ "dep:objc2-audio-toolbox" "dep:objc2-core-foundation" "dep:objc2-core-audio" "dep:objc2-core-audio-types" ];
+          "audio_unit" = [ "audio_toolbox" ];
+          "core_audio" = [ "dep:objc2-core-audio" "dep:objc2-core-audio-types" ];
+          "default" = [ "audio_toolbox" "core_audio" ];
+        };
+        resolvedDefaultFeatures = [ "audio_toolbox" "core_audio" ];
+      };
+      "cpal" = rec {
+        crateName = "cpal";
+        version = "0.18.2";
+        edition = "2021";
+        sha256 = "1wc1hsppf4mavq6vyd2aqngyni3k76pij8dbwkid6hkv6b8fh0kg";
+        dependencies = [
+          {
+            name = "alsa";
+            packageId = "alsa";
+            target = { target, features }: (("linux" == target."os" or null) || ("dragonfly" == target."os" or null) || ("freebsd" == target."os" or null) || ("netbsd" == target."os" or null));
+          }
+          {
+            name = "block2";
+            packageId = "block2";
+            target = { target, features }: (("ios" == target."os" or null) || ("tvos" == target."os" or null) || ("visionos" == target."os" or null));
+          }
+          {
+            name = "coreaudio-rs";
+            packageId = "coreaudio-rs";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("apple" == target."vendor" or null);
+            features = [ "core_audio" "audio_toolbox" ];
+          }
+          {
+            name = "dasp_sample";
+            packageId = "dasp_sample";
+          }
+          {
+            name = "jni";
+            packageId = "jni";
+            target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "js-sys";
+            packageId = "js-sys";
+            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: (("linux" == target."os" or null) || ("dragonfly" == target."os" or null) || ("freebsd" == target."os" or null) || ("netbsd" == target."os" or null));
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "mach2";
+            packageId = "mach2";
+            target = { target, features }: ("apple" == target."vendor" or null);
+          }
+          {
+            name = "ndk";
+            packageId = "ndk";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("android" == target."os" or null);
+            features = [ "audio" "api-level-26" ];
+          }
+          {
+            name = "ndk-context";
+            packageId = "ndk-context";
+            target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "num-derive";
+            packageId = "num-derive";
+            target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "num-traits";
+            packageId = "num-traits";
+            target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "num-traits";
+            packageId = "num-traits";
+            optional = true;
+            target = { target, features }: ("windows" == target."os" or null);
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            target = { target, features }: ("apple" == target."vendor" or null);
+          }
+          {
+            name = "objc2-audio-toolbox";
+            packageId = "objc2-audio-toolbox";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("apple" == target."vendor" or null);
+            features = [ "std" "AUComponent" "AudioUnitProperties" ];
+          }
+          {
+            name = "objc2-avf-audio";
+            packageId = "objc2-avf-audio";
+            usesDefaultFeatures = false;
+            target = { target, features }: (("ios" == target."os" or null) || ("tvos" == target."os" or null) || ("visionos" == target."os" or null));
+            features = [ "std" "AVAudioSession" "AVAudioSessionTypes" ];
+          }
+          {
+            name = "objc2-core-audio";
+            packageId = "objc2-core-audio";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("apple" == target."vendor" or null);
+            features = [ "std" "AudioHardware" "AudioHardwareDeprecated" "objc2" "objc2-foundation" ];
+          }
+          {
+            name = "objc2-core-audio-types";
+            packageId = "objc2-core-audio-types";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("apple" == target."vendor" or null);
+            features = [ "std" "CoreAudioBaseTypes" ];
+          }
+          {
+            name = "objc2-core-foundation";
+            packageId = "objc2-core-foundation";
+            target = { target, features }: ("apple" == target."vendor" or null);
+          }
+          {
+            name = "objc2-foundation";
+            packageId = "objc2-foundation";
+            target = { target, features }: (("ios" == target."os" or null) || ("tvos" == target."os" or null) || ("visionos" == target."os" or null));
+            features = [ "block2" "NSDictionary" "NSNotification" "NSOperation" ];
+          }
+          {
+            name = "objc2-foundation";
+            packageId = "objc2-foundation";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("apple" == target."vendor" or null);
+            features = [ "std" "NSArray" "NSString" "NSValue" ];
+          }
+          {
+            name = "web-sys";
+            packageId = "web-sys";
+            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
+            features = [ "AudioContext" "AudioContextOptions" "AudioBuffer" "AudioBufferSourceNode" "AudioNode" "AudioDestinationNode" "Window" "AudioContextState" ];
+          }
+          {
+            name = "windows";
+            packageId = "windows";
+            target = { target, features }: ("windows" == target."os" or null);
+            features = [ "Win32_Media" "Win32_Media_Audio" "Win32_Foundation" "Win32_Devices_Properties" "Win32_Media_KernelStreaming" "Win32_System_Com_StructuredStorage" "Win32_System_Threading" "Win32_System_Performance" "Win32_Security" "Win32_System_SystemServices" "Win32_System_Variant" "Win32_Media_Multimedia" "Win32_UI_Shell_PropertiesSystem" ];
+          }
+          {
+            name = "windows-core";
+            packageId = "windows-core";
+            target = { target, features }: ("windows" == target."os" or null);
+          }
+        ];
+        features = {
+          "asio" = [ "dep:asio-sys" "dep:num-traits" ];
+          "audioworklet" = [ "dep:futures-channel" "dep:futures-util" "wasm-bindgen" "web-sys/Blob" "web-sys/BlobPropertyBag" "web-sys/Url" "web-sys/AudioWorklet" "web-sys/AudioWorkletNode" "web-sys/AudioWorkletNodeOptions" ];
+          "jack" = [ "dep:jack" ];
+          "pipewire" = [ "dep:pipewire" ];
+          "pulseaudio" = [ "dep:pulseaudio" "dep:futures" "dep:portable-atomic" ];
+          "realtime" = [ "dep:audio_thread_priority" "dep:alsa-sys" ];
+          "realtime-dbus" = [ "realtime" "audio_thread_priority/with_dbus" ];
+          "wasm-bindgen" = [ "dep:wasm-bindgen" "dep:wasm-bindgen-futures" "dep:futures-channel" "dep:futures-util" ];
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
       "cpufeatures 0.2.17" = rec {
         crateName = "cpufeatures";
         version = "0.2.17";
@@ -875,6 +1182,19 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
+      "dasp_sample" = rec {
+        crateName = "dasp_sample";
+        version = "0.11.0";
+        edition = "2018";
+        sha256 = "0zzw35akm3qs2rixbmlijk6h0l4g9ry6g74qc59zv1q8vs1f31qc";
+        authors = [
+          "mitchmindtree <mitchell.nordine@gmail.com>"
+        ];
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
+      };
       "data-encoding" = rec {
         crateName = "data-encoding";
         version = "2.11.1";
@@ -947,6 +1267,39 @@ rec {
           "subtle" = [ "dep:subtle" ];
         };
         resolvedDefaultFeatures = [ "alloc" "block-buffer" "core-api" "default" "mac" "std" "subtle" ];
+      };
+      "dispatch2" = rec {
+        crateName = "dispatch2";
+        version = "0.3.1";
+        edition = "2021";
+        sha256 = "0f5xmnbzpaz1g80m27kd804p75nswh0ikb6wvqh4ba3x9rz3c3hy";
+        authors = [
+          "Mads Marquart <mads@marquart.dk>"
+          "Mary <mary@mary.zone>"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
+        features = {
+          "block2" = [ "dep:block2" ];
+          "default" = [ "std" "block2" "libc" "objc2" ];
+          "libc" = [ "dep:libc" ];
+          "objc2" = [ "dep:objc2" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "objc2" ];
       };
       "displaydoc" = rec {
         crateName = "displaydoc";
@@ -1940,6 +2293,24 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" "sys_rng" ];
       };
+      "hashbrown" = rec {
+        crateName = "hashbrown";
+        version = "0.17.1";
+        edition = "2024";
+        sha256 = "0jmqz7i4yl6cm7rbn0i2ffkfrmwi6xkmzkaldr2v8bcsx2v0jngd";
+        features = {
+          "alloc" = [ "dep:alloc" ];
+          "allocator-api2" = [ "dep:allocator-api2" ];
+          "core" = [ "dep:core" ];
+          "default" = [ "default-hasher" "inline-more" "allocator-api2" "equivalent" "raw-entry" ];
+          "default-hasher" = [ "dep:foldhash" ];
+          "equivalent" = [ "dep:equivalent" ];
+          "nightly" = [ "foldhash?/nightly" "bumpalo/allocator_api" ];
+          "rayon" = [ "dep:rayon" ];
+          "rustc-dep-of-std" = [ "nightly" "core" "alloc" "rustc-internal-api" ];
+          "serde" = [ "dep:serde_core" "dep:serde" ];
+        };
+      };
       "heck" = rec {
         crateName = "heck";
         version = "0.5.0";
@@ -2706,6 +3077,34 @@ rec {
         };
         resolvedDefaultFeatures = [ "compiled_data" ];
       };
+      "indexmap" = rec {
+        crateName = "indexmap";
+        version = "2.14.2";
+        edition = "2024";
+        sha256 = "0mf86hbjkkcd82cpq683bblbs0zwa8ndla96ci8p1ji6bl7ijknc";
+        dependencies = [
+          {
+            name = "equivalent";
+            packageId = "equivalent";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "hashbrown";
+            packageId = "hashbrown";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "arbitrary" = [ "dep:arbitrary" ];
+          "borsh" = [ "dep:borsh" ];
+          "default" = [ "std" ];
+          "quickcheck" = [ "dep:quickcheck" ];
+          "rayon" = [ "dep:rayon" ];
+          "serde" = [ "dep:serde_core" "dep:serde" ];
+          "sval" = [ "dep:sval" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
+      };
       "ipconfig" = rec {
         crateName = "ipconfig";
         version = "0.3.4";
@@ -2812,7 +3211,7 @@ rec {
           }
           {
             name = "jni-sys";
-            packageId = "jni-sys";
+            packageId = "jni-sys 0.4.1";
           }
           {
             name = "log";
@@ -2877,7 +3276,27 @@ rec {
         ];
 
       };
-      "jni-sys" = rec {
+      "jni-sys 0.3.1" = rec {
+        crateName = "jni-sys";
+        version = "0.3.1";
+        edition = "2021";
+        sha256 = "0n1j8fbz081w1igfrpc79n6vgm7h3ik34nziy5fjgq5nz7hm59j1";
+        libName = "jni_sys";
+        authors = [
+          "Steven Fackler <sfackler@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "jni-sys";
+            packageId = "jni-sys 0.4.1";
+            rename = "jni_sys_04";
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
+      "jni-sys 0.4.1" = rec {
         crateName = "jni-sys";
         version = "0.4.1";
         edition = "2021";
@@ -2949,7 +3368,7 @@ rec {
           "futures-core-03-stream" = [ "dep:futures-util" "dep:futures-core" ];
           "std" = [ "wasm-bindgen/std" "futures-util/std" ];
         };
-        resolvedDefaultFeatures = [ "std" ];
+        resolvedDefaultFeatures = [ "default" "std" "unsafe-eval" ];
       };
       "lazy_static" = rec {
         crateName = "lazy_static";
@@ -3055,6 +3474,15 @@ rec {
           "value-bag" = [ "dep:value-bag" ];
         };
         resolvedDefaultFeatures = [ "alloc" "std" ];
+      };
+      "mach2" = rec {
+        crateName = "mach2";
+        version = "0.6.0";
+        edition = "2024";
+        sha256 = "0asmmmvsvf9ipn2jszazhhlrqv8qgcglwdh0n3r470pna70hirns";
+        features = {
+        };
+        resolvedDefaultFeatures = [ "default" ];
       };
       "md5" = rec {
         crateName = "md5";
@@ -3219,6 +3647,67 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "serde" "serde_impl" ];
       };
+      "ndk" = rec {
+        crateName = "ndk";
+        version = "0.9.0";
+        edition = "2021";
+        sha256 = "1m32zpmi5w1pf3j47k6k5fw395dc7aj8d0mdpsv53lqkprxjxx63";
+        authors = [
+          "The Rust Mobile contributors"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+          }
+          {
+            name = "jni-sys";
+            packageId = "jni-sys 0.3.1";
+          }
+          {
+            name = "log";
+            packageId = "log";
+          }
+          {
+            name = "ndk-sys";
+            packageId = "ndk-sys";
+            rename = "ffi";
+          }
+          {
+            name = "num_enum";
+            packageId = "num_enum";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 1.0.69";
+          }
+        ];
+        features = {
+          "all" = [ "audio" "bitmap" "media" "nativewindow" "sync" "api-level-33" "rwh_04" "rwh_05" "rwh_06" ];
+          "api-level-24" = [ "api-level-23" ];
+          "api-level-25" = [ "api-level-24" ];
+          "api-level-26" = [ "api-level-25" ];
+          "api-level-27" = [ "api-level-26" ];
+          "api-level-28" = [ "api-level-27" ];
+          "api-level-29" = [ "api-level-28" ];
+          "api-level-30" = [ "api-level-29" ];
+          "api-level-31" = [ "api-level-30" ];
+          "api-level-32" = [ "api-level-31" ];
+          "api-level-33" = [ "api-level-32" ];
+          "audio" = [ "ffi/audio" "api-level-26" ];
+          "bitmap" = [ "ffi/bitmap" ];
+          "default" = [ "rwh_06" ];
+          "jni" = [ "dep:jni" ];
+          "media" = [ "ffi/media" ];
+          "nativewindow" = [ "ffi/nativewindow" ];
+          "rwh_04" = [ "dep:rwh_04" ];
+          "rwh_05" = [ "dep:rwh_05" ];
+          "rwh_06" = [ "dep:rwh_06" ];
+          "sync" = [ "ffi/sync" "api-level-26" ];
+          "test" = [ "ffi/test" "jni" "all" ];
+        };
+        resolvedDefaultFeatures = [ "api-level-23" "api-level-24" "api-level-25" "api-level-26" "audio" ];
+      };
       "ndk-context" = rec {
         crateName = "ndk-context";
         version = "0.1.1";
@@ -3229,6 +3718,25 @@ rec {
           "The Rust Windowing contributors"
         ];
 
+      };
+      "ndk-sys" = rec {
+        crateName = "ndk-sys";
+        version = "0.6.0+11769913";
+        edition = "2021";
+        sha256 = "0wx8r6pji20if4xs04g73gxl98nmjrfc73z0v6w1ypv6a4qdlv7f";
+        libName = "ndk_sys";
+        authors = [
+          "The Rust Windowing contributors"
+        ];
+        dependencies = [
+          {
+            name = "jni-sys";
+            packageId = "jni-sys 0.3.1";
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "audio" ];
       };
       "nom" = rec {
         crateName = "nom";
@@ -3295,6 +3803,32 @@ rec {
         ];
 
       };
+      "num-derive" = rec {
+        crateName = "num-derive";
+        version = "0.4.2";
+        edition = "2021";
+        sha256 = "00p2am9ma8jgd2v6xpsz621wc7wbn1yqi71g15gc3h67m7qmafgd";
+        procMacro = true;
+        libName = "num_derive";
+        authors = [
+          "The Rust Project Developers"
+        ];
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+          }
+        ];
+
+      };
       "num-traits" = rec {
         crateName = "num-traits";
         version = "0.2.19";
@@ -3315,6 +3849,540 @@ rec {
           "libm" = [ "dep:libm" ];
         };
         resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "num_enum" = rec {
+        crateName = "num_enum";
+        version = "0.7.6";
+        edition = "2021";
+        sha256 = "09kg0c2y08npdv0c9dbm4m9a9wz8w2qaiqqxl4gj3v22hj1wl2sx";
+        authors = [
+          "Daniel Wagner-Hall <dawagner@gmail.com>"
+          "Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>"
+          "Vincent Esche <regexident@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "num_enum_derive";
+            packageId = "num_enum_derive";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "rustversion";
+            packageId = "rustversion";
+          }
+        ];
+        features = {
+          "complex-expressions" = [ "num_enum_derive/complex-expressions" ];
+          "default" = [ "std" ];
+          "std" = [ "num_enum_derive/std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "num_enum_derive" = rec {
+        crateName = "num_enum_derive";
+        version = "0.7.6";
+        edition = "2021";
+        sha256 = "1y0x9z49s27vdas6mglqbv02sgkdmbr8ns2kwspzrp2ra81rh2b8";
+        procMacro = true;
+        authors = [
+          "Daniel Wagner-Hall <dawagner@gmail.com>"
+          "Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>"
+          "Vincent Esche <regexident@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "proc-macro-crate";
+            packageId = "proc-macro-crate";
+            optional = true;
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            features = [ "derive" "extra-traits" "parsing" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            features = [ "extra-traits" "parsing" ];
+          }
+        ];
+        features = {
+          "complex-expressions" = [ "syn/full" ];
+          "default" = [ "std" ];
+          "proc-macro-crate" = [ "dep:proc-macro-crate" ];
+          "std" = [ "proc-macro-crate" ];
+        };
+        resolvedDefaultFeatures = [ "proc-macro-crate" "std" ];
+      };
+      "objc2" = rec {
+        crateName = "objc2";
+        version = "0.6.4";
+        edition = "2021";
+        sha256 = "17x8qpl512frscfqbmgjr20kg3y4r0xdqxphja17dz5f0znsh4is";
+        authors = [
+          "Mads Marquart <mads@marquart.dk>"
+        ];
+        dependencies = [
+          {
+            name = "objc2-encode";
+            packageId = "objc2-encode";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "alloc" = [ "objc2-encode/alloc" ];
+          "catch-all" = [ "exception" ];
+          "default" = [ "std" ];
+          "exception" = [ "dep:objc2-exception-helper" ];
+          "gnustep-1-7" = [ "unstable-static-class" "objc2-exception-helper?/gnustep-1-7" ];
+          "gnustep-1-8" = [ "gnustep-1-7" "objc2-exception-helper?/gnustep-1-8" ];
+          "gnustep-1-9" = [ "gnustep-1-8" "objc2-exception-helper?/gnustep-1-9" ];
+          "gnustep-2-0" = [ "gnustep-1-9" "objc2-exception-helper?/gnustep-2-0" ];
+          "gnustep-2-1" = [ "gnustep-2-0" "objc2-exception-helper?/gnustep-2-1" ];
+          "std" = [ "alloc" "objc2-encode/std" ];
+          "unstable-compiler-rt" = [ "gnustep-1-7" ];
+          "unstable-gnustep-strict-apple-compat" = [ "gnustep-1-7" ];
+          "unstable-static-class" = [ "dep:objc2-proc-macros" ];
+          "unstable-static-class-inlined" = [ "unstable-static-class" ];
+          "unstable-static-sel" = [ "dep:objc2-proc-macros" ];
+          "unstable-static-sel-inlined" = [ "unstable-static-sel" ];
+          "unstable-winobjc" = [ "gnustep-1-8" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+      };
+      "objc2-audio-toolbox" = rec {
+        crateName = "objc2-audio-toolbox";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "024vny0nxb93ihdk97q1zrbpism4i8xa7flsnycn678jj4d50j39";
+        libName = "objc2_audio_toolbox";
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2-core-audio";
+            packageId = "objc2-core-audio";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "AudioHardware" "objc2" ];
+          }
+          {
+            name = "objc2-core-audio-types";
+            packageId = "objc2-core-audio-types";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "CoreAudioBaseTypes" "objc2" ];
+          }
+          {
+            name = "objc2-core-foundation";
+            packageId = "objc2-core-foundation";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "CFArray" "CFData" "CFDate" "CFDictionary" "CFRunLoop" "CFURL" "objc2" ];
+          }
+          {
+            name = "objc2-foundation";
+            packageId = "objc2-foundation";
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+        ];
+        features = {
+          "AUAudioUnit" = [ "bitflags" "objc2-foundation/NSArray" "objc2-foundation/NSDate" "objc2-foundation/NSDictionary" "objc2-foundation/NSEnumerator" "objc2-foundation/NSError" "objc2-foundation/NSKeyValueObserving" "objc2-foundation/NSObject" "objc2-foundation/NSString" "objc2-foundation/NSValue" ];
+          "AUAudioUnitImplementation" = [ "objc2-foundation/NSArray" "objc2-foundation/NSError" "objc2-foundation/NSExtensionRequestHandling" "objc2-foundation/NSString" "objc2-foundation/NSValue" ];
+          "AUComponent" = [ "bitflags" ];
+          "AUParameters" = [ "objc2-foundation/NSArray" "objc2-foundation/NSObject" "objc2-foundation/NSString" "objc2-foundation/NSValue" ];
+          "AudioCodec" = [ "bitflags" ];
+          "AudioComponent" = [ "bitflags" ];
+          "AudioConverter" = [ "bitflags" ];
+          "AudioFile" = [ "bitflags" ];
+          "AudioFileStream" = [ "bitflags" ];
+          "AudioQueue" = [ "bitflags" ];
+          "AudioUnitProperties" = [ "bitflags" ];
+          "CAFFile" = [ "bitflags" ];
+          "MusicPlayer" = [ "bitflags" ];
+          "bitflags" = [ "dep:bitflags" ];
+          "block2" = [ "dep:block2" ];
+          "default" = [ "std" "AUAudioUnit" "AUAudioUnitImplementation" "AUCocoaUIView" "AUComponent" "AUGraph" "AUParameters" "AudioCodec" "AudioComponent" "AudioConverter" "AudioFile" "AudioFileStream" "AudioFormat" "AudioOutputUnit" "AudioQueue" "AudioServices" "AudioSession" "AudioUnit" "AudioUnitCarbonView" "AudioUnitParameters" "AudioUnitProperties" "AudioUnitUtilities" "AudioWorkInterval" "CAFFile" "CAShow" "DefaultAudioOutput" "ExtendedAudioFile" "MusicDevice" "MusicPlayer" "bitflags" "block2" "dispatch2" "libc" "objc2-core-audio" "objc2-core-audio-types" "objc2-core-foundation" ];
+          "dispatch2" = [ "dep:dispatch2" ];
+          "libc" = [ "dep:libc" ];
+          "objc2-core-audio" = [ "dep:objc2-core-audio" ];
+          "objc2-core-audio-types" = [ "dep:objc2-core-audio-types" ];
+          "objc2-core-foundation" = [ "dep:objc2-core-foundation" ];
+          "objc2-core-midi" = [ "dep:objc2-core-midi" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "AUComponent" "AudioCodec" "AudioComponent" "AudioFormat" "AudioOutputUnit" "AudioServices" "AudioSession" "AudioUnitProperties" "alloc" "bitflags" "libc" "objc2-core-audio" "objc2-core-audio-types" "objc2-core-foundation" "std" ];
+      };
+      "objc2-avf-audio" = rec {
+        crateName = "objc2-avf-audio";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "1glh82g1yi74hwxy2d60hyllqhys6xcw8r80n2fykn7f3l1q18qk";
+        libName = "objc2_avf_audio";
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2-foundation";
+            packageId = "objc2-foundation";
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+        ];
+        features = {
+          "AVAudioApplication" = [ "objc2-foundation/NSError" "objc2-foundation/NSNotification" "objc2-foundation/NSString" ];
+          "AVAudioBuffer" = [ "objc2-foundation/NSObject" ];
+          "AVAudioChannelLayout" = [ "objc2-foundation/NSObject" ];
+          "AVAudioConverter" = [ "objc2-foundation/NSArray" "objc2-foundation/NSData" "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSValue" ];
+          "AVAudioEngine" = [ "objc2-foundation/NSArray" "objc2-foundation/NSError" "objc2-foundation/NSSet" "objc2-foundation/NSString" ];
+          "AVAudioEnvironmentNode" = [ "objc2-foundation/NSArray" "objc2-foundation/NSValue" ];
+          "AVAudioFile" = [ "objc2-foundation/NSDictionary" "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSURL" ];
+          "AVAudioFormat" = [ "objc2-foundation/NSData" "objc2-foundation/NSDictionary" "objc2-foundation/NSObject" "objc2-foundation/NSString" ];
+          "AVAudioIONode" = [ "objc2-foundation/NSDate" "objc2-foundation/NSError" ];
+          "AVAudioNode" = [ "objc2-foundation/NSDate" "objc2-foundation/NSString" ];
+          "AVAudioPlayer" = [ "objc2-foundation/NSArray" "objc2-foundation/NSData" "objc2-foundation/NSDate" "objc2-foundation/NSDictionary" "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSURL" ];
+          "AVAudioPlayerNode" = [ "bitflags" ];
+          "AVAudioRecorder" = [ "objc2-foundation/NSArray" "objc2-foundation/NSDate" "objc2-foundation/NSDictionary" "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSURL" ];
+          "AVAudioRoutingArbiter" = [ "objc2-foundation/NSError" ];
+          "AVAudioSequencer" = [ "bitflags" "objc2-foundation/NSArray" "objc2-foundation/NSData" "objc2-foundation/NSDate" "objc2-foundation/NSDictionary" "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSURL" ];
+          "AVAudioSession" = [ "objc2-foundation/NSArray" "objc2-foundation/NSDate" "objc2-foundation/NSError" "objc2-foundation/NSString" ];
+          "AVAudioSessionDeprecated" = [ "objc2-foundation/NSError" ];
+          "AVAudioSessionRoute" = [ "objc2-foundation/NSArray" "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSValue" ];
+          "AVAudioSessionTypes" = [ "bitflags" "objc2-foundation/NSNotification" "objc2-foundation/NSString" ];
+          "AVAudioSettings" = [ "objc2-foundation/NSString" ];
+          "AVAudioTime" = [ "objc2-foundation/NSDate" ];
+          "AVAudioUnit" = [ "objc2-foundation/NSError" "objc2-foundation/NSString" "objc2-foundation/NSURL" ];
+          "AVAudioUnitComponent" = [ "objc2-foundation/NSArray" "objc2-foundation/NSDictionary" "objc2-foundation/NSNotification" "objc2-foundation/NSPredicate" "objc2-foundation/NSString" "objc2-foundation/NSURL" "objc2-foundation/NSValue" ];
+          "AVAudioUnitDelay" = [ "objc2-foundation/NSDate" ];
+          "AVAudioUnitEQ" = [ "objc2-foundation/NSArray" ];
+          "AVAudioUnitMIDIInstrument" = [ "objc2-foundation/NSData" ];
+          "AVAudioUnitSampler" = [ "objc2-foundation/NSArray" "objc2-foundation/NSError" "objc2-foundation/NSURL" ];
+          "AVMIDIPlayer" = [ "objc2-foundation/NSData" "objc2-foundation/NSDate" "objc2-foundation/NSError" "objc2-foundation/NSURL" ];
+          "AVMusicEvents" = [ "objc2-foundation/NSData" "objc2-foundation/NSDictionary" ];
+          "AVSpeechSynthesis" = [ "bitflags" "objc2-foundation/NSArray" "objc2-foundation/NSAttributedString" "objc2-foundation/NSDate" "objc2-foundation/NSDictionary" "objc2-foundation/NSNotification" "objc2-foundation/NSObject" "objc2-foundation/NSRange" "objc2-foundation/NSString" ];
+          "AVSpeechSynthesisProvider" = [ "objc2-foundation/NSArray" "objc2-foundation/NSError" "objc2-foundation/NSObject" "objc2-foundation/NSString" ];
+          "bitflags" = [ "dep:bitflags" ];
+          "block2" = [ "dep:block2" ];
+          "default" = [ "std" "AVAudioApplication" "AVAudioBuffer" "AVAudioChannelLayout" "AVAudioConnectionPoint" "AVAudioConverter" "AVAudioEngine" "AVAudioEnvironmentNode" "AVAudioFile" "AVAudioFormat" "AVAudioIONode" "AVAudioMixerNode" "AVAudioMixing" "AVAudioNode" "AVAudioPlayer" "AVAudioPlayerNode" "AVAudioRecorder" "AVAudioRoutingArbiter" "AVAudioSequencer" "AVAudioSession" "AVAudioSessionDeprecated" "AVAudioSessionRoute" "AVAudioSessionTypes" "AVAudioSettings" "AVAudioSinkNode" "AVAudioSourceNode" "AVAudioTime" "AVAudioTypes" "AVAudioUnit" "AVAudioUnitComponent" "AVAudioUnitDelay" "AVAudioUnitDistortion" "AVAudioUnitEQ" "AVAudioUnitEffect" "AVAudioUnitGenerator" "AVAudioUnitMIDIInstrument" "AVAudioUnitReverb" "AVAudioUnitSampler" "AVAudioUnitTimeEffect" "AVAudioUnitTimePitch" "AVAudioUnitVarispeed" "AVMIDIPlayer" "AVMusicEvents" "AVSpeechSynthesis" "AVSpeechSynthesisProvider" "bitflags" "block2" "objc2-audio-toolbox" "objc2-core-audio-types" ];
+          "objc2-audio-toolbox" = [ "dep:objc2-audio-toolbox" ];
+          "objc2-core-audio-types" = [ "dep:objc2-core-audio-types" ];
+          "objc2-core-media" = [ "dep:objc2-core-media" ];
+          "objc2-core-midi" = [ "dep:objc2-core-midi" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "AVAudioSession" "AVAudioSessionTypes" "alloc" "bitflags" "std" ];
+      };
+      "objc2-core-audio" = rec {
+        crateName = "objc2-core-audio";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "1cn3d7cni2ngr18j14s4xfin3h4gqq3k2kshr3vzbgqdigmbrvp1";
+        libName = "objc2_core_audio";
+        dependencies = [
+          {
+            name = "dispatch2";
+            packageId = "dispatch2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2-core-audio-types";
+            packageId = "objc2-core-audio-types";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "CoreAudioBaseTypes" ];
+          }
+          {
+            name = "objc2-core-foundation";
+            packageId = "objc2-core-foundation";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "objc2-foundation";
+            packageId = "objc2-foundation";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "NSArray" "NSString" "NSUUID" "NSValue" "alloc" ];
+          }
+        ];
+        features = {
+          "AudioHardware" = [ "objc2-core-foundation/CFDictionary" ];
+          "AudioHardwareDeprecated" = [ "objc2-core-foundation/CFRunLoop" ];
+          "block2" = [ "dep:block2" ];
+          "default" = [ "std" "AudioHardware" "AudioHardwareDeprecated" "AudioServerPlugIn" "HostTime" "block2" "dispatch2" "libc" "objc2" "objc2-core-audio-types" "objc2-foundation" ];
+          "dispatch2" = [ "dep:dispatch2" ];
+          "libc" = [ "dep:libc" ];
+          "objc2" = [ "dep:objc2" "dispatch2?/objc2" "objc2-core-audio-types?/objc2" "objc2-core-foundation/objc2" ];
+          "objc2-core-audio-types" = [ "dep:objc2-core-audio-types" ];
+          "objc2-foundation" = [ "dep:objc2-foundation" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "AudioHardware" "AudioHardwareDeprecated" "alloc" "objc2" "objc2-core-audio-types" "objc2-foundation" "std" ];
+      };
+      "objc2-core-audio-types" = rec {
+        crateName = "objc2-core-audio-types";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "075xj0j67n59m6v7pa0d556l06imicg9kcj24siz832a4zng52as";
+        libName = "objc2_core_audio_types";
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
+        features = {
+          "CoreAudioBaseTypes" = [ "bitflags" ];
+          "bitflags" = [ "dep:bitflags" ];
+          "default" = [ "std" "AudioSessionTypes" "CoreAudioBaseTypes" "bitflags" "objc2" ];
+          "objc2" = [ "dep:objc2" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "CoreAudioBaseTypes" "alloc" "bitflags" "objc2" "std" ];
+      };
+      "objc2-core-foundation" = rec {
+        crateName = "objc2-core-foundation";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "0dnmg7606n4zifyjw4ff554xvjmi256cs8fpgpdmr91gckc0s61a";
+        libName = "objc2_core_foundation";
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "block2";
+            packageId = "block2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+          {
+            name = "dispatch2";
+            packageId = "dispatch2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
+        features = {
+          "CFCalendar" = [ "bitflags" ];
+          "CFData" = [ "bitflags" ];
+          "CFDate" = [ "bitflags" ];
+          "CFDateFormatter" = [ "bitflags" ];
+          "CFFileSecurity" = [ "bitflags" ];
+          "CFNumberFormatter" = [ "bitflags" ];
+          "CFPropertyList" = [ "bitflags" ];
+          "CFRunLoop" = [ "bitflags" ];
+          "CFSocket" = [ "bitflags" ];
+          "CFStream" = [ "bitflags" ];
+          "CFString" = [ "bitflags" ];
+          "CFStringTokenizer" = [ "bitflags" ];
+          "CFURL" = [ "bitflags" ];
+          "CFURLEnumerator" = [ "bitflags" ];
+          "CFXMLParser" = [ "bitflags" ];
+          "bitflags" = [ "dep:bitflags" ];
+          "block2" = [ "dep:block2" ];
+          "default" = [ "std" "CFArray" "CFAttributedString" "CFAvailability" "CFBag" "CFBinaryHeap" "CFBitVector" "CFBundle" "CFByteOrder" "CFCGTypes" "CFCalendar" "CFCharacterSet" "CFData" "CFDate" "CFDateFormatter" "CFDictionary" "CFError" "CFFileDescriptor" "CFFileSecurity" "CFLocale" "CFMachPort" "CFMessagePort" "CFNotificationCenter" "CFNumber" "CFNumberFormatter" "CFPlugIn" "CFPlugInCOM" "CFPreferences" "CFPropertyList" "CFRunLoop" "CFSet" "CFSocket" "CFStream" "CFString" "CFStringEncodingExt" "CFStringTokenizer" "CFTimeZone" "CFTree" "CFURL" "CFURLAccess" "CFURLEnumerator" "CFUUID" "CFUserNotification" "CFUtilities" "CFXMLNode" "CFXMLParser" "bitflags" "block2" "dispatch2" "libc" "objc2" ];
+          "dispatch2" = [ "dep:dispatch2" ];
+          "libc" = [ "dep:libc" ];
+          "objc2" = [ "dep:objc2" "dispatch2?/objc2" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "CFArray" "CFAttributedString" "CFAvailability" "CFBag" "CFBinaryHeap" "CFBitVector" "CFBundle" "CFByteOrder" "CFCGTypes" "CFCalendar" "CFCharacterSet" "CFData" "CFDate" "CFDateFormatter" "CFDictionary" "CFError" "CFFileDescriptor" "CFFileSecurity" "CFLocale" "CFMachPort" "CFMessagePort" "CFNotificationCenter" "CFNumber" "CFNumberFormatter" "CFPlugIn" "CFPlugInCOM" "CFPreferences" "CFPropertyList" "CFRunLoop" "CFSet" "CFSocket" "CFStream" "CFString" "CFStringEncodingExt" "CFStringTokenizer" "CFTimeZone" "CFTree" "CFURL" "CFURLAccess" "CFURLEnumerator" "CFUUID" "CFUserNotification" "CFUtilities" "CFXMLNode" "CFXMLParser" "alloc" "bitflags" "block2" "default" "dispatch2" "libc" "objc2" "std" ];
+      };
+      "objc2-encode" = rec {
+        crateName = "objc2-encode";
+        version = "4.1.0";
+        edition = "2021";
+        sha256 = "0cqckp4cpf68mxyc2zgnazj8klv0z395nsgbafa61cjgsyyan9gg";
+        libName = "objc2_encode";
+        authors = [
+          "Mads Marquart <mads@marquart.dk>"
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "std" ];
+      };
+      "objc2-foundation" = rec {
+        crateName = "objc2-foundation";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "0wijkxzzvw2xkzssds3fj8279cbykz2rz9agxf6qh7y2agpsvq73";
+        libName = "objc2_foundation";
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "block2";
+            packageId = "block2";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "objc2";
+            packageId = "objc2";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "objc2-core-foundation";
+            packageId = "objc2-core-foundation";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "CFArray" "CFAttributedString" "CFCGTypes" "CFCalendar" "CFCharacterSet" "CFData" "CFDate" "CFDictionary" "CFError" "CFFileSecurity" "CFLocale" "CFMachPort" "CFMessagePort" "CFRunLoop" "CFSet" "CFStream" "CFURL" "objc2" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "objc2-core-foundation";
+            packageId = "objc2-core-foundation";
+            usesDefaultFeatures = false;
+            features = [ "CFString" ];
+          }
+        ];
+        features = {
+          "NSAppleEventDescriptor" = [ "bitflags" ];
+          "NSArray" = [ "bitflags" ];
+          "NSAttributedString" = [ "bitflags" ];
+          "NSByteCountFormatter" = [ "bitflags" ];
+          "NSCalendar" = [ "bitflags" ];
+          "NSComparisonPredicate" = [ "bitflags" ];
+          "NSData" = [ "bitflags" ];
+          "NSDateComponentsFormatter" = [ "bitflags" ];
+          "NSDistributedNotificationCenter" = [ "bitflags" ];
+          "NSFileCoordinator" = [ "bitflags" ];
+          "NSFileManager" = [ "bitflags" ];
+          "NSFileVersion" = [ "bitflags" ];
+          "NSFileWrapper" = [ "bitflags" ];
+          "NSGeometry" = [ "bitflags" ];
+          "NSISO8601DateFormatter" = [ "bitflags" ];
+          "NSItemProvider" = [ "bitflags" ];
+          "NSJSONSerialization" = [ "bitflags" ];
+          "NSKeyValueObserving" = [ "bitflags" ];
+          "NSLinguisticTagger" = [ "bitflags" ];
+          "NSMeasurement" = [ "NSUnit" ];
+          "NSMeasurementFormatter" = [ "bitflags" ];
+          "NSNetServices" = [ "bitflags" ];
+          "NSNotificationQueue" = [ "bitflags" ];
+          "NSObjCRuntime" = [ "bitflags" ];
+          "NSOrderedCollectionDifference" = [ "bitflags" ];
+          "NSPathUtilities" = [ "bitflags" ];
+          "NSPersonNameComponentsFormatter" = [ "bitflags" ];
+          "NSPointerFunctions" = [ "bitflags" ];
+          "NSPort" = [ "bitflags" ];
+          "NSProcessInfo" = [ "bitflags" ];
+          "NSPropertyList" = [ "bitflags" ];
+          "NSRegularExpression" = [ "bitflags" ];
+          "NSStream" = [ "bitflags" ];
+          "NSString" = [ "bitflags" ];
+          "NSTextCheckingResult" = [ "bitflags" ];
+          "NSURL" = [ "bitflags" ];
+          "NSXMLNodeOptions" = [ "bitflags" ];
+          "NSXPCConnection" = [ "bitflags" ];
+          "bitflags" = [ "dep:bitflags" ];
+          "block2" = [ "dep:block2" ];
+          "default" = [ "std" "FoundationErrors" "FoundationLegacySwiftCompatibility" "NSAffineTransform" "NSAppleEventDescriptor" "NSAppleEventManager" "NSAppleScript" "NSArchiver" "NSArray" "NSAttributedString" "NSAutoreleasePool" "NSBackgroundActivityScheduler" "NSBundle" "NSByteCountFormatter" "NSByteOrder" "NSCache" "NSCalendar" "NSCalendarDate" "NSCharacterSet" "NSClassDescription" "NSCoder" "NSComparisonPredicate" "NSCompoundPredicate" "NSConnection" "NSData" "NSDate" "NSDateComponentsFormatter" "NSDateFormatter" "NSDateInterval" "NSDateIntervalFormatter" "NSDebug" "NSDecimal" "NSDecimalNumber" "NSDictionary" "NSDistantObject" "NSDistributedLock" "NSDistributedNotificationCenter" "NSEnergyFormatter" "NSEnumerator" "NSError" "NSException" "NSExpression" "NSExtensionContext" "NSExtensionItem" "NSExtensionRequestHandling" "NSFileCoordinator" "NSFileHandle" "NSFileManager" "NSFilePresenter" "NSFileVersion" "NSFileWrapper" "NSFormatter" "NSGarbageCollector" "NSGeometry" "NSHFSFileTypes" "NSHTTPCookie" "NSHTTPCookieStorage" "NSHashTable" "NSHost" "NSISO8601DateFormatter" "NSIndexPath" "NSIndexSet" "NSInflectionRule" "NSInvocation" "NSItemProvider" "NSJSONSerialization" "NSKeyValueCoding" "NSKeyValueObserving" "NSKeyValueSharedObservers" "NSKeyedArchiver" "NSLengthFormatter" "NSLinguisticTagger" "NSListFormatter" "NSLocale" "NSLocalizedNumberFormatRule" "NSLock" "NSMapTable" "NSMassFormatter" "NSMeasurement" "NSMeasurementFormatter" "NSMetadata" "NSMetadataAttributes" "NSMethodSignature" "NSMorphology" "NSNetServices" "NSNotification" "NSNotificationQueue" "NSNull" "NSNumberFormatter" "NSObjCRuntime" "NSObject" "NSObjectScripting" "NSOperation" "NSOrderedCollectionChange" "NSOrderedCollectionDifference" "NSOrderedSet" "NSOrthography" "NSPathUtilities" "NSPersonNameComponents" "NSPersonNameComponentsFormatter" "NSPointerArray" "NSPointerFunctions" "NSPort" "NSPortCoder" "NSPortMessage" "NSPortNameServer" "NSPredicate" "NSProcessInfo" "NSProgress" "NSPropertyList" "NSProtocolChecker" "NSProxy" "NSRange" "NSRegularExpression" "NSRelativeDateTimeFormatter" "NSRunLoop" "NSScanner" "NSScriptClassDescription" "NSScriptCoercionHandler" "NSScriptCommand" "NSScriptCommandDescription" "NSScriptExecutionContext" "NSScriptKeyValueCoding" "NSScriptObjectSpecifiers" "NSScriptStandardSuiteCommands" "NSScriptSuiteRegistry" "NSScriptWhoseTests" "NSSet" "NSSortDescriptor" "NSSpellServer" "NSStream" "NSString" "NSTask" "NSTermOfAddress" "NSTextCheckingResult" "NSThread" "NSTimeZone" "NSTimer" "NSURL" "NSURLAuthenticationChallenge" "NSURLCache" "NSURLConnection" "NSURLCredential" "NSURLCredentialStorage" "NSURLDownload" "NSURLError" "NSURLHandle" "NSURLProtectionSpace" "NSURLProtocol" "NSURLRequest" "NSURLResponse" "NSURLSession" "NSUUID" "NSUbiquitousKeyValueStore" "NSUndoManager" "NSUnit" "NSUserActivity" "NSUserDefaults" "NSUserNotification" "NSUserScriptTask" "NSValue" "NSValueTransformer" "NSXMLDTD" "NSXMLDTDNode" "NSXMLDocument" "NSXMLElement" "NSXMLNode" "NSXMLNodeOptions" "NSXMLParser" "NSXPCConnection" "NSZone" "bitflags" "block2" "libc" "objc2-core-foundation" ];
+          "gnustep-1-7" = [ "objc2/gnustep-1-7" "block2?/gnustep-1-7" ];
+          "gnustep-1-8" = [ "gnustep-1-7" "objc2/gnustep-1-8" "block2?/gnustep-1-8" ];
+          "gnustep-1-9" = [ "gnustep-1-8" "objc2/gnustep-1-9" "block2?/gnustep-1-9" ];
+          "gnustep-2-0" = [ "gnustep-1-9" "objc2/gnustep-2-0" "block2?/gnustep-2-0" ];
+          "gnustep-2-1" = [ "gnustep-2-0" "objc2/gnustep-2-1" "block2?/gnustep-2-1" ];
+          "libc" = [ "dep:libc" ];
+          "objc2-core-foundation" = [ "dep:objc2-core-foundation" ];
+          "objc2-core-services" = [ "dep:objc2-core-services" ];
+          "std" = [ "alloc" ];
+          "unstable-mutation-return-null" = [ "NSNull" ];
+        };
+        resolvedDefaultFeatures = [ "FoundationErrors" "FoundationLegacySwiftCompatibility" "NSAffineTransform" "NSAppleEventDescriptor" "NSAppleEventManager" "NSAppleScript" "NSArchiver" "NSArray" "NSAttributedString" "NSAutoreleasePool" "NSBackgroundActivityScheduler" "NSBundle" "NSByteCountFormatter" "NSByteOrder" "NSCache" "NSCalendar" "NSCalendarDate" "NSCharacterSet" "NSClassDescription" "NSCoder" "NSComparisonPredicate" "NSCompoundPredicate" "NSConnection" "NSData" "NSDate" "NSDateComponentsFormatter" "NSDateFormatter" "NSDateInterval" "NSDateIntervalFormatter" "NSDebug" "NSDecimal" "NSDecimalNumber" "NSDictionary" "NSDistantObject" "NSDistributedLock" "NSDistributedNotificationCenter" "NSEnergyFormatter" "NSEnumerator" "NSError" "NSException" "NSExpression" "NSExtensionContext" "NSExtensionItem" "NSExtensionRequestHandling" "NSFileCoordinator" "NSFileHandle" "NSFileManager" "NSFilePresenter" "NSFileVersion" "NSFileWrapper" "NSFormatter" "NSGarbageCollector" "NSGeometry" "NSHFSFileTypes" "NSHTTPCookie" "NSHTTPCookieStorage" "NSHashTable" "NSHost" "NSISO8601DateFormatter" "NSIndexPath" "NSIndexSet" "NSInflectionRule" "NSInvocation" "NSItemProvider" "NSJSONSerialization" "NSKeyValueCoding" "NSKeyValueObserving" "NSKeyValueSharedObservers" "NSKeyedArchiver" "NSLengthFormatter" "NSLinguisticTagger" "NSListFormatter" "NSLocale" "NSLocalizedNumberFormatRule" "NSLock" "NSMapTable" "NSMassFormatter" "NSMeasurement" "NSMeasurementFormatter" "NSMetadata" "NSMetadataAttributes" "NSMethodSignature" "NSMorphology" "NSNetServices" "NSNotification" "NSNotificationQueue" "NSNull" "NSNumberFormatter" "NSObjCRuntime" "NSObject" "NSObjectScripting" "NSOperation" "NSOrderedCollectionChange" "NSOrderedCollectionDifference" "NSOrderedSet" "NSOrthography" "NSPathUtilities" "NSPersonNameComponents" "NSPersonNameComponentsFormatter" "NSPointerArray" "NSPointerFunctions" "NSPort" "NSPortCoder" "NSPortMessage" "NSPortNameServer" "NSPredicate" "NSProcessInfo" "NSProgress" "NSPropertyList" "NSProtocolChecker" "NSProxy" "NSRange" "NSRegularExpression" "NSRelativeDateTimeFormatter" "NSRunLoop" "NSScanner" "NSScriptClassDescription" "NSScriptCoercionHandler" "NSScriptCommand" "NSScriptCommandDescription" "NSScriptExecutionContext" "NSScriptKeyValueCoding" "NSScriptObjectSpecifiers" "NSScriptStandardSuiteCommands" "NSScriptSuiteRegistry" "NSScriptWhoseTests" "NSSet" "NSSortDescriptor" "NSSpellServer" "NSStream" "NSString" "NSTask" "NSTermOfAddress" "NSTextCheckingResult" "NSThread" "NSTimeZone" "NSTimer" "NSURL" "NSURLAuthenticationChallenge" "NSURLCache" "NSURLConnection" "NSURLCredential" "NSURLCredentialStorage" "NSURLDownload" "NSURLError" "NSURLHandle" "NSURLProtectionSpace" "NSURLProtocol" "NSURLRequest" "NSURLResponse" "NSURLSession" "NSUUID" "NSUbiquitousKeyValueStore" "NSUndoManager" "NSUnit" "NSUserActivity" "NSUserDefaults" "NSUserNotification" "NSUserScriptTask" "NSValue" "NSValueTransformer" "NSXMLDTD" "NSXMLDTDNode" "NSXMLDocument" "NSXMLElement" "NSXMLNode" "NSXMLNodeOptions" "NSXMLParser" "NSXPCConnection" "NSZone" "alloc" "bitflags" "block2" "default" "libc" "objc2-core-foundation" "std" ];
       };
       "once_cell" = rec {
         crateName = "once_cell";
@@ -3567,6 +4635,25 @@ rec {
           "serde" = [ "dep:serde" "ipnet/serde" "ipnetwork/serde" "cidr/serde" ];
         };
         resolvedDefaultFeatures = [ "default" "ipnet" ];
+      };
+      "proc-macro-crate" = rec {
+        crateName = "proc-macro-crate";
+        version = "3.5.0";
+        edition = "2021";
+        sha256 = "0kv1g1d1zjwxlgcaba2qlshzyy32j03xic8rskqlcr5mnblsfyz6";
+        libName = "proc_macro_crate";
+        authors = [
+          "Bastian Köcher <git@kchr.de>"
+        ];
+        dependencies = [
+          {
+            name = "toml_edit";
+            packageId = "toml_edit";
+            usesDefaultFeatures = false;
+            features = [ "parse" ];
+          }
+        ];
+
       };
       "proc-macro2" = rec {
         crateName = "proc-macro2";
@@ -4593,6 +5680,10 @@ rec {
             packageId = "bytesstr";
           }
           {
+            name = "cpal";
+            packageId = "cpal";
+          }
+          {
             name = "ezk-rtp";
             packageId = "ezk-rtp";
           }
@@ -5311,6 +6402,82 @@ rec {
         };
         resolvedDefaultFeatures = [ "codec" "default" "libc" ];
       };
+      "toml_datetime" = rec {
+        crateName = "toml_datetime";
+        version = "1.1.1+spec-1.1.0";
+        edition = "2024";
+        sha256 = "1mws2mkkf46l7inn77azhm0vdwxngv9vsbhbl0ah33p2c9gzcr9i";
+        dependencies = [
+          {
+            name = "serde_core";
+            packageId = "serde_core";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "alloc" = [ "serde_core?/alloc" ];
+          "default" = [ "std" ];
+          "serde" = [ "dep:serde_core" ];
+          "std" = [ "alloc" "serde_core?/std" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+      };
+      "toml_edit" = rec {
+        crateName = "toml_edit";
+        version = "0.25.15+spec-1.1.0";
+        edition = "2024";
+        sha256 = "0556lgzcvgfy16b8sxskr391s6cbfwnb0r4h5i4k6qw5lnaflh0k";
+        dependencies = [
+          {
+            name = "indexmap";
+            packageId = "indexmap";
+            features = [ "std" ];
+          }
+          {
+            name = "toml_datetime";
+            packageId = "toml_datetime";
+          }
+          {
+            name = "toml_parser";
+            packageId = "toml_parser";
+            optional = true;
+          }
+          {
+            name = "winnow";
+            packageId = "winnow";
+            optional = true;
+          }
+        ];
+        features = {
+          "debug" = [ "toml_parser?/debug" "dep:anstream" "dep:anstyle" "display" ];
+          "default" = [ "parse" "display" ];
+          "display" = [ "dep:toml_writer" ];
+          "parse" = [ "dep:toml_parser" "dep:winnow" ];
+          "serde" = [ "dep:serde_core" "toml_datetime/serde" "dep:serde_spanned" ];
+        };
+        resolvedDefaultFeatures = [ "parse" ];
+      };
+      "toml_parser" = rec {
+        crateName = "toml_parser";
+        version = "1.1.3+spec-1.1.0";
+        edition = "2024";
+        sha256 = "0mjdvihdkmjd4ykh574xgii71hpxw7ns7h4n4bisqpxrz4faqf0x";
+        dependencies = [
+          {
+            name = "winnow";
+            packageId = "winnow";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "debug" = [ "std" "dep:anstream" "dep:anstyle" ];
+          "default" = [ "std" ];
+          "simd" = [ "winnow/simd" ];
+          "std" = [ "alloc" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+      };
       "tracing" = rec {
         crateName = "tracing";
         version = "0.1.44";
@@ -5897,6 +7064,507 @@ rec {
         ];
 
       };
+      "web-sys" = rec {
+        crateName = "web-sys";
+        version = "0.3.105";
+        edition = "2021";
+        sha256 = "1y57whpj5ncrl0cljmfsj5m31jqm66ylad68317yq03g0d5drgcz";
+        libName = "web_sys";
+        authors = [
+          "The wasm-bindgen Developers"
+        ];
+        dependencies = [
+          {
+            name = "js-sys";
+            packageId = "js-sys";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "wasm-bindgen";
+            packageId = "wasm-bindgen";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "AbortSignal" = [ "EventTarget" ];
+          "AnalyserNode" = [ "AudioNode" "EventTarget" ];
+          "Animation" = [ "EventTarget" ];
+          "AnimationEvent" = [ "Event" ];
+          "AnimationPlaybackEvent" = [ "Event" ];
+          "Attr" = [ "EventTarget" "Node" ];
+          "AudioBufferSourceNode" = [ "AudioNode" "AudioScheduledSourceNode" "EventTarget" ];
+          "AudioContext" = [ "BaseAudioContext" "EventTarget" ];
+          "AudioDecoder" = [ "EventTarget" ];
+          "AudioDestinationNode" = [ "AudioNode" "EventTarget" ];
+          "AudioEncoder" = [ "EventTarget" ];
+          "AudioNode" = [ "EventTarget" ];
+          "AudioProcessingEvent" = [ "Event" ];
+          "AudioScheduledSourceNode" = [ "AudioNode" "EventTarget" ];
+          "AudioStreamTrack" = [ "EventTarget" "MediaStreamTrack" ];
+          "AudioTrackList" = [ "EventTarget" ];
+          "AudioWorklet" = [ "Worklet" ];
+          "AudioWorkletGlobalScope" = [ "WorkletGlobalScope" ];
+          "AudioWorkletNode" = [ "AudioNode" "EventTarget" ];
+          "AuthenticatorAssertionResponse" = [ "AuthenticatorResponse" ];
+          "AuthenticatorAttestationResponse" = [ "AuthenticatorResponse" ];
+          "BaseAudioContext" = [ "EventTarget" ];
+          "BatteryManager" = [ "EventTarget" ];
+          "BeforeUnloadEvent" = [ "Event" ];
+          "BiquadFilterNode" = [ "AudioNode" "EventTarget" ];
+          "BlobEvent" = [ "Event" ];
+          "Bluetooth" = [ "EventTarget" ];
+          "BluetoothAdvertisingEvent" = [ "Event" ];
+          "BluetoothDevice" = [ "EventTarget" ];
+          "BluetoothPermissionResult" = [ "EventTarget" "PermissionStatus" ];
+          "BluetoothRemoteGattCharacteristic" = [ "EventTarget" ];
+          "BluetoothRemoteGattService" = [ "EventTarget" ];
+          "BroadcastChannel" = [ "EventTarget" ];
+          "CanvasCaptureMediaStream" = [ "EventTarget" "MediaStream" ];
+          "CanvasCaptureMediaStreamTrack" = [ "EventTarget" "MediaStreamTrack" ];
+          "CdataSection" = [ "CharacterData" "EventTarget" "Node" "Text" ];
+          "ChannelMergerNode" = [ "AudioNode" "EventTarget" ];
+          "ChannelSplitterNode" = [ "AudioNode" "EventTarget" ];
+          "CharacterData" = [ "EventTarget" "Node" ];
+          "ChromeWorker" = [ "EventTarget" "Worker" ];
+          "Clipboard" = [ "EventTarget" ];
+          "ClipboardEvent" = [ "Event" ];
+          "CloseEvent" = [ "Event" ];
+          "CommandEvent" = [ "Event" ];
+          "Comment" = [ "CharacterData" "EventTarget" "Node" ];
+          "CompositionEvent" = [ "Event" "UiEvent" ];
+          "ConstantSourceNode" = [ "AudioNode" "AudioScheduledSourceNode" "EventTarget" ];
+          "ConvolverNode" = [ "AudioNode" "EventTarget" ];
+          "CookieChangeEvent" = [ "Event" ];
+          "CookieStore" = [ "EventTarget" ];
+          "CssAnimation" = [ "Animation" "EventTarget" ];
+          "CssConditionRule" = [ "CssGroupingRule" "CssRule" ];
+          "CssCounterStyleRule" = [ "CssRule" ];
+          "CssFontFaceRule" = [ "CssRule" ];
+          "CssFontFeatureValuesRule" = [ "CssRule" ];
+          "CssGroupingRule" = [ "CssRule" ];
+          "CssImportRule" = [ "CssRule" ];
+          "CssKeyframeRule" = [ "CssRule" ];
+          "CssKeyframesRule" = [ "CssRule" ];
+          "CssMediaRule" = [ "CssConditionRule" "CssGroupingRule" "CssRule" ];
+          "CssNamespaceRule" = [ "CssRule" ];
+          "CssPageRule" = [ "CssRule" ];
+          "CssStyleRule" = [ "CssRule" ];
+          "CssStyleSheet" = [ "StyleSheet" ];
+          "CssSupportsRule" = [ "CssConditionRule" "CssGroupingRule" "CssRule" ];
+          "CssTransition" = [ "Animation" "EventTarget" ];
+          "CssViewTransitionRule" = [ "CssRule" ];
+          "CustomEvent" = [ "Event" ];
+          "DedicatedWorkerGlobalScope" = [ "EventTarget" "WorkerGlobalScope" ];
+          "DelayNode" = [ "AudioNode" "EventTarget" ];
+          "DeviceLightEvent" = [ "Event" ];
+          "DeviceMotionEvent" = [ "Event" ];
+          "DeviceOrientationEvent" = [ "Event" ];
+          "DeviceProximityEvent" = [ "Event" ];
+          "Document" = [ "EventTarget" "Node" ];
+          "DocumentFragment" = [ "EventTarget" "Node" ];
+          "DocumentTimeline" = [ "AnimationTimeline" ];
+          "DocumentType" = [ "EventTarget" "Node" ];
+          "DomMatrix" = [ "DomMatrixReadOnly" ];
+          "DomPoint" = [ "DomPointReadOnly" ];
+          "DomRect" = [ "DomRectReadOnly" ];
+          "DomRequest" = [ "EventTarget" ];
+          "DragEvent" = [ "Event" "MouseEvent" "UiEvent" ];
+          "DynamicsCompressorNode" = [ "AudioNode" "EventTarget" ];
+          "Element" = [ "EventTarget" "Node" ];
+          "ErrorEvent" = [ "Event" ];
+          "EventSource" = [ "EventTarget" ];
+          "ExtendableCookieChangeEvent" = [ "Event" "ExtendableEvent" ];
+          "ExtendableEvent" = [ "Event" ];
+          "ExtendableMessageEvent" = [ "Event" "ExtendableEvent" ];
+          "FetchEvent" = [ "Event" "ExtendableEvent" ];
+          "FetchObserver" = [ "EventTarget" ];
+          "File" = [ "Blob" ];
+          "FileReader" = [ "EventTarget" ];
+          "FileSystemDirectoryEntry" = [ "FileSystemEntry" ];
+          "FileSystemDirectoryHandle" = [ "FileSystemHandle" ];
+          "FileSystemFileEntry" = [ "FileSystemEntry" ];
+          "FileSystemFileHandle" = [ "FileSystemHandle" ];
+          "FileSystemWritableFileStream" = [ "WritableStream" ];
+          "FocusEvent" = [ "Event" "UiEvent" ];
+          "FontFaceSet" = [ "EventTarget" ];
+          "FontFaceSetLoadEvent" = [ "Event" ];
+          "GainNode" = [ "AudioNode" "EventTarget" ];
+          "GamepadEvent" = [ "Event" ];
+          "GestureEvent" = [ "Event" "UiEvent" ];
+          "GpuDevice" = [ "EventTarget" ];
+          "GpuInternalError" = [ "GpuError" ];
+          "GpuOutOfMemoryError" = [ "GpuError" ];
+          "GpuPipelineError" = [ "DomException" ];
+          "GpuUncapturedErrorEvent" = [ "Event" ];
+          "GpuValidationError" = [ "GpuError" ];
+          "HashChangeEvent" = [ "Event" ];
+          "Hid" = [ "EventTarget" ];
+          "HidConnectionEvent" = [ "Event" ];
+          "HidDevice" = [ "EventTarget" ];
+          "HidInputReportEvent" = [ "Event" ];
+          "HtmlAnchorElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlAreaElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlAudioElement" = [ "Element" "EventTarget" "HtmlElement" "HtmlMediaElement" "Node" ];
+          "HtmlBaseElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlBodyElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlBrElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlButtonElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlCanvasElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDListElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDataElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDataListElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDetailsElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDialogElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDirectoryElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDivElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlDocument" = [ "Document" "EventTarget" "Node" ];
+          "HtmlElement" = [ "Element" "EventTarget" "Node" ];
+          "HtmlEmbedElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlFieldSetElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlFontElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlFormControlsCollection" = [ "HtmlCollection" ];
+          "HtmlFormElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlFrameElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlFrameSetElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlHeadElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlHeadingElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlHrElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlHtmlElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlIFrameElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlImageElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlInputElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlLabelElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlLegendElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlLiElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlLinkElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlMapElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlMediaElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlMenuElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlMenuItemElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlMetaElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlMeterElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlModElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlOListElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlObjectElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlOptGroupElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlOptionElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlOptionsCollection" = [ "HtmlCollection" ];
+          "HtmlOutputElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlParagraphElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlParamElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlPictureElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlPreElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlProgressElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlQuoteElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlScriptElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlSelectElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlSlotElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlSourceElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlSpanElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlStyleElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTableCaptionElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTableCellElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTableColElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTableElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTableRowElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTableSectionElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTemplateElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTextAreaElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTimeElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTitleElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlTrackElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlUListElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlUnknownElement" = [ "Element" "EventTarget" "HtmlElement" "Node" ];
+          "HtmlVideoElement" = [ "Element" "EventTarget" "HtmlElement" "HtmlMediaElement" "Node" ];
+          "IdbCursorWithValue" = [ "IdbCursor" ];
+          "IdbDatabase" = [ "EventTarget" ];
+          "IdbFileHandle" = [ "EventTarget" ];
+          "IdbFileRequest" = [ "DomRequest" "EventTarget" ];
+          "IdbLocaleAwareKeyRange" = [ "IdbKeyRange" ];
+          "IdbMutableFile" = [ "EventTarget" ];
+          "IdbOpenDbRequest" = [ "EventTarget" "IdbRequest" ];
+          "IdbRequest" = [ "EventTarget" ];
+          "IdbTransaction" = [ "EventTarget" ];
+          "IdbVersionChangeEvent" = [ "Event" ];
+          "IirFilterNode" = [ "AudioNode" "EventTarget" ];
+          "ImageCaptureErrorEvent" = [ "Event" ];
+          "InputDeviceInfo" = [ "MediaDeviceInfo" ];
+          "InputEvent" = [ "Event" "UiEvent" ];
+          "KeyFrameRequestEvent" = [ "Event" ];
+          "KeyboardEvent" = [ "Event" "UiEvent" ];
+          "KeyframeEffect" = [ "AnimationEffect" ];
+          "LocalMediaStream" = [ "EventTarget" "MediaStream" ];
+          "MathMlElement" = [ "Element" "EventTarget" "Node" ];
+          "MediaDevices" = [ "EventTarget" ];
+          "MediaElementAudioSourceNode" = [ "AudioNode" "EventTarget" ];
+          "MediaEncryptedEvent" = [ "Event" ];
+          "MediaKeyError" = [ "Event" ];
+          "MediaKeyMessageEvent" = [ "Event" ];
+          "MediaKeySession" = [ "EventTarget" ];
+          "MediaQueryList" = [ "EventTarget" ];
+          "MediaQueryListEvent" = [ "Event" ];
+          "MediaRecorder" = [ "EventTarget" ];
+          "MediaRecorderErrorEvent" = [ "Event" ];
+          "MediaSource" = [ "EventTarget" ];
+          "MediaStream" = [ "EventTarget" ];
+          "MediaStreamAudioDestinationNode" = [ "AudioNode" "EventTarget" ];
+          "MediaStreamAudioSourceNode" = [ "AudioNode" "EventTarget" ];
+          "MediaStreamEvent" = [ "Event" ];
+          "MediaStreamTrack" = [ "EventTarget" ];
+          "MediaStreamTrackEvent" = [ "Event" ];
+          "MediaStreamTrackGenerator" = [ "EventTarget" "MediaStreamTrack" ];
+          "MessageEvent" = [ "Event" ];
+          "MessagePort" = [ "EventTarget" ];
+          "MidiAccess" = [ "EventTarget" ];
+          "MidiConnectionEvent" = [ "Event" ];
+          "MidiInput" = [ "EventTarget" "MidiPort" ];
+          "MidiMessageEvent" = [ "Event" ];
+          "MidiOutput" = [ "EventTarget" "MidiPort" ];
+          "MidiPort" = [ "EventTarget" ];
+          "MouseEvent" = [ "Event" "UiEvent" ];
+          "MouseScrollEvent" = [ "Event" "MouseEvent" "UiEvent" ];
+          "MutationEvent" = [ "Event" ];
+          "NavigateEvent" = [ "Event" ];
+          "Navigation" = [ "EventTarget" ];
+          "NavigationCurrentEntryChangeEvent" = [ "Event" ];
+          "NavigationHistoryEntry" = [ "EventTarget" ];
+          "NetworkInformation" = [ "EventTarget" ];
+          "Node" = [ "EventTarget" ];
+          "Notification" = [ "EventTarget" ];
+          "NotificationEvent" = [ "Event" "ExtendableEvent" ];
+          "OfflineAudioCompletionEvent" = [ "Event" ];
+          "OfflineAudioContext" = [ "BaseAudioContext" "EventTarget" ];
+          "OfflineResourceList" = [ "EventTarget" ];
+          "OffscreenCanvas" = [ "EventTarget" ];
+          "OscillatorNode" = [ "AudioNode" "AudioScheduledSourceNode" "EventTarget" ];
+          "PageTransitionEvent" = [ "Event" ];
+          "PaintWorkletGlobalScope" = [ "WorkletGlobalScope" ];
+          "PannerNode" = [ "AudioNode" "EventTarget" ];
+          "PaymentMethodChangeEvent" = [ "Event" "PaymentRequestUpdateEvent" ];
+          "PaymentRequestUpdateEvent" = [ "Event" ];
+          "Performance" = [ "EventTarget" ];
+          "PerformanceMark" = [ "PerformanceEntry" ];
+          "PerformanceMeasure" = [ "PerformanceEntry" ];
+          "PerformanceNavigationTiming" = [ "PerformanceEntry" "PerformanceResourceTiming" ];
+          "PerformanceResourceTiming" = [ "PerformanceEntry" ];
+          "PermissionStatus" = [ "EventTarget" ];
+          "PictureInPictureEvent" = [ "Event" ];
+          "PictureInPictureWindow" = [ "EventTarget" ];
+          "PointerEvent" = [ "Event" "MouseEvent" "UiEvent" ];
+          "PopStateEvent" = [ "Event" ];
+          "PopupBlockedEvent" = [ "Event" ];
+          "PresentationAvailability" = [ "EventTarget" ];
+          "PresentationConnection" = [ "EventTarget" ];
+          "PresentationConnectionAvailableEvent" = [ "Event" ];
+          "PresentationConnectionCloseEvent" = [ "Event" ];
+          "PresentationConnectionList" = [ "EventTarget" ];
+          "PresentationRequest" = [ "EventTarget" ];
+          "ProcessingInstruction" = [ "CharacterData" "EventTarget" "Node" ];
+          "ProgressEvent" = [ "Event" ];
+          "PromiseRejectionEvent" = [ "Event" ];
+          "PublicKeyCredential" = [ "Credential" ];
+          "PushEvent" = [ "Event" "ExtendableEvent" ];
+          "RadioNodeList" = [ "NodeList" ];
+          "Range" = [ "AbstractRange" ];
+          "RtcDataChannel" = [ "EventTarget" ];
+          "RtcDataChannelEvent" = [ "Event" ];
+          "RtcPeerConnection" = [ "EventTarget" ];
+          "RtcPeerConnectionIceErrorEvent" = [ "Event" ];
+          "RtcPeerConnectionIceEvent" = [ "Event" ];
+          "RtcRtpScriptTransformer" = [ "EventTarget" ];
+          "RtcTrackEvent" = [ "Event" ];
+          "RtcTransformEvent" = [ "Event" ];
+          "RtcdtmfSender" = [ "EventTarget" ];
+          "RtcdtmfToneChangeEvent" = [ "Event" ];
+          "SFrameTransform" = [ "EventTarget" ];
+          "SFrameTransformErrorEvent" = [ "Event" ];
+          "Screen" = [ "EventTarget" ];
+          "ScreenDetailed" = [ "EventTarget" "Screen" ];
+          "ScreenDetails" = [ "EventTarget" ];
+          "ScreenOrientation" = [ "EventTarget" ];
+          "ScriptProcessorNode" = [ "AudioNode" "EventTarget" ];
+          "ScrollAreaEvent" = [ "Event" "UiEvent" ];
+          "SecurityPolicyViolationEvent" = [ "Event" ];
+          "Serial" = [ "EventTarget" ];
+          "SerialPort" = [ "EventTarget" ];
+          "ServiceWorker" = [ "EventTarget" ];
+          "ServiceWorkerContainer" = [ "EventTarget" ];
+          "ServiceWorkerGlobalScope" = [ "EventTarget" "WorkerGlobalScope" ];
+          "ServiceWorkerRegistration" = [ "EventTarget" ];
+          "ShadowRoot" = [ "DocumentFragment" "EventTarget" "Node" ];
+          "SharedWorker" = [ "EventTarget" ];
+          "SharedWorkerGlobalScope" = [ "EventTarget" "WorkerGlobalScope" ];
+          "SourceBuffer" = [ "EventTarget" ];
+          "SourceBufferList" = [ "EventTarget" ];
+          "SpeechRecognition" = [ "EventTarget" ];
+          "SpeechRecognitionError" = [ "Event" ];
+          "SpeechRecognitionEvent" = [ "Event" ];
+          "SpeechSynthesis" = [ "EventTarget" ];
+          "SpeechSynthesisErrorEvent" = [ "Event" "SpeechSynthesisEvent" ];
+          "SpeechSynthesisEvent" = [ "Event" ];
+          "SpeechSynthesisUtterance" = [ "EventTarget" ];
+          "StaticRange" = [ "AbstractRange" ];
+          "StereoPannerNode" = [ "AudioNode" "EventTarget" ];
+          "StorageEvent" = [ "Event" ];
+          "SubmitEvent" = [ "Event" ];
+          "SvgAnimateElement" = [ "Element" "EventTarget" "Node" "SvgAnimationElement" "SvgElement" ];
+          "SvgAnimateMotionElement" = [ "Element" "EventTarget" "Node" "SvgAnimationElement" "SvgElement" ];
+          "SvgAnimateTransformElement" = [ "Element" "EventTarget" "Node" "SvgAnimationElement" "SvgElement" ];
+          "SvgAnimationElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgCircleElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgClipPathElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgComponentTransferFunctionElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgDefsElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgDescElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgElement" = [ "Element" "EventTarget" "Node" ];
+          "SvgEllipseElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgFilterElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgForeignObjectElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgGeometryElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgGradientElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgGraphicsElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgImageElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgLineElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgLinearGradientElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGradientElement" ];
+          "SvgMarkerElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgMaskElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgMetadataElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgPathElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgPathSegArcAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegArcRel" = [ "SvgPathSeg" ];
+          "SvgPathSegClosePath" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoCubicAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoCubicRel" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoCubicSmoothAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoCubicSmoothRel" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoQuadraticAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoQuadraticRel" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoQuadraticSmoothAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegCurvetoQuadraticSmoothRel" = [ "SvgPathSeg" ];
+          "SvgPathSegLinetoAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegLinetoHorizontalAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegLinetoHorizontalRel" = [ "SvgPathSeg" ];
+          "SvgPathSegLinetoRel" = [ "SvgPathSeg" ];
+          "SvgPathSegLinetoVerticalAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegLinetoVerticalRel" = [ "SvgPathSeg" ];
+          "SvgPathSegMovetoAbs" = [ "SvgPathSeg" ];
+          "SvgPathSegMovetoRel" = [ "SvgPathSeg" ];
+          "SvgPatternElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgPolygonElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgPolylineElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgRadialGradientElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGradientElement" ];
+          "SvgRectElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGeometryElement" "SvgGraphicsElement" ];
+          "SvgScriptElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgSetElement" = [ "Element" "EventTarget" "Node" "SvgAnimationElement" "SvgElement" ];
+          "SvgStopElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgStyleElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgSwitchElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgSymbolElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgTextContentElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgTextElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" "SvgTextContentElement" "SvgTextPositioningElement" ];
+          "SvgTextPathElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" "SvgTextContentElement" ];
+          "SvgTextPositioningElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" "SvgTextContentElement" ];
+          "SvgTitleElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgUseElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgViewElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgaElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgfeBlendElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeColorMatrixElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeComponentTransferElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeCompositeElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeConvolveMatrixElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeDiffuseLightingElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeDisplacementMapElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeDistantLightElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeDropShadowElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeFloodElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeFuncAElement" = [ "Element" "EventTarget" "Node" "SvgComponentTransferFunctionElement" "SvgElement" ];
+          "SvgfeFuncBElement" = [ "Element" "EventTarget" "Node" "SvgComponentTransferFunctionElement" "SvgElement" ];
+          "SvgfeFuncGElement" = [ "Element" "EventTarget" "Node" "SvgComponentTransferFunctionElement" "SvgElement" ];
+          "SvgfeFuncRElement" = [ "Element" "EventTarget" "Node" "SvgComponentTransferFunctionElement" "SvgElement" ];
+          "SvgfeGaussianBlurElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeImageElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeMergeElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeMergeNodeElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeMorphologyElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeOffsetElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfePointLightElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeSpecularLightingElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeSpotLightElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeTileElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgfeTurbulenceElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvggElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgmPathElement" = [ "Element" "EventTarget" "Node" "SvgElement" ];
+          "SvgsvgElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" ];
+          "SvgtSpanElement" = [ "Element" "EventTarget" "Node" "SvgElement" "SvgGraphicsElement" "SvgTextContentElement" "SvgTextPositioningElement" ];
+          "TaskController" = [ "AbortController" ];
+          "TaskPriorityChangeEvent" = [ "Event" ];
+          "TaskSignal" = [ "AbortSignal" "EventTarget" ];
+          "TcpServerSocket" = [ "EventTarget" ];
+          "TcpServerSocketEvent" = [ "Event" ];
+          "TcpSocket" = [ "EventTarget" ];
+          "TcpSocketErrorEvent" = [ "Event" ];
+          "TcpSocketEvent" = [ "Event" ];
+          "Text" = [ "CharacterData" "EventTarget" "Node" ];
+          "TextTrack" = [ "EventTarget" ];
+          "TextTrackCue" = [ "EventTarget" ];
+          "TextTrackList" = [ "EventTarget" ];
+          "TimeEvent" = [ "Event" ];
+          "ToggleEvent" = [ "Event" ];
+          "TouchEvent" = [ "Event" "UiEvent" ];
+          "TrackEvent" = [ "Event" ];
+          "TransitionEvent" = [ "Event" ];
+          "UiEvent" = [ "Event" ];
+          "Usb" = [ "EventTarget" ];
+          "UsbConnectionEvent" = [ "Event" ];
+          "UsbPermissionResult" = [ "EventTarget" "PermissionStatus" ];
+          "UserProximityEvent" = [ "Event" ];
+          "ValueEvent" = [ "Event" ];
+          "VideoDecoder" = [ "EventTarget" ];
+          "VideoEncoder" = [ "EventTarget" ];
+          "VideoStreamTrack" = [ "EventTarget" "MediaStreamTrack" ];
+          "VideoTrackList" = [ "EventTarget" ];
+          "VisualViewport" = [ "EventTarget" ];
+          "VrDisplay" = [ "EventTarget" ];
+          "VttCue" = [ "EventTarget" "TextTrackCue" ];
+          "WakeLockSentinel" = [ "EventTarget" ];
+          "WaveShaperNode" = [ "AudioNode" "EventTarget" ];
+          "WebGlContextEvent" = [ "Event" ];
+          "WebKitCssMatrix" = [ "DomMatrix" "DomMatrixReadOnly" ];
+          "WebSocket" = [ "EventTarget" ];
+          "WebTransportError" = [ "DomException" ];
+          "WebTransportReceiveStream" = [ "ReadableStream" ];
+          "WebTransportSendStream" = [ "WritableStream" ];
+          "WheelEvent" = [ "Event" "MouseEvent" "UiEvent" ];
+          "Window" = [ "EventTarget" ];
+          "WindowClient" = [ "Client" ];
+          "Worker" = [ "EventTarget" ];
+          "WorkerDebuggerGlobalScope" = [ "EventTarget" ];
+          "WorkerGlobalScope" = [ "EventTarget" ];
+          "XmlDocument" = [ "Document" "EventTarget" "Node" ];
+          "XmlHttpRequest" = [ "EventTarget" "XmlHttpRequestEventTarget" ];
+          "XmlHttpRequestEventTarget" = [ "EventTarget" ];
+          "XmlHttpRequestUpload" = [ "EventTarget" "XmlHttpRequestEventTarget" ];
+          "XrBoundedReferenceSpace" = [ "EventTarget" "XrReferenceSpace" "XrSpace" ];
+          "XrInputSourceEvent" = [ "Event" ];
+          "XrInputSourcesChangeEvent" = [ "Event" ];
+          "XrJointPose" = [ "XrPose" ];
+          "XrJointSpace" = [ "EventTarget" "XrSpace" ];
+          "XrLayer" = [ "EventTarget" ];
+          "XrPermissionStatus" = [ "EventTarget" "PermissionStatus" ];
+          "XrReferenceSpace" = [ "EventTarget" "XrSpace" ];
+          "XrReferenceSpaceEvent" = [ "Event" ];
+          "XrSession" = [ "EventTarget" ];
+          "XrSessionEvent" = [ "Event" ];
+          "XrSpace" = [ "EventTarget" ];
+          "XrSystem" = [ "EventTarget" ];
+          "XrViewerPose" = [ "XrPose" ];
+          "XrWebGlLayer" = [ "EventTarget" "XrLayer" ];
+          "default" = [ "std" ];
+          "std" = [ "wasm-bindgen/std" "js-sys/std" ];
+        };
+        resolvedDefaultFeatures = [ "AudioBuffer" "AudioBufferSourceNode" "AudioContext" "AudioContextOptions" "AudioContextState" "AudioDestinationNode" "AudioNode" "AudioScheduledSourceNode" "BaseAudioContext" "EventTarget" "Window" "default" "std" ];
+      };
       "widestring" = rec {
         crateName = "widestring";
         version = "1.2.1";
@@ -5928,6 +7596,850 @@ rec {
         ];
 
       };
+      "windows" = rec {
+        crateName = "windows";
+        version = "0.62.2";
+        edition = "2021";
+        sha256 = "10457l9ihrbw8j79z2v4plyjxkf6xvb5npd0lqwmkh702gpaszsj";
+        dependencies = [
+          {
+            name = "windows-collections";
+            packageId = "windows-collections";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-core";
+            packageId = "windows-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-future";
+            packageId = "windows-future";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-numerics";
+            packageId = "windows-numerics";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "AI" = [ "Foundation" ];
+          "AI_Actions" = [ "AI" ];
+          "AI_Actions_Hosting" = [ "AI_Actions" ];
+          "AI_Actions_Provider" = [ "AI_Actions" ];
+          "AI_Agents" = [ "AI" ];
+          "AI_Agents_Mcp" = [ "AI_Agents" ];
+          "AI_MachineLearning" = [ "AI" ];
+          "ApplicationModel" = [ "Foundation" ];
+          "ApplicationModel_Activation" = [ "ApplicationModel" ];
+          "ApplicationModel_AppExtensions" = [ "ApplicationModel" ];
+          "ApplicationModel_AppService" = [ "ApplicationModel" ];
+          "ApplicationModel_Appointments" = [ "ApplicationModel" ];
+          "ApplicationModel_Appointments_AppointmentsProvider" = [ "ApplicationModel_Appointments" ];
+          "ApplicationModel_Appointments_DataProvider" = [ "ApplicationModel_Appointments" ];
+          "ApplicationModel_Background" = [ "ApplicationModel" ];
+          "ApplicationModel_Calls" = [ "ApplicationModel" ];
+          "ApplicationModel_Calls_Background" = [ "ApplicationModel_Calls" ];
+          "ApplicationModel_Calls_Provider" = [ "ApplicationModel_Calls" ];
+          "ApplicationModel_Chat" = [ "ApplicationModel" ];
+          "ApplicationModel_CommunicationBlocking" = [ "ApplicationModel" ];
+          "ApplicationModel_Contacts" = [ "ApplicationModel" ];
+          "ApplicationModel_Contacts_DataProvider" = [ "ApplicationModel_Contacts" ];
+          "ApplicationModel_Contacts_Provider" = [ "ApplicationModel_Contacts" ];
+          "ApplicationModel_ConversationalAgent" = [ "ApplicationModel" ];
+          "ApplicationModel_Core" = [ "ApplicationModel" ];
+          "ApplicationModel_DataTransfer" = [ "ApplicationModel" ];
+          "ApplicationModel_DataTransfer_DragDrop" = [ "ApplicationModel_DataTransfer" ];
+          "ApplicationModel_DataTransfer_DragDrop_Core" = [ "ApplicationModel_DataTransfer_DragDrop" ];
+          "ApplicationModel_DataTransfer_ShareTarget" = [ "ApplicationModel_DataTransfer" ];
+          "ApplicationModel_Email" = [ "ApplicationModel" ];
+          "ApplicationModel_Email_DataProvider" = [ "ApplicationModel_Email" ];
+          "ApplicationModel_ExtendedExecution" = [ "ApplicationModel" ];
+          "ApplicationModel_ExtendedExecution_Foreground" = [ "ApplicationModel_ExtendedExecution" ];
+          "ApplicationModel_Holographic" = [ "ApplicationModel" ];
+          "ApplicationModel_LockScreen" = [ "ApplicationModel" ];
+          "ApplicationModel_PackageExtensions" = [ "ApplicationModel" ];
+          "ApplicationModel_Payments" = [ "ApplicationModel" ];
+          "ApplicationModel_Payments_Provider" = [ "ApplicationModel_Payments" ];
+          "ApplicationModel_Preview" = [ "ApplicationModel" ];
+          "ApplicationModel_Preview_Holographic" = [ "ApplicationModel_Preview" ];
+          "ApplicationModel_Preview_InkWorkspace" = [ "ApplicationModel_Preview" ];
+          "ApplicationModel_Preview_Notes" = [ "ApplicationModel_Preview" ];
+          "ApplicationModel_Resources" = [ "ApplicationModel" ];
+          "ApplicationModel_Resources_Core" = [ "ApplicationModel_Resources" ];
+          "ApplicationModel_Resources_Management" = [ "ApplicationModel_Resources" ];
+          "ApplicationModel_Search" = [ "ApplicationModel" ];
+          "ApplicationModel_Search_Core" = [ "ApplicationModel_Search" ];
+          "ApplicationModel_UserActivities" = [ "ApplicationModel" ];
+          "ApplicationModel_UserActivities_Core" = [ "ApplicationModel_UserActivities" ];
+          "ApplicationModel_UserDataAccounts" = [ "ApplicationModel" ];
+          "ApplicationModel_UserDataAccounts_Provider" = [ "ApplicationModel_UserDataAccounts" ];
+          "ApplicationModel_UserDataAccounts_SystemAccess" = [ "ApplicationModel_UserDataAccounts" ];
+          "ApplicationModel_UserDataTasks" = [ "ApplicationModel" ];
+          "ApplicationModel_UserDataTasks_DataProvider" = [ "ApplicationModel_UserDataTasks" ];
+          "ApplicationModel_VoiceCommands" = [ "ApplicationModel" ];
+          "ApplicationModel_Wallet" = [ "ApplicationModel" ];
+          "ApplicationModel_Wallet_System" = [ "ApplicationModel_Wallet" ];
+          "Data" = [ "Foundation" ];
+          "Data_Html" = [ "Data" ];
+          "Data_Json" = [ "Data" ];
+          "Data_Pdf" = [ "Data" ];
+          "Data_Text" = [ "Data" ];
+          "Data_Xml" = [ "Data" ];
+          "Data_Xml_Dom" = [ "Data_Xml" ];
+          "Data_Xml_Xsl" = [ "Data_Xml" ];
+          "Devices" = [ "Foundation" ];
+          "Devices_Adc" = [ "Devices" ];
+          "Devices_Adc_Provider" = [ "Devices_Adc" ];
+          "Devices_Background" = [ "Devices" ];
+          "Devices_Bluetooth" = [ "Devices" ];
+          "Devices_Bluetooth_Advertisement" = [ "Devices_Bluetooth" ];
+          "Devices_Bluetooth_Background" = [ "Devices_Bluetooth" ];
+          "Devices_Bluetooth_GenericAttributeProfile" = [ "Devices_Bluetooth" ];
+          "Devices_Bluetooth_Rfcomm" = [ "Devices_Bluetooth" ];
+          "Devices_Custom" = [ "Devices" ];
+          "Devices_Display" = [ "Devices" ];
+          "Devices_Display_Core" = [ "Devices_Display" ];
+          "Devices_Enumeration" = [ "Devices" ];
+          "Devices_Enumeration_Pnp" = [ "Devices_Enumeration" ];
+          "Devices_Geolocation" = [ "Devices" ];
+          "Devices_Geolocation_Geofencing" = [ "Devices_Geolocation" ];
+          "Devices_Geolocation_Provider" = [ "Devices_Geolocation" ];
+          "Devices_Gpio" = [ "Devices" ];
+          "Devices_Gpio_Provider" = [ "Devices_Gpio" ];
+          "Devices_Haptics" = [ "Devices" ];
+          "Devices_HumanInterfaceDevice" = [ "Devices" ];
+          "Devices_I2c" = [ "Devices" ];
+          "Devices_I2c_Provider" = [ "Devices_I2c" ];
+          "Devices_Input" = [ "Devices" ];
+          "Devices_Input_Preview" = [ "Devices_Input" ];
+          "Devices_Lights" = [ "Devices" ];
+          "Devices_Lights_Effects" = [ "Devices_Lights" ];
+          "Devices_Midi" = [ "Devices" ];
+          "Devices_PointOfService" = [ "Devices" ];
+          "Devices_PointOfService_Provider" = [ "Devices_PointOfService" ];
+          "Devices_Portable" = [ "Devices" ];
+          "Devices_Power" = [ "Devices" ];
+          "Devices_Printers" = [ "Devices" ];
+          "Devices_Printers_Extensions" = [ "Devices_Printers" ];
+          "Devices_Pwm" = [ "Devices" ];
+          "Devices_Pwm_Provider" = [ "Devices_Pwm" ];
+          "Devices_Radios" = [ "Devices" ];
+          "Devices_Scanners" = [ "Devices" ];
+          "Devices_Sensors" = [ "Devices" ];
+          "Devices_Sensors_Custom" = [ "Devices_Sensors" ];
+          "Devices_SerialCommunication" = [ "Devices" ];
+          "Devices_SmartCards" = [ "Devices" ];
+          "Devices_Sms" = [ "Devices" ];
+          "Devices_Spi" = [ "Devices" ];
+          "Devices_Spi_Provider" = [ "Devices_Spi" ];
+          "Devices_Usb" = [ "Devices" ];
+          "Devices_WiFi" = [ "Devices" ];
+          "Devices_WiFiDirect" = [ "Devices" ];
+          "Devices_WiFiDirect_Services" = [ "Devices_WiFiDirect" ];
+          "Foundation_Collections" = [ "Foundation" ];
+          "Foundation_Diagnostics" = [ "Foundation" ];
+          "Foundation_Metadata" = [ "Foundation" ];
+          "Foundation_Numerics" = [ "Foundation" ];
+          "Gaming" = [ "Foundation" ];
+          "Gaming_Input" = [ "Gaming" ];
+          "Gaming_Input_Custom" = [ "Gaming_Input" ];
+          "Gaming_Input_ForceFeedback" = [ "Gaming_Input" ];
+          "Gaming_Input_Preview" = [ "Gaming_Input" ];
+          "Gaming_Preview" = [ "Gaming" ];
+          "Gaming_Preview_GamesEnumeration" = [ "Gaming_Preview" ];
+          "Gaming_UI" = [ "Gaming" ];
+          "Gaming_XboxLive" = [ "Gaming" ];
+          "Gaming_XboxLive_Storage" = [ "Gaming_XboxLive" ];
+          "Globalization" = [ "Foundation" ];
+          "Globalization_Collation" = [ "Globalization" ];
+          "Globalization_DateTimeFormatting" = [ "Globalization" ];
+          "Globalization_Fonts" = [ "Globalization" ];
+          "Globalization_NumberFormatting" = [ "Globalization" ];
+          "Globalization_PhoneNumberFormatting" = [ "Globalization" ];
+          "Graphics" = [ "Foundation" ];
+          "Graphics_Capture" = [ "Graphics" ];
+          "Graphics_DirectX" = [ "Graphics" ];
+          "Graphics_DirectX_Direct3D11" = [ "Graphics_DirectX" ];
+          "Graphics_Display" = [ "Graphics" ];
+          "Graphics_Display_Core" = [ "Graphics_Display" ];
+          "Graphics_Effects" = [ "Graphics" ];
+          "Graphics_Holographic" = [ "Graphics" ];
+          "Graphics_Imaging" = [ "Graphics" ];
+          "Graphics_Printing" = [ "Graphics" ];
+          "Graphics_Printing3D" = [ "Graphics" ];
+          "Graphics_Printing_OptionDetails" = [ "Graphics_Printing" ];
+          "Graphics_Printing_PrintSupport" = [ "Graphics_Printing" ];
+          "Graphics_Printing_PrintTicket" = [ "Graphics_Printing" ];
+          "Graphics_Printing_ProtectedPrint" = [ "Graphics_Printing" ];
+          "Graphics_Printing_Workflow" = [ "Graphics_Printing" ];
+          "Management" = [ "Foundation" ];
+          "Management_Core" = [ "Management" ];
+          "Management_Deployment" = [ "Management" ];
+          "Management_Deployment_Preview" = [ "Management_Deployment" ];
+          "Management_Policies" = [ "Management" ];
+          "Management_Setup" = [ "Management" ];
+          "Management_Update" = [ "Management" ];
+          "Management_Workplace" = [ "Management" ];
+          "Media" = [ "Foundation" ];
+          "Media_AppBroadcasting" = [ "Media" ];
+          "Media_AppRecording" = [ "Media" ];
+          "Media_Audio" = [ "Media" ];
+          "Media_Capture" = [ "Media" ];
+          "Media_Capture_Core" = [ "Media_Capture" ];
+          "Media_Capture_Frames" = [ "Media_Capture" ];
+          "Media_Casting" = [ "Media" ];
+          "Media_ClosedCaptioning" = [ "Media" ];
+          "Media_ContentRestrictions" = [ "Media" ];
+          "Media_Control" = [ "Media" ];
+          "Media_Core" = [ "Media" ];
+          "Media_Core_Preview" = [ "Media_Core" ];
+          "Media_Devices" = [ "Media" ];
+          "Media_Devices_Core" = [ "Media_Devices" ];
+          "Media_DialProtocol" = [ "Media" ];
+          "Media_Editing" = [ "Media" ];
+          "Media_Effects" = [ "Media" ];
+          "Media_FaceAnalysis" = [ "Media" ];
+          "Media_Import" = [ "Media" ];
+          "Media_MediaProperties" = [ "Media" ];
+          "Media_Miracast" = [ "Media" ];
+          "Media_Ocr" = [ "Media" ];
+          "Media_PlayTo" = [ "Media" ];
+          "Media_Playback" = [ "Media" ];
+          "Media_Playlists" = [ "Media" ];
+          "Media_Protection" = [ "Media" ];
+          "Media_Protection_PlayReady" = [ "Media_Protection" ];
+          "Media_Render" = [ "Media" ];
+          "Media_SpeechRecognition" = [ "Media" ];
+          "Media_SpeechSynthesis" = [ "Media" ];
+          "Media_Streaming" = [ "Media" ];
+          "Media_Streaming_Adaptive" = [ "Media_Streaming" ];
+          "Media_Transcoding" = [ "Media" ];
+          "Networking" = [ "Foundation" ];
+          "Networking_BackgroundTransfer" = [ "Networking" ];
+          "Networking_Connectivity" = [ "Networking" ];
+          "Networking_NetworkOperators" = [ "Networking" ];
+          "Networking_Proximity" = [ "Networking" ];
+          "Networking_PushNotifications" = [ "Networking" ];
+          "Networking_ServiceDiscovery" = [ "Networking" ];
+          "Networking_ServiceDiscovery_Dnssd" = [ "Networking_ServiceDiscovery" ];
+          "Networking_Sockets" = [ "Networking" ];
+          "Networking_Vpn" = [ "Networking" ];
+          "Networking_XboxLive" = [ "Networking" ];
+          "Perception" = [ "Foundation" ];
+          "Perception_Automation" = [ "Perception" ];
+          "Perception_Automation_Core" = [ "Perception_Automation" ];
+          "Perception_People" = [ "Perception" ];
+          "Perception_Spatial" = [ "Perception" ];
+          "Perception_Spatial_Preview" = [ "Perception_Spatial" ];
+          "Perception_Spatial_Surfaces" = [ "Perception_Spatial" ];
+          "Security" = [ "Foundation" ];
+          "Security_Authentication" = [ "Security" ];
+          "Security_Authentication_Identity" = [ "Security_Authentication" ];
+          "Security_Authentication_Identity_Core" = [ "Security_Authentication_Identity" ];
+          "Security_Authentication_OnlineId" = [ "Security_Authentication" ];
+          "Security_Authentication_Web" = [ "Security_Authentication" ];
+          "Security_Authentication_Web_Core" = [ "Security_Authentication_Web" ];
+          "Security_Authentication_Web_Provider" = [ "Security_Authentication_Web" ];
+          "Security_Authorization" = [ "Security" ];
+          "Security_Authorization_AppCapabilityAccess" = [ "Security_Authorization" ];
+          "Security_Credentials" = [ "Security" ];
+          "Security_Credentials_UI" = [ "Security_Credentials" ];
+          "Security_Cryptography" = [ "Security" ];
+          "Security_Cryptography_Certificates" = [ "Security_Cryptography" ];
+          "Security_Cryptography_Core" = [ "Security_Cryptography" ];
+          "Security_Cryptography_DataProtection" = [ "Security_Cryptography" ];
+          "Security_DataProtection" = [ "Security" ];
+          "Security_EnterpriseData" = [ "Security" ];
+          "Security_ExchangeActiveSyncProvisioning" = [ "Security" ];
+          "Security_Isolation" = [ "Security" ];
+          "Services" = [ "Foundation" ];
+          "Services_Maps" = [ "Services" ];
+          "Services_Maps_Guidance" = [ "Services_Maps" ];
+          "Services_Maps_LocalSearch" = [ "Services_Maps" ];
+          "Services_Maps_OfflineMaps" = [ "Services_Maps" ];
+          "Services_Store" = [ "Services" ];
+          "Services_TargetedContent" = [ "Services" ];
+          "Storage" = [ "Foundation" ];
+          "Storage_AccessCache" = [ "Storage" ];
+          "Storage_BulkAccess" = [ "Storage" ];
+          "Storage_Compression" = [ "Storage" ];
+          "Storage_FileProperties" = [ "Storage" ];
+          "Storage_Pickers" = [ "Storage" ];
+          "Storage_Pickers_Provider" = [ "Storage_Pickers" ];
+          "Storage_Provider" = [ "Storage" ];
+          "Storage_Search" = [ "Storage" ];
+          "Storage_Streams" = [ "Storage" ];
+          "System" = [ "Foundation" ];
+          "System_Diagnostics" = [ "System" ];
+          "System_Diagnostics_DevicePortal" = [ "System_Diagnostics" ];
+          "System_Diagnostics_Telemetry" = [ "System_Diagnostics" ];
+          "System_Diagnostics_TraceReporting" = [ "System_Diagnostics" ];
+          "System_Display" = [ "System" ];
+          "System_Implementation" = [ "System" ];
+          "System_Implementation_FileExplorer" = [ "System_Implementation" ];
+          "System_Inventory" = [ "System" ];
+          "System_Power" = [ "System" ];
+          "System_Profile" = [ "System" ];
+          "System_Profile_SystemManufacturers" = [ "System_Profile" ];
+          "System_RemoteDesktop" = [ "System" ];
+          "System_RemoteDesktop_Input" = [ "System_RemoteDesktop" ];
+          "System_RemoteDesktop_Provider" = [ "System_RemoteDesktop" ];
+          "System_RemoteSystems" = [ "System" ];
+          "System_Threading" = [ "System" ];
+          "System_Threading_Core" = [ "System_Threading" ];
+          "System_Update" = [ "System" ];
+          "System_UserProfile" = [ "System" ];
+          "UI" = [ "Foundation" ];
+          "UI_Accessibility" = [ "UI" ];
+          "UI_ApplicationSettings" = [ "UI" ];
+          "UI_Composition" = [ "UI" ];
+          "UI_Composition_Core" = [ "UI_Composition" ];
+          "UI_Composition_Desktop" = [ "UI_Composition" ];
+          "UI_Composition_Diagnostics" = [ "UI_Composition" ];
+          "UI_Composition_Effects" = [ "UI_Composition" ];
+          "UI_Composition_Interactions" = [ "UI_Composition" ];
+          "UI_Composition_Scenes" = [ "UI_Composition" ];
+          "UI_Core" = [ "UI" ];
+          "UI_Core_AnimationMetrics" = [ "UI_Core" ];
+          "UI_Core_Preview" = [ "UI_Core" ];
+          "UI_Input" = [ "UI" ];
+          "UI_Input_Core" = [ "UI_Input" ];
+          "UI_Input_Inking" = [ "UI_Input" ];
+          "UI_Input_Inking_Analysis" = [ "UI_Input_Inking" ];
+          "UI_Input_Inking_Core" = [ "UI_Input_Inking" ];
+          "UI_Input_Inking_Preview" = [ "UI_Input_Inking" ];
+          "UI_Input_Preview" = [ "UI_Input" ];
+          "UI_Input_Preview_Injection" = [ "UI_Input_Preview" ];
+          "UI_Input_Preview_Text" = [ "UI_Input_Preview" ];
+          "UI_Input_Spatial" = [ "UI_Input" ];
+          "UI_Notifications" = [ "UI" ];
+          "UI_Notifications_Management" = [ "UI_Notifications" ];
+          "UI_Notifications_Preview" = [ "UI_Notifications" ];
+          "UI_Popups" = [ "UI" ];
+          "UI_Shell" = [ "UI" ];
+          "UI_StartScreen" = [ "UI" ];
+          "UI_Text" = [ "UI" ];
+          "UI_Text_Core" = [ "UI_Text" ];
+          "UI_UIAutomation" = [ "UI" ];
+          "UI_UIAutomation_Core" = [ "UI_UIAutomation" ];
+          "UI_ViewManagement" = [ "UI" ];
+          "UI_ViewManagement_Core" = [ "UI_ViewManagement" ];
+          "UI_WebUI" = [ "UI" ];
+          "UI_WindowManagement" = [ "UI" ];
+          "UI_WindowManagement_Preview" = [ "UI_WindowManagement" ];
+          "Wdk" = [ "Win32_Foundation" ];
+          "Wdk_Devices" = [ "Wdk" ];
+          "Wdk_Devices_Bluetooth" = [ "Wdk_Devices" ];
+          "Wdk_Devices_HumanInterfaceDevice" = [ "Wdk_Devices" ];
+          "Wdk_Foundation" = [ "Wdk" ];
+          "Wdk_Graphics" = [ "Wdk" ];
+          "Wdk_Graphics_Direct3D" = [ "Wdk_Graphics" ];
+          "Wdk_NetworkManagement" = [ "Wdk" ];
+          "Wdk_NetworkManagement_Ndis" = [ "Wdk_NetworkManagement" ];
+          "Wdk_NetworkManagement_WindowsFilteringPlatform" = [ "Wdk_NetworkManagement" ];
+          "Wdk_Storage" = [ "Wdk" ];
+          "Wdk_Storage_FileSystem" = [ "Wdk_Storage" ];
+          "Wdk_Storage_FileSystem_Minifilters" = [ "Wdk_Storage_FileSystem" ];
+          "Wdk_System" = [ "Wdk" ];
+          "Wdk_System_IO" = [ "Wdk_System" ];
+          "Wdk_System_Memory" = [ "Wdk_System" ];
+          "Wdk_System_OfflineRegistry" = [ "Wdk_System" ];
+          "Wdk_System_Registry" = [ "Wdk_System" ];
+          "Wdk_System_SystemInformation" = [ "Wdk_System" ];
+          "Wdk_System_SystemServices" = [ "Wdk_System" ];
+          "Wdk_System_Threading" = [ "Wdk_System" ];
+          "Web" = [ "Foundation" ];
+          "Web_AtomPub" = [ "Web" ];
+          "Web_Http" = [ "Web" ];
+          "Web_Http_Diagnostics" = [ "Web_Http" ];
+          "Web_Http_Filters" = [ "Web_Http" ];
+          "Web_Http_Headers" = [ "Web_Http" ];
+          "Web_Syndication" = [ "Web" ];
+          "Web_UI" = [ "Web" ];
+          "Web_UI_Interop" = [ "Web_UI" ];
+          "Win32" = [ "Win32_Foundation" ];
+          "Win32_AI" = [ "Win32" ];
+          "Win32_AI_MachineLearning" = [ "Win32_AI" ];
+          "Win32_AI_MachineLearning_DirectML" = [ "Win32_AI_MachineLearning" ];
+          "Win32_AI_MachineLearning_WinML" = [ "Win32_AI_MachineLearning" ];
+          "Win32_Data" = [ "Win32" ];
+          "Win32_Data_HtmlHelp" = [ "Win32_Data" ];
+          "Win32_Data_RightsManagement" = [ "Win32_Data" ];
+          "Win32_Data_Xml" = [ "Win32_Data" ];
+          "Win32_Data_Xml_MsXml" = [ "Win32_Data_Xml" ];
+          "Win32_Data_Xml_XmlLite" = [ "Win32_Data_Xml" ];
+          "Win32_Devices" = [ "Win32" ];
+          "Win32_Devices_AllJoyn" = [ "Win32_Devices" ];
+          "Win32_Devices_Beep" = [ "Win32_Devices" ];
+          "Win32_Devices_BiometricFramework" = [ "Win32_Devices" ];
+          "Win32_Devices_Bluetooth" = [ "Win32_Devices" ];
+          "Win32_Devices_Cdrom" = [ "Win32_Devices" ];
+          "Win32_Devices_Communication" = [ "Win32_Devices" ];
+          "Win32_Devices_DeviceAccess" = [ "Win32_Devices" ];
+          "Win32_Devices_DeviceAndDriverInstallation" = [ "Win32_Devices" ];
+          "Win32_Devices_DeviceQuery" = [ "Win32_Devices" ];
+          "Win32_Devices_Display" = [ "Win32_Devices" ];
+          "Win32_Devices_Dvd" = [ "Win32_Devices" ];
+          "Win32_Devices_Enumeration" = [ "Win32_Devices" ];
+          "Win32_Devices_Enumeration_Pnp" = [ "Win32_Devices_Enumeration" ];
+          "Win32_Devices_Fax" = [ "Win32_Devices" ];
+          "Win32_Devices_FunctionDiscovery" = [ "Win32_Devices" ];
+          "Win32_Devices_Geolocation" = [ "Win32_Devices" ];
+          "Win32_Devices_HumanInterfaceDevice" = [ "Win32_Devices" ];
+          "Win32_Devices_ImageAcquisition" = [ "Win32_Devices" ];
+          "Win32_Devices_Nfc" = [ "Win32_Devices" ];
+          "Win32_Devices_Nfp" = [ "Win32_Devices" ];
+          "Win32_Devices_PortableDevices" = [ "Win32_Devices" ];
+          "Win32_Devices_Properties" = [ "Win32_Devices" ];
+          "Win32_Devices_Pwm" = [ "Win32_Devices" ];
+          "Win32_Devices_Sensors" = [ "Win32_Devices" ];
+          "Win32_Devices_SerialCommunication" = [ "Win32_Devices" ];
+          "Win32_Devices_Tapi" = [ "Win32_Devices" ];
+          "Win32_Devices_Usb" = [ "Win32_Devices" ];
+          "Win32_Devices_WebServicesOnDevices" = [ "Win32_Devices" ];
+          "Win32_Foundation" = [ "Win32" ];
+          "Win32_Gaming" = [ "Win32" ];
+          "Win32_Globalization" = [ "Win32" ];
+          "Win32_Graphics" = [ "Win32" ];
+          "Win32_Graphics_CompositionSwapchain" = [ "Win32_Graphics" ];
+          "Win32_Graphics_DXCore" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct2D" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct2D_Common" = [ "Win32_Graphics_Direct2D" ];
+          "Win32_Graphics_Direct3D" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D10" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D11" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D11on12" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D12" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D9" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D9on12" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Direct3D_Dxc" = [ "Win32_Graphics_Direct3D" ];
+          "Win32_Graphics_Direct3D_Fxc" = [ "Win32_Graphics_Direct3D" ];
+          "Win32_Graphics_DirectComposition" = [ "Win32_Graphics" ];
+          "Win32_Graphics_DirectDraw" = [ "Win32_Graphics" ];
+          "Win32_Graphics_DirectManipulation" = [ "Win32_Graphics" ];
+          "Win32_Graphics_DirectWrite" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Dwm" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Dxgi" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Dxgi_Common" = [ "Win32_Graphics_Dxgi" ];
+          "Win32_Graphics_Gdi" = [ "Win32_Graphics" ];
+          "Win32_Graphics_GdiPlus" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Hlsl" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Imaging" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Imaging_D2D" = [ "Win32_Graphics_Imaging" ];
+          "Win32_Graphics_OpenGL" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Printing" = [ "Win32_Graphics" ];
+          "Win32_Graphics_Printing_PrintTicket" = [ "Win32_Graphics_Printing" ];
+          "Win32_Management" = [ "Win32" ];
+          "Win32_Management_MobileDeviceManagementRegistration" = [ "Win32_Management" ];
+          "Win32_Media" = [ "Win32" ];
+          "Win32_Media_Audio" = [ "Win32_Media" ];
+          "Win32_Media_Audio_Apo" = [ "Win32_Media_Audio" ];
+          "Win32_Media_Audio_DirectMusic" = [ "Win32_Media_Audio" ];
+          "Win32_Media_Audio_DirectSound" = [ "Win32_Media_Audio" ];
+          "Win32_Media_Audio_Endpoints" = [ "Win32_Media_Audio" ];
+          "Win32_Media_Audio_XAudio2" = [ "Win32_Media_Audio" ];
+          "Win32_Media_DeviceManager" = [ "Win32_Media" ];
+          "Win32_Media_DirectShow" = [ "Win32_Media" ];
+          "Win32_Media_DirectShow_Tv" = [ "Win32_Media_DirectShow" ];
+          "Win32_Media_DirectShow_Xml" = [ "Win32_Media_DirectShow" ];
+          "Win32_Media_DxMediaObjects" = [ "Win32_Media" ];
+          "Win32_Media_KernelStreaming" = [ "Win32_Media" ];
+          "Win32_Media_LibrarySharingServices" = [ "Win32_Media" ];
+          "Win32_Media_MediaFoundation" = [ "Win32_Media" ];
+          "Win32_Media_MediaPlayer" = [ "Win32_Media" ];
+          "Win32_Media_Multimedia" = [ "Win32_Media" ];
+          "Win32_Media_PictureAcquisition" = [ "Win32_Media" ];
+          "Win32_Media_Speech" = [ "Win32_Media" ];
+          "Win32_Media_Streaming" = [ "Win32_Media" ];
+          "Win32_Media_WindowsMediaFormat" = [ "Win32_Media" ];
+          "Win32_NetworkManagement" = [ "Win32" ];
+          "Win32_NetworkManagement_Dhcp" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Dns" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_InternetConnectionWizard" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_IpHelper" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_MobileBroadband" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Multicast" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Ndis" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetBios" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetManagement" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetShell" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetworkDiagnosticsFramework" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_NetworkPolicyServer" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_P2P" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_QoS" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Rras" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_Snmp" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WNet" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WebDav" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WiFi" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsConnectNow" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsConnectionManager" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsFilteringPlatform" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsFirewall" = [ "Win32_NetworkManagement" ];
+          "Win32_NetworkManagement_WindowsNetworkVirtualization" = [ "Win32_NetworkManagement" ];
+          "Win32_Networking" = [ "Win32" ];
+          "Win32_Networking_ActiveDirectory" = [ "Win32_Networking" ];
+          "Win32_Networking_BackgroundIntelligentTransferService" = [ "Win32_Networking" ];
+          "Win32_Networking_Clustering" = [ "Win32_Networking" ];
+          "Win32_Networking_HttpServer" = [ "Win32_Networking" ];
+          "Win32_Networking_Ldap" = [ "Win32_Networking" ];
+          "Win32_Networking_NetworkListManager" = [ "Win32_Networking" ];
+          "Win32_Networking_RemoteDifferentialCompression" = [ "Win32_Networking" ];
+          "Win32_Networking_WebSocket" = [ "Win32_Networking" ];
+          "Win32_Networking_WinHttp" = [ "Win32_Networking" ];
+          "Win32_Networking_WinInet" = [ "Win32_Networking" ];
+          "Win32_Networking_WinSock" = [ "Win32_Networking" ];
+          "Win32_Networking_WindowsWebServices" = [ "Win32_Networking" ];
+          "Win32_Security" = [ "Win32" ];
+          "Win32_Security_AppLocker" = [ "Win32_Security" ];
+          "Win32_Security_Authentication" = [ "Win32_Security" ];
+          "Win32_Security_Authentication_Identity" = [ "Win32_Security_Authentication" ];
+          "Win32_Security_Authentication_Identity_Provider" = [ "Win32_Security_Authentication_Identity" ];
+          "Win32_Security_Authorization" = [ "Win32_Security" ];
+          "Win32_Security_Authorization_UI" = [ "Win32_Security_Authorization" ];
+          "Win32_Security_ConfigurationSnapin" = [ "Win32_Security" ];
+          "Win32_Security_Credentials" = [ "Win32_Security" ];
+          "Win32_Security_Cryptography" = [ "Win32_Security" ];
+          "Win32_Security_Cryptography_Catalog" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_Cryptography_Certificates" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_Cryptography_Sip" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_Cryptography_UI" = [ "Win32_Security_Cryptography" ];
+          "Win32_Security_DiagnosticDataQuery" = [ "Win32_Security" ];
+          "Win32_Security_DirectoryServices" = [ "Win32_Security" ];
+          "Win32_Security_EnterpriseData" = [ "Win32_Security" ];
+          "Win32_Security_ExtensibleAuthenticationProtocol" = [ "Win32_Security" ];
+          "Win32_Security_Isolation" = [ "Win32_Security" ];
+          "Win32_Security_LicenseProtection" = [ "Win32_Security" ];
+          "Win32_Security_NetworkAccessProtection" = [ "Win32_Security" ];
+          "Win32_Security_Tpm" = [ "Win32_Security" ];
+          "Win32_Security_WinTrust" = [ "Win32_Security" ];
+          "Win32_Security_WinWlx" = [ "Win32_Security" ];
+          "Win32_Storage" = [ "Win32" ];
+          "Win32_Storage_Cabinets" = [ "Win32_Storage" ];
+          "Win32_Storage_CloudFilters" = [ "Win32_Storage" ];
+          "Win32_Storage_Compression" = [ "Win32_Storage" ];
+          "Win32_Storage_DataDeduplication" = [ "Win32_Storage" ];
+          "Win32_Storage_DistributedFileSystem" = [ "Win32_Storage" ];
+          "Win32_Storage_EnhancedStorage" = [ "Win32_Storage" ];
+          "Win32_Storage_FileHistory" = [ "Win32_Storage" ];
+          "Win32_Storage_FileServerResourceManager" = [ "Win32_Storage" ];
+          "Win32_Storage_FileSystem" = [ "Win32_Storage" ];
+          "Win32_Storage_Imapi" = [ "Win32_Storage" ];
+          "Win32_Storage_IndexServer" = [ "Win32_Storage" ];
+          "Win32_Storage_InstallableFileSystems" = [ "Win32_Storage" ];
+          "Win32_Storage_IscsiDisc" = [ "Win32_Storage" ];
+          "Win32_Storage_Jet" = [ "Win32_Storage" ];
+          "Win32_Storage_Nvme" = [ "Win32_Storage" ];
+          "Win32_Storage_OfflineFiles" = [ "Win32_Storage" ];
+          "Win32_Storage_OperationRecorder" = [ "Win32_Storage" ];
+          "Win32_Storage_Packaging" = [ "Win32_Storage" ];
+          "Win32_Storage_Packaging_Appx" = [ "Win32_Storage_Packaging" ];
+          "Win32_Storage_Packaging_Opc" = [ "Win32_Storage_Packaging" ];
+          "Win32_Storage_ProjectedFileSystem" = [ "Win32_Storage" ];
+          "Win32_Storage_StructuredStorage" = [ "Win32_Storage" ];
+          "Win32_Storage_Vhd" = [ "Win32_Storage" ];
+          "Win32_Storage_VirtualDiskService" = [ "Win32_Storage" ];
+          "Win32_Storage_Vss" = [ "Win32_Storage" ];
+          "Win32_Storage_Xps" = [ "Win32_Storage" ];
+          "Win32_Storage_Xps_Printing" = [ "Win32_Storage_Xps" ];
+          "Win32_System" = [ "Win32" ];
+          "Win32_System_AddressBook" = [ "Win32_System" ];
+          "Win32_System_Antimalware" = [ "Win32_System" ];
+          "Win32_System_ApplicationInstallationAndServicing" = [ "Win32_System" ];
+          "Win32_System_ApplicationVerifier" = [ "Win32_System" ];
+          "Win32_System_AssessmentTool" = [ "Win32_System" ];
+          "Win32_System_ClrHosting" = [ "Win32_System" ];
+          "Win32_System_Com" = [ "Win32_System" ];
+          "Win32_System_Com_CallObj" = [ "Win32_System_Com" ];
+          "Win32_System_Com_ChannelCredentials" = [ "Win32_System_Com" ];
+          "Win32_System_Com_Events" = [ "Win32_System_Com" ];
+          "Win32_System_Com_Marshal" = [ "Win32_System_Com" ];
+          "Win32_System_Com_StructuredStorage" = [ "Win32_System_Com" ];
+          "Win32_System_Com_UI" = [ "Win32_System_Com" ];
+          "Win32_System_Com_Urlmon" = [ "Win32_System_Com" ];
+          "Win32_System_ComponentServices" = [ "Win32_System" ];
+          "Win32_System_Console" = [ "Win32_System" ];
+          "Win32_System_Contacts" = [ "Win32_System" ];
+          "Win32_System_CorrelationVector" = [ "Win32_System" ];
+          "Win32_System_DataExchange" = [ "Win32_System" ];
+          "Win32_System_DeploymentServices" = [ "Win32_System" ];
+          "Win32_System_DesktopSharing" = [ "Win32_System" ];
+          "Win32_System_DeveloperLicensing" = [ "Win32_System" ];
+          "Win32_System_Diagnostics" = [ "Win32_System" ];
+          "Win32_System_Diagnostics_Ceip" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_ClrProfiling" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_Debug" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_Debug_ActiveScript" = [ "Win32_System_Diagnostics_Debug" ];
+          "Win32_System_Diagnostics_Debug_Extensions" = [ "Win32_System_Diagnostics_Debug" ];
+          "Win32_System_Diagnostics_Etw" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_ProcessSnapshotting" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_ToolHelp" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_Diagnostics_TraceLogging" = [ "Win32_System_Diagnostics" ];
+          "Win32_System_DistributedTransactionCoordinator" = [ "Win32_System" ];
+          "Win32_System_Environment" = [ "Win32_System" ];
+          "Win32_System_ErrorReporting" = [ "Win32_System" ];
+          "Win32_System_EventCollector" = [ "Win32_System" ];
+          "Win32_System_EventLog" = [ "Win32_System" ];
+          "Win32_System_EventNotificationService" = [ "Win32_System" ];
+          "Win32_System_GroupPolicy" = [ "Win32_System" ];
+          "Win32_System_HostCompute" = [ "Win32_System" ];
+          "Win32_System_HostComputeNetwork" = [ "Win32_System" ];
+          "Win32_System_HostComputeSystem" = [ "Win32_System" ];
+          "Win32_System_Hypervisor" = [ "Win32_System" ];
+          "Win32_System_IO" = [ "Win32_System" ];
+          "Win32_System_Iis" = [ "Win32_System" ];
+          "Win32_System_Ioctl" = [ "Win32_System" ];
+          "Win32_System_JobObjects" = [ "Win32_System" ];
+          "Win32_System_Js" = [ "Win32_System" ];
+          "Win32_System_Kernel" = [ "Win32_System" ];
+          "Win32_System_LibraryLoader" = [ "Win32_System" ];
+          "Win32_System_Mailslots" = [ "Win32_System" ];
+          "Win32_System_Mapi" = [ "Win32_System" ];
+          "Win32_System_Memory" = [ "Win32_System" ];
+          "Win32_System_Memory_NonVolatile" = [ "Win32_System_Memory" ];
+          "Win32_System_MessageQueuing" = [ "Win32_System" ];
+          "Win32_System_MixedReality" = [ "Win32_System" ];
+          "Win32_System_Mmc" = [ "Win32_System" ];
+          "Win32_System_Ole" = [ "Win32_System" ];
+          "Win32_System_ParentalControls" = [ "Win32_System" ];
+          "Win32_System_PasswordManagement" = [ "Win32_System" ];
+          "Win32_System_Performance" = [ "Win32_System" ];
+          "Win32_System_Performance_HardwareCounterProfiling" = [ "Win32_System_Performance" ];
+          "Win32_System_Pipes" = [ "Win32_System" ];
+          "Win32_System_Power" = [ "Win32_System" ];
+          "Win32_System_ProcessStatus" = [ "Win32_System" ];
+          "Win32_System_RealTimeCommunications" = [ "Win32_System" ];
+          "Win32_System_Recovery" = [ "Win32_System" ];
+          "Win32_System_Registry" = [ "Win32_System" ];
+          "Win32_System_RemoteAssistance" = [ "Win32_System" ];
+          "Win32_System_RemoteDesktop" = [ "Win32_System" ];
+          "Win32_System_RemoteManagement" = [ "Win32_System" ];
+          "Win32_System_RestartManager" = [ "Win32_System" ];
+          "Win32_System_Restore" = [ "Win32_System" ];
+          "Win32_System_Rpc" = [ "Win32_System" ];
+          "Win32_System_Search" = [ "Win32_System" ];
+          "Win32_System_Search_Common" = [ "Win32_System_Search" ];
+          "Win32_System_SecurityCenter" = [ "Win32_System" ];
+          "Win32_System_ServerBackup" = [ "Win32_System" ];
+          "Win32_System_Services" = [ "Win32_System" ];
+          "Win32_System_SettingsManagementInfrastructure" = [ "Win32_System" ];
+          "Win32_System_SetupAndMigration" = [ "Win32_System" ];
+          "Win32_System_Shutdown" = [ "Win32_System" ];
+          "Win32_System_SideShow" = [ "Win32_System" ];
+          "Win32_System_StationsAndDesktops" = [ "Win32_System" ];
+          "Win32_System_SubsystemForLinux" = [ "Win32_System" ];
+          "Win32_System_SystemInformation" = [ "Win32_System" ];
+          "Win32_System_SystemServices" = [ "Win32_System" ];
+          "Win32_System_TaskScheduler" = [ "Win32_System" ];
+          "Win32_System_Threading" = [ "Win32_System" ];
+          "Win32_System_Time" = [ "Win32_System" ];
+          "Win32_System_TpmBaseServices" = [ "Win32_System" ];
+          "Win32_System_TransactionServer" = [ "Win32_System" ];
+          "Win32_System_UpdateAgent" = [ "Win32_System" ];
+          "Win32_System_UpdateAssessment" = [ "Win32_System" ];
+          "Win32_System_UserAccessLogging" = [ "Win32_System" ];
+          "Win32_System_Variant" = [ "Win32_System" ];
+          "Win32_System_VirtualDosMachines" = [ "Win32_System" ];
+          "Win32_System_WinRT" = [ "Win32_System" ];
+          "Win32_System_WinRT_AllJoyn" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Composition" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_CoreInputView" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Direct3D11" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Display" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Graphics" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Graphics_Capture" = [ "Win32_System_WinRT_Graphics" ];
+          "Win32_System_WinRT_Graphics_Direct2D" = [ "Win32_System_WinRT_Graphics" ];
+          "Win32_System_WinRT_Graphics_Imaging" = [ "Win32_System_WinRT_Graphics" ];
+          "Win32_System_WinRT_Holographic" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Isolation" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_ML" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Media" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Metadata" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Pdf" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Printing" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Shell" = [ "Win32_System_WinRT" ];
+          "Win32_System_WinRT_Storage" = [ "Win32_System_WinRT" ];
+          "Win32_System_WindowsProgramming" = [ "Win32_System" ];
+          "Win32_System_WindowsSync" = [ "Win32_System" ];
+          "Win32_System_Wmi" = [ "Win32_System" ];
+          "Win32_UI" = [ "Win32" ];
+          "Win32_UI_Accessibility" = [ "Win32_UI" ];
+          "Win32_UI_Animation" = [ "Win32_UI" ];
+          "Win32_UI_ColorSystem" = [ "Win32_UI" ];
+          "Win32_UI_Controls" = [ "Win32_UI" ];
+          "Win32_UI_Controls_Dialogs" = [ "Win32_UI_Controls" ];
+          "Win32_UI_Controls_RichEdit" = [ "Win32_UI_Controls" ];
+          "Win32_UI_HiDpi" = [ "Win32_UI" ];
+          "Win32_UI_Input" = [ "Win32_UI" ];
+          "Win32_UI_Input_Ime" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_Ink" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_KeyboardAndMouse" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_Pointer" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_Radial" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_Touch" = [ "Win32_UI_Input" ];
+          "Win32_UI_Input_XboxController" = [ "Win32_UI_Input" ];
+          "Win32_UI_InteractionContext" = [ "Win32_UI" ];
+          "Win32_UI_LegacyWindowsEnvironmentFeatures" = [ "Win32_UI" ];
+          "Win32_UI_Magnification" = [ "Win32_UI" ];
+          "Win32_UI_Notifications" = [ "Win32_UI" ];
+          "Win32_UI_Ribbon" = [ "Win32_UI" ];
+          "Win32_UI_Shell" = [ "Win32_UI" ];
+          "Win32_UI_Shell_Common" = [ "Win32_UI_Shell" ];
+          "Win32_UI_Shell_PropertiesSystem" = [ "Win32_UI_Shell" ];
+          "Win32_UI_TabletPC" = [ "Win32_UI" ];
+          "Win32_UI_TextServices" = [ "Win32_UI" ];
+          "Win32_UI_WindowsAndMessaging" = [ "Win32_UI" ];
+          "Win32_UI_Wpf" = [ "Win32_UI" ];
+          "Win32_Web" = [ "Win32" ];
+          "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
+          "default" = [ "std" ];
+          "std" = [ "windows-collections/std" "windows-core/std" "windows-future/std" "windows-numerics/std" ];
+        };
+        resolvedDefaultFeatures = [ "Win32" "Win32_Devices" "Win32_Devices_Properties" "Win32_Foundation" "Win32_Media" "Win32_Media_Audio" "Win32_Media_KernelStreaming" "Win32_Media_Multimedia" "Win32_Security" "Win32_System" "Win32_System_Com" "Win32_System_Com_StructuredStorage" "Win32_System_Performance" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Variant" "Win32_UI" "Win32_UI_Shell" "Win32_UI_Shell_PropertiesSystem" "default" "std" ];
+      };
+      "windows-collections" = rec {
+        crateName = "windows-collections";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "0436rjbkqn3j9m2v2lcmwwk0l3n2r57yvqb7fcy4m8d8y5ddkci3";
+        libName = "windows_collections";
+        dependencies = [
+          {
+            name = "windows-core";
+            packageId = "windows-core";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "windows-core/std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
+      "windows-core" = rec {
+        crateName = "windows-core";
+        version = "0.62.2";
+        edition = "2021";
+        sha256 = "1swxpv1a8qvn3bkxv8cn663238h2jccq35ff3nsj61jdsca3ms5q";
+        libName = "windows_core";
+        dependencies = [
+          {
+            name = "windows-implement";
+            packageId = "windows-implement";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-interface";
+            packageId = "windows-interface";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-link";
+            packageId = "windows-link";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-result";
+            packageId = "windows-result";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-strings";
+            packageId = "windows-strings";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "windows-result/std" "windows-strings/std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "windows-future" = rec {
+        crateName = "windows-future";
+        version = "0.3.2";
+        edition = "2021";
+        sha256 = "1jq5qs2dwzf6rl60f8gr49z2mifxsrdh4y4yfdws467ya41gkmp1";
+        libName = "windows_future";
+        dependencies = [
+          {
+            name = "windows-core";
+            packageId = "windows-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-link";
+            packageId = "windows-link";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-threading";
+            packageId = "windows-threading";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "windows-core/std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
+      };
+      "windows-implement" = rec {
+        crateName = "windows-implement";
+        version = "0.60.2";
+        edition = "2021";
+        sha256 = "1psxhmklzcf3wjs4b8qb42qb6znvc142cb5pa74rsyxm1822wgh5";
+        procMacro = true;
+        libName = "windows_implement";
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            usesDefaultFeatures = false;
+            features = [ "parsing" "proc-macro" "printing" "full" "clone-impls" ];
+          }
+        ];
+
+      };
+      "windows-interface" = rec {
+        crateName = "windows-interface";
+        version = "0.59.3";
+        edition = "2021";
+        sha256 = "0n73cwrn4247d0axrk7gjp08p34x1723483jxjxjdfkh4m56qc9z";
+        procMacro = true;
+        libName = "windows_interface";
+        dependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            usesDefaultFeatures = false;
+            features = [ "parsing" "proc-macro" "printing" "full" "clone-impls" ];
+          }
+        ];
+
+      };
       "windows-link" = rec {
         crateName = "windows-link";
         version = "0.2.1";
@@ -5935,6 +8447,30 @@ rec {
         sha256 = "1rag186yfr3xx7piv5rg8b6im2dwcf8zldiflvb22xbzwli5507h";
         libName = "windows_link";
 
+      };
+      "windows-numerics" = rec {
+        crateName = "windows-numerics";
+        version = "0.3.1";
+        edition = "2021";
+        sha256 = "09hgbg8pf89r4090yyhh9q29ppi7yyxkgmga9ascshy19a240bkf";
+        libName = "windows_numerics";
+        dependencies = [
+          {
+            name = "windows-core";
+            packageId = "windows-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "windows-link";
+            packageId = "windows-link";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "windows-core/std" ];
+        };
+        resolvedDefaultFeatures = [ "std" ];
       };
       "windows-registry" = rec {
         crateName = "windows-registry";
@@ -6564,6 +9100,21 @@ rec {
         ];
 
       };
+      "windows-threading" = rec {
+        crateName = "windows-threading";
+        version = "0.2.1";
+        edition = "2021";
+        sha256 = "0dsvsy33vxs0153z4n39sqkzx382cjjkrd46rb3z3zfak5dvsj9r";
+        libName = "windows_threading";
+        dependencies = [
+          {
+            name = "windows-link";
+            packageId = "windows-link";
+            usesDefaultFeatures = false;
+          }
+        ];
+
+      };
       "windows_aarch64_gnullvm" = rec {
         crateName = "windows_aarch64_gnullvm";
         version = "0.52.6";
@@ -6643,6 +9194,31 @@ rec {
           "Microsoft"
         ];
 
+      };
+      "winnow" = rec {
+        crateName = "winnow";
+        version = "1.0.4";
+        edition = "2021";
+        sha256 = "10fzxipa7lx16172p3aca9j60hzbqgjki2f95kqksd5qywcp7f93";
+        dependencies = [
+          {
+            name = "memchr";
+            packageId = "memchr";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "ascii" = [ "parser" ];
+          "binary" = [ "parser" ];
+          "debug" = [ "std" "dep:anstream" "dep:anstyle" "dep:is_terminal_polyfill" "dep:terminal_size" ];
+          "default" = [ "std" "ascii" "binary" ];
+          "simd" = [ "dep:memchr" ];
+          "std" = [ "alloc" "memchr?/std" ];
+          "unstable-doc" = [ "alloc" "std" "ascii" "binary" "simd" "unstable-recover" ];
+          "unstable-recover" = [ "parser" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "ascii" "binary" "default" "parser" "std" ];
       };
       "wit-bindgen" = rec {
         crateName = "wit-bindgen";

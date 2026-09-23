@@ -5,6 +5,7 @@ pub mod loopback;
 pub mod reorder;
 mod rtp;
 pub mod sip;
+pub mod speaker;
 pub mod wav;
 pub mod wire;
 
