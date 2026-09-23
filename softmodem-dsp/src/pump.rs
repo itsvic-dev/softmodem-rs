@@ -6,6 +6,7 @@ use std::fmt::Debug;
 use crate::uart::Decoder;
 use crate::v21::V21;
 use crate::v22::V22;
+use crate::v22bis::V22bis;
 
 /// Which end of the link this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub enum Modulation {
     #[default]
     V21,
     V22,
+    V22bis,
 }
 
 impl Modulation {
@@ -27,6 +29,7 @@ impl Modulation {
         match self {
             Self::V21 => Box::new(V21::new(role)),
             Self::V22 => Box::new(V22::new(role)),
+            Self::V22bis => Box::new(V22bis::new(role)),
         }
     }
 }

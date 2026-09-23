@@ -10,16 +10,16 @@ use crate::tone::Tone;
 use crate::uart::Decoder;
 
 const BIT_RATE: u32 = 1200;
-const GUARD_TONE_HZ: f64 = 1800.0;
+pub(crate) const GUARD_TONE_HZ: f64 = 1800.0;
 // V.2 allows -13 dBm0 in all; the guard tone is 6 dB below the high channel data.
-const LOW_CHANNEL_DBM0: f64 = -13.0;
-const HIGH_CHANNEL_DBM0: f64 = -13.97;
-const GUARD_TONE_DBM0: f64 = -19.97;
+pub(crate) const LOW_CHANNEL_DBM0: f64 = -13.0;
+pub(crate) const HIGH_CHANNEL_DBM0: f64 = -13.97;
+pub(crate) const GUARD_TONE_DBM0: f64 = -19.97;
 
-const USB1_BITS: usize = 186;
+pub(crate) const USB1_BITS: usize = 186;
 const SCRAMBLED_BITS: usize = 324;
-const WAIT_SAMPLES: usize = 3648;
-const SETTLE_SAMPLES: usize = 6120;
+pub(crate) const WAIT_SAMPLES: usize = 3648;
+pub(crate) const SETTLE_SAMPLES: usize = 6120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -33,14 +33,14 @@ enum Phase {
 
 // Unscrambled ones descramble to ones too, so scrambled ones need varied line bits.
 #[derive(Debug, Default)]
-struct Run {
-    value: bool,
+pub(crate) struct Run {
+    pub(crate) value: bool,
     length: usize,
     line_zeros: usize,
 }
 
 impl Run {
-    fn push(&mut self, line: bool, descrambled: bool) {
+    pub(crate) fn push(&mut self, line: bool, descrambled: bool) {
         if descrambled != self.value || self.length == 0 {
             *self = Self {
                 value: descrambled,
@@ -51,7 +51,7 @@ impl Run {
         self.line_zeros += usize::from(!line);
     }
 
-    fn scrambled(&self) -> bool {
+    pub(crate) fn scrambled(&self) -> bool {
         self.length >= SCRAMBLED_BITS && self.line_zeros >= self.length / 4
     }
 }
