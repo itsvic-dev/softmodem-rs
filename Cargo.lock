@@ -12,3 +12,7 @@ dependencies = [
 [[package]]
 name = "softmodem-dsp"
 version = "0.1.0"
+
+[[package]]
+name = "softmodem-transport"
+version = "0.1.0"
