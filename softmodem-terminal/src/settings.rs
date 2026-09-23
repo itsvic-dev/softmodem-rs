@@ -49,7 +49,17 @@ pub struct Settings {
     pub result_set: u8,
     pub loudness: u8,
     pub monitor: u8,
+    pub dcd: Dcd,
     pub registers: [u8; 256],
+}
+
+/// What DCD shows the computer, set by `&C`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dcd {
+    /// `&C0`, the Hayes default.
+    AlwaysOn,
+    /// `&C1`.
+    FollowsCarrier,
 }
 
 impl Default for Settings {
@@ -80,6 +90,7 @@ impl Default for Settings {
             result_set: 4,
             loudness: 2,
             monitor: 1,
+            dcd: Dcd::AlwaysOn,
             registers,
         }
     }
@@ -95,6 +106,13 @@ impl Settings {
             Command::ResultSet(level) => self.result_set = level,
             Command::Loudness(level) => self.loudness = level,
             Command::Monitor(mode) => self.monitor = mode,
+            Command::CarrierDetect(follows) => {
+                self.dcd = if follows {
+                    Dcd::FollowsCarrier
+                } else {
+                    Dcd::AlwaysOn
+                };
+            }
             Command::SetRegister { register, value } => {
                 self.registers[usize::from(register)] = value;
             }

@@ -14,6 +14,9 @@ pub enum Command {
     Verbose(bool),
     ResultSet(u8),
     Reset,
+    FactoryReset,
+    /// `&C1` makes DCD follow carrier, `&C0` keeps it on.
+    CarrierDetect(bool),
     SetRegister {
         register: u8,
         value: u8,
@@ -124,6 +127,15 @@ impl Parser<'_> {
                 self.number()?;
                 Command::Ignored
             }
+            b'&' if self.peek() == Some(b'C') => {
+                self.at += 1;
+                Command::CarrierDetect(self.value(1)? == 1)
+            }
+            b'&' if self.peek() == Some(b'F') => {
+                self.at += 1;
+                self.value(0)?;
+                Command::FactoryReset
+            }
             b'&' | b'\\' | b'%' => {
                 self.next()
                     .filter(u8::is_ascii_alphabetic)
@@ -232,9 +244,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_carrier_detect_and_factory_reset() {
+        assert_eq!(
+            parse(b"&F&C1&C").unwrap(),
+            [
+                Command::FactoryReset,
+                Command::CarrierDetect(true),
+                Command::CarrierDetect(false),
+            ]
+        );
+        assert_eq!(parse(b"&C2"), Err(ParseError));
+    }
+
+    #[test]
     fn accepts_vendor_commands_without_effect() {
         assert_eq!(
-            parse(b"&C1&D2\\N0%C0+MS=V21;E1").unwrap(),
+            parse(b"&K3&D2\\N0%C0+MS=V21;E1").unwrap(),
             [
                 Command::Ignored,
                 Command::Ignored,
