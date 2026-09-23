@@ -1,9 +1,10 @@
+use softmodem_dsp::ansam::{self, AnswerToneDetector, AnswerToneKind};
 use softmodem_dsp::fsk::{
     Channel, Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE,
 };
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone};
 use softmodem_dsp::uart::{Decoder, frame};
-use softmodem_interop::{AnswerTone, FskChannel, FskRx, FskTx, ToneRx};
+use softmodem_interop::{AnswerTone, FskChannel, FskRx, FskTx, ToneRx, ToneTx};
 
 const FRAME: usize = 160;
 
@@ -73,4 +74,38 @@ fn spandsp_hears_our_answer_tone_as_v25_ans() {
         detector.process(&samples);
     }
     assert_eq!(detector.detected(), Some(AnswerTone::Ans));
+}
+
+#[test]
+fn spandsp_hears_our_ansam_with_and_without_reversals() {
+    for (reversals, expected) in [(false, AnswerTone::Ansam), (true, AnswerTone::AnsamPr)] {
+        let mut tone = ansam::AnswerTone::new(AnswerToneKind::Ansam, reversals, V21_MAX_LEVEL_DBM0);
+        let mut detector = ToneRx::new(expected);
+        let mut samples = [0; FRAME];
+        for _ in 0..150 {
+            tone.render(&mut samples);
+            detector.process(&samples);
+        }
+        assert_eq!(detector.detected(), Some(expected), "reversals {reversals}");
+    }
+}
+
+#[test]
+fn we_tell_spandsp_answer_tones_apart() {
+    for (theirs, ours) in [
+        (AnswerTone::Ans, AnswerToneKind::Ans),
+        (AnswerTone::AnsPr, AnswerToneKind::Ans),
+        (AnswerTone::Ansam, AnswerToneKind::Ansam),
+        (AnswerTone::AnsamPr, AnswerToneKind::Ansam),
+    ] {
+        let mut tone = ToneTx::new(theirs);
+        let mut detector = AnswerToneDetector::new();
+        let mut samples = [0; FRAME];
+        let mut heard = None;
+        for _ in 0..100 {
+            tone.render(&mut samples);
+            heard = detector.process(&samples).or(heard);
+        }
+        assert_eq!(heard, Some(ours), "{theirs:?}");
+    }
 }
