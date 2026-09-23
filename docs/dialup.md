@@ -382,6 +382,76 @@ What spandsp cannot stand in for is a modem's automode, the probing a real
 modem does when it hears ANS instead of ANSam. That still needs the real
 modem.
 
+## V.22
+
+Checked against V.22 (1988) in CCITT Blue Book Fascicle VIII.1, pages 69 to
+81, with V.14 on pages 45 to 48 and V.2 on page 7. Of the three
+alternatives, this is Alternative B mode ii): 1200 bit/s start-stop over the
+constant carrier handshake. It does not do 600 bit/s, Alternative C mode v),
+controlled carrier or the test loops.
+
+| Channel | Carrier | Sent by |
+|---|---|---|
+| low | 1200 ± 0.5 Hz | the caller |
+| high | 2400 ± 1 Hz | the answering modem, with a guard tone |
+
+The figures:
+
+- 600 baud ± 0.01%, two bits a symbol (§ 2.5.1). Each dibit is a phase
+  change from the previous symbol, first bit on the left (table 1):
+
+  | Dibit | Phase change |
+  |---|---|
+  | 00 | +90° |
+  | 01 | 0° |
+  | 11 | +270° |
+  | 10 | +180° |
+
+- The spectrum is a square root raised cosine with 75% roll-off, the same
+  filter at both ends (§ 2.4).
+- The 1800 ± 20 Hz guard tone goes with the high channel only, 6 ± 1 dB
+  below its data power (§ 2.1, § 2.2). It is a national option. Europe uses
+  it, so it is on here.
+- Total transmitted power follows V.2: a mean of at most -13 dBm0, with the
+  instantaneous power at most that of a 0 dBm0 sine (V.2 § 1.3). The
+  high channel data is therefore about 1 dB below the low channel, since
+  the guard tone takes its share.
+- The receiver accepts ±7 Hz of carrier error (§ 2.6).
+- Carrier detect on above -43 dBm, off below -48 dBm, with at least 2 dB of
+  hysteresis (§ 3.3). On in 105 to 205 ms, off in 10 to 24 ms (table 3). It
+  must not respond to the guard tones or to the answer tone during the
+  handshake.
+- Scrambler 1 + x⁻¹⁴ + x⁻¹⁷, self-synchronising (§ 5.1). After 64 ones in a
+  row at its output, it inverts its next input, except during the handshake.
+  The descrambler may do the same, and this one does not.
+
+Handshake, after the V.25 answer sequence (§ 6.3.1, figure 4). Where the
+spec gives a range, the modem uses the middle of it.
+
+1. The answering modem sends unscrambled binary 1, with the guard tone.
+2. The caller stays silent until it hears unscrambled binary 1 for
+   155 ± 50 ms. Then it waits 456 ± 10 ms and sends scrambled binary 1.
+3. When the answering modem hears scrambled binary 1 (or 0) for 270 ± 40 ms,
+   it sends scrambled binary 1, waits 765 ± 10 ms, and turns carrier detect
+   on.
+4. When the caller hears scrambled binary 1 for 270 ± 40 ms, it turns
+   carrier detect on and waits 765 ± 10 ms.
+5. Both are in data. Until then, received data is held at binary 1. A loss
+   and return of carrier after this does not start the handshake again
+   (§ 6.3.1.2).
+
+Start-stop characters cross the synchronous channel as V.14 describes. A
+sender whose characters arrive up to 1% fast deletes a stop bit, at most one
+in any eight characters. The receiver puts it back, and may shorten a stop
+bit by up to 12.5% to keep up (V.14 § 7). A break of 2M + 3 or more start
+bits, where M is the bits in a character, passes through unchanged (V.14
+§ 7.3). The modem clocks out its own characters at exactly 1200 bit/s, so it
+never deletes a stop bit, but its receiver must accept a character whose stop
+bit is missing.
+
+spandsp's V.22bis modem started at 1200 bit/s is the V.22 reference. Its
+answer tone is a separate part, as with V.21.
+
 ## Three things that decide whether it works
 
 1. **Bit timing recovery.** Track the bit centre and correct on transitions.
@@ -550,9 +620,11 @@ Everything before it can be built and tested with two instances on one host.
    sends the V.25 answer tone. Until SIP exists, the transport is the wire.
 5. SIP transport, two instances through the PBX. Done: data both ways,
    hang-up and busy, with PPP over it still to try.
-6. Bell 103.
+6. Bell 103. Put off, as it is of little use in Europe.
 7. A speaker: call audio on the host sound output, under `L` and `M`. Done.
-8. A real modem behind the SPA2102 calling the answering side.
+8. V.22, selected with `AT+MS`. Automode, which answers V.22 and falls back
+   to V.21, comes later.
+9. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
 
