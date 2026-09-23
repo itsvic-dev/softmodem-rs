@@ -34,6 +34,25 @@ impl Modulation {
     }
 }
 
+/// The modulation for a call, and whether automode may fall back from it to
+/// the best one the far end also has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Offer {
+    pub top: Modulation,
+    pub automode: bool,
+}
+
+impl Offer {
+    #[must_use]
+    pub fn pump(self, role: Role) -> Box<dyn DataPump> {
+        if self.automode {
+            crate::automode::pump(self.top, role)
+        } else {
+            self.top.pump(role)
+        }
+    }
+}
+
 /// Carries bits over one modulation, from the end of the V.25 answer tone,
 /// or from the start of the call for a pump that sends its own answer tone.
 pub trait DataPump: Debug + Send {

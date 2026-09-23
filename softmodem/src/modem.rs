@@ -4,7 +4,7 @@ use std::io;
 use std::pin::pin;
 use std::time::Duration;
 
-use softmodem_dsp::pump::{Modulation, Role};
+use softmodem_dsp::pump::{Modulation, Offer, Role};
 use softmodem_terminal::command::{self, Command, Dial};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
@@ -233,12 +233,17 @@ where
                         .await?;
                 }
                 Command::ReadCarrier => {
-                    let text = format!("+MS: {},0", self.settings.carrier.name());
+                    let modulation = self.settings.modulation;
+                    let text = format!(
+                        "+MS: {},{}",
+                        modulation.carrier.name(),
+                        u8::from(modulation.automode)
+                    );
                     self.write(&self.settings.line(&text)).await?;
                 }
                 Command::ListCarriers => {
                     let names: Vec<&str> = Carrier::ALL.iter().map(|c| c.name()).collect();
-                    let text = format!("+MS: ({}),(0)", names.join(","));
+                    let text = format!("+MS: ({}),(0,1)", names.join(","));
                     self.write(&self.settings.line(&text)).await?;
                 }
                 other => {
@@ -332,12 +337,16 @@ where
 
     fn attach(&mut self, call: Call, role: Option<Role>, deadline: Instant) {
         let call = (self.on_call)(call, role.unwrap_or(Role::Originate));
-        let modulation = match self.settings.carrier {
-            Carrier::V21 => Modulation::V21,
-            Carrier::V22 => Modulation::V22,
-            Carrier::V22bis => Modulation::V22bis,
+        let chosen = self.settings.modulation;
+        let offer = Offer {
+            top: match chosen.carrier {
+                Carrier::V21 => Modulation::V21,
+                Carrier::V22 => Modulation::V22,
+                Carrier::V22bis => Modulation::V22bis,
+            },
+            automode: chosen.automode,
         };
-        self.line = Some(Line::new(call, modulation, role));
+        self.line = Some(Line::new(call, offer, role));
         self.mode = Mode::Handshake { deadline };
         self.carrier_lost_at = None;
         self.ticker.reset();

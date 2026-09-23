@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use softmodem::{Modem, profile};
+use softmodem_dsp::tone::{ANSWER_TONE_HZ, ToneDetector};
 use softmodem_interop::{AnswerTone, FskChannel, FskRx, FskTx, ToneRx, ToneTx};
 use softmodem_terminal::port::Plain;
 use softmodem_transport::loopback::{self, Loopback};
@@ -16,6 +17,8 @@ const PATIENCE: Duration = Duration::from_secs(120);
 const PAST_GUARD: Duration = Duration::from_millis(1100);
 const TO_US: &[u8] = b"hello from spandsp";
 const FROM_US: &[u8] = b"hello from softmodem";
+// Longer than the gap a phase reversal leaves in the answer tone.
+const TONE_END: usize = 800;
 
 struct Computer {
     port: DuplexStream,
@@ -125,25 +128,31 @@ async fn spandsp_answers(mut line: Loopback, tone: AnswerTone) -> Vec<u8> {
     receiver.bytes().to_vec()
 }
 
-// A V.25 caller: silent until answer tone and channel 2, then channel 1 and `TO_US`.
+// A V.25 caller: silent until the answer tone ends and channel 2 is on, then channel 1 and `TO_US`.
 async fn spandsp_calls(mut line: Loopback) -> Vec<u8> {
     let mut call = line.dial("0300").await.unwrap();
     let mut tone = ToneRx::new(AnswerTone::Ans);
+    let mut tone_now = ToneDetector::new(ANSWER_TONE_HZ);
     let mut transmitter = FskTx::new(FskChannel::V21Originate);
     let mut receiver = FskRx::new(FskChannel::V21Answer);
     let mut sent = 0;
     let mut tone_at = None;
+    let mut tone_last = 0;
     let mut carrier_from = None;
     let mut replied = false;
 
     exchange(&mut call, |received| {
         tone.process(received);
+        if tone_now.process(received) {
+            tone_last = sent;
+        }
         receiver.process(received);
         if tone.detected().is_some() && tone_at.is_none() {
             tone_at = Some(sent);
             eprintln!("spandsp caller: answer tone at {} ms", ms(sent));
         }
-        if tone_at.is_some() && receiver.carrier() && carrier_from.is_none() {
+        let tone_ended = sent >= tone_last + TONE_END;
+        if tone_at.is_some() && tone_ended && receiver.carrier() && carrier_from.is_none() {
             carrier_from = Some(sent);
             eprintln!("spandsp caller: channel 2 carrier at {} ms", ms(sent));
         }
@@ -171,7 +180,7 @@ async fn exchange(call: &mut Call, mut respond: impl FnMut(&[i16]) -> Vec<i16>) 
     }
 }
 
-async fn we_call_spandsp(tone: AnswerTone) {
+async fn we_call_spandsp(tone: AnswerTone) -> Vec<u8> {
     let (a, b) = loopback::pair();
     let answerer = tokio::spawn(spandsp_answers(b, tone));
     let mut computer = ours(a, "ATE0");
@@ -181,35 +190,55 @@ async fn we_call_spandsp(tone: AnswerTone) {
     computer.send(FROM_US).await;
     sleep(Duration::from_secs(2)).await;
     computer.hang_up().await;
-    let heard = timeout(PATIENCE, answerer).await.unwrap().unwrap();
-    assert_eq!(heard, FROM_US, "spandsp heard something else");
+    timeout(PATIENCE, answerer).await.unwrap().unwrap()
 }
 
 #[tokio::test(start_paused = true)]
 async fn we_call_a_v25_modem_that_sends_ans() {
-    we_call_spandsp(AnswerTone::Ans).await;
+    let heard = we_call_spandsp(AnswerTone::Ans).await;
+    assert_eq!(heard, FROM_US, "spandsp heard something else");
 }
 
 #[tokio::test(start_paused = true)]
 async fn we_call_a_modem_that_sends_ans_with_phase_reversals() {
-    we_call_spandsp(AnswerTone::AnsPr).await;
+    let heard = we_call_spandsp(AnswerTone::AnsPr).await;
+    assert_eq!(heard, FROM_US, "spandsp heard something else");
 }
 
+// This far end sends ANSam but not JM, so it takes our CM for data first.
 #[tokio::test(start_paused = true)]
-async fn we_call_a_v8_modem_that_sends_ansam_with_phase_reversals() {
-    we_call_spandsp(AnswerTone::AnsamPr).await;
+async fn we_call_a_modem_that_sends_ansam_but_only_speaks_v21() {
+    let heard = we_call_spandsp(AnswerTone::AnsamPr).await;
+    assert!(
+        heard.ends_with(FROM_US),
+        "our data did not follow the CM it ignored: {heard:?}"
+    );
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_v25_modem_calls_us() {
+async fn spandsp_calls_us(init: &str) -> Vec<u8> {
     let (a, b) = loopback::pair();
-    let mut computer = ours(b, "ATE0S0=1");
+    let mut computer = ours(b, init);
     let caller = tokio::spawn(spandsp_calls(a));
     computer.expect(b"CONNECT").await;
     computer.expect(TO_US).await;
     computer.send(FROM_US).await;
     sleep(Duration::from_secs(2)).await;
     computer.hang_up().await;
-    let heard = timeout(PATIENCE, caller).await.unwrap().unwrap();
+    timeout(PATIENCE, caller).await.unwrap().unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_v25_modem_calls_us_at_v21() {
+    let heard = spandsp_calls_us("ATE0S0=1+MS=V21,0").await;
     assert_eq!(heard, FROM_US, "spandsp heard something else");
+}
+
+// Our USB1 during Ta reaches a V.21 caller as noise before we fall back.
+#[tokio::test(start_paused = true)]
+async fn a_v25_modem_calls_us_in_automode() {
+    let heard = spandsp_calls_us("ATE0S0=1").await;
+    assert!(
+        heard.ends_with(FROM_US),
+        "our data did not reach the V.21 caller: {heard:?}"
+    );
 }

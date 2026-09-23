@@ -67,14 +67,30 @@ pub struct Settings {
     pub loudness: u8,
     pub monitor: u8,
     pub dcd: Dcd,
-    pub carrier: Carrier,
+    pub modulation: Modulation,
     pub registers: [u8; 256],
 }
 
-/// The modulation set by `+MS`, with the names V.250 gives them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// What `+MS` sets: the highest modulation to use, and whether automode may
+/// fall back from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Modulation {
+    pub carrier: Carrier,
+    pub automode: bool,
+}
+
+impl Default for Modulation {
+    fn default() -> Self {
+        Self {
+            carrier: Carrier::V22bis,
+            automode: true,
+        }
+    }
+}
+
+/// A modulation, with the names V.250 gives them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Carrier {
-    #[default]
     V21,
     V22,
     V22bis,
@@ -131,7 +147,7 @@ impl Default for Settings {
             loudness: 2,
             monitor: 1,
             dcd: Dcd::AlwaysOn,
-            carrier: Carrier::default(),
+            modulation: Modulation::default(),
             registers,
         }
     }
@@ -154,7 +170,9 @@ impl Settings {
                     Dcd::AlwaysOn
                 };
             }
-            Command::SetCarrier(carrier) => self.carrier = carrier,
+            Command::SetCarrier { carrier, automode } => {
+                self.modulation = Modulation { carrier, automode };
+            }
             Command::SetRegister { register, value } => {
                 self.registers[usize::from(register)] = value;
             }
@@ -361,12 +379,32 @@ mod tests {
             register: 0,
             value: 1
         }));
-        assert!(settings.apply(&Command::SetCarrier(Carrier::V22)));
+        assert!(settings.apply(&Command::SetCarrier {
+            carrier: Carrier::V22,
+            automode: false
+        }));
         assert!(!settings.apply(&Command::Answer));
         assert!(!settings.apply(&Command::ReadCarrier));
         assert!(!settings.echo);
         assert_eq!(settings.auto_answer_rings(), 1);
-        assert_eq!(settings.carrier, Carrier::V22);
+        assert_eq!(
+            settings.modulation,
+            Modulation {
+                carrier: Carrier::V22,
+                automode: false
+            }
+        );
+    }
+
+    #[test]
+    fn offers_v22bis_with_automode_by_default() {
+        assert_eq!(
+            Settings::default().modulation,
+            Modulation {
+                carrier: Carrier::V22bis,
+                automode: true
+            }
+        );
     }
 
     #[test]

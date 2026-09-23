@@ -225,17 +225,19 @@ async fn identifies_itself() {
 
 #[tokio::test(start_paused = true)]
 async fn reads_and_lists_the_modulation() {
-    let (mut a, _b) = two_modems("ATE0+MS=V22", "");
+    let (mut a, _b) = two_modems("ATE0+MS=V22,0", "");
     a.command("AT+MS?").await;
     a.expect_next(b"\r\n+MS: V22,0\r\n\r\nOK\r\n").await;
     a.command("AT+MS=V21;+MS?").await;
-    a.expect_next(b"\r\n+MS: V21,0\r\n\r\nOK\r\n").await;
+    a.expect_next(b"\r\n+MS: V21,1\r\n\r\nOK\r\n").await;
     a.command("ATZ+MS?").await;
     a.expect_next(b"\r\n+MS: V22,0\r\n\r\nOK\r\n").await;
+    a.command("AT&FE0+MS?").await;
+    a.expect_next(b"\r\n+MS: V22B,1\r\n\r\nOK\r\n").await;
     a.command("AT+MS=?").await;
-    a.expect_next(b"\r\n+MS: (V21,V22,V22B),(0)\r\n\r\nOK\r\n")
+    a.expect_next(b"\r\n+MS: (V21,V22,V22B),(0,1)\r\n\r\nOK\r\n")
         .await;
-    a.command("AT+MS=V22,1").await;
+    a.command("AT+MS=V22,2").await;
     a.expect_next(b"\r\nERROR\r\n").await;
 }
 
@@ -289,11 +291,38 @@ async fn v22bis_falls_back_to_a_v22_modem() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn v22_does_not_connect_to_v21() {
-    let (mut a, mut b) = two_modems("ATE0S7=10+MS=V22", "ATE0S0=1S7=10");
+async fn a_fixed_v22_does_not_connect_to_a_fixed_v21() {
+    let (mut a, mut b) = two_modems("ATE0S7=10+MS=V22,0", "ATE0S0=1S7=10+MS=V21,0");
     a.command("ATDT0300").await;
     a.expect("NO CARRIER").await;
     b.expect("NO CARRIER").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn automode_meets_each_fixed_modulation_in_both_roles() {
+    let mut calls = Vec::new();
+    for (fixed, connect) in [
+        ("+MS=V21,0", "CONNECT\r\n"),
+        ("+MS=V22,0", "CONNECT 1200\r\n"),
+        ("+MS=V22B,0", "CONNECT 2400\r\n"),
+    ] {
+        for automode_answers in [true, false] {
+            let (caller, answerer) = if automode_answers {
+                (format!("ATE0{fixed}"), "ATE0S0=1".to_string())
+            } else {
+                ("ATE0".to_string(), format!("ATE0S0=1{fixed}"))
+            };
+            let (mut a, mut b) = two_modems(&caller, &answerer);
+            a.command("ATDT0300").await;
+            a.expect(connect).await;
+            b.expect(connect).await;
+            a.send(b"from the caller").await;
+            b.expect("from the caller").await;
+            b.send(b"from the answerer").await;
+            a.expect("from the answerer").await;
+            calls.push((a, b));
+        }
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -322,25 +351,35 @@ async fn a_call_rings_is_answered_and_carries_data_both_ways() {
 
 #[tokio::test(start_paused = true)]
 async fn keeps_what_the_answerer_sends_before_the_caller_connects() {
-    let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
-    a.command("ATDT0300").await;
-    b.expect("CONNECT").await;
-    b.send(b"sent the moment the answerer connected").await;
-    a.expect("CONNECT").await;
-    a.expect("sent the moment the answerer connected").await;
+    let mut calls = Vec::new();
+    for modulation in ["+MS=V21,0", "+MS=V22,0", "+MS=V22B,0", "+MS=V22B,1"] {
+        let (mut a, mut b) = two_modems(
+            &format!("ATE0{modulation}"),
+            &format!("ATE0S0=1{modulation}"),
+        );
+        a.command("ATDT0300").await;
+        b.expect("CONNECT").await;
+        b.expect("\r\n").await;
+        b.send(b"sent the moment the answerer connected").await;
+        a.expect("CONNECT").await;
+        a.expect("\r\n").await;
+        a.expect_next(b"sent the moment the answerer connected")
+            .await;
+        calls.push((a, b));
+    }
 }
 
 #[tokio::test(start_paused = true)]
 async fn escapes_to_command_mode_and_back_and_hangs_up() {
     let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
     a.command("ATDT0300").await;
-    a.expect("CONNECT\r\n").await;
+    a.expect("CONNECT 2400\r\n").await;
     b.expect("CONNECT").await;
 
     a.escape().await;
     a.expect_next(b"\r\nOK\r\n").await;
     a.command("ATO").await;
-    a.expect_next(b"\r\nCONNECT\r\n").await;
+    a.expect_next(b"\r\nCONNECT 2400\r\n").await;
     a.send(b"still here").await;
     b.expect("still here").await;
 
@@ -449,7 +488,7 @@ impl Computer {
 async fn the_speaker_sounds_until_connect_under_m1_and_always_under_m2() {
     let (mut a, mut b) = two_modems("ATE0", "ATE0M2L3S0=1");
     a.command("ATDT0300").await;
-    a.expect("CONNECT\r\n").await;
+    a.expect("CONNECT 2400\r\n").await;
     b.expect("CONNECT").await;
     sleep(Duration::from_millis(100)).await;
     assert_eq!(a.speaker(), [0.5, 0.0]);

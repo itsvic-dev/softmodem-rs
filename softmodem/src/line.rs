@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use softmodem_dsp::pump::{DataPump, Modulation, Role};
+use softmodem_dsp::pump::{DataPump, Offer, Role};
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_dsp::uart::{Decoder, frame};
 use softmodem_transport::{Call, FRAME_SAMPLES};
@@ -22,14 +22,14 @@ pub(crate) struct Received {
 #[derive(Debug)]
 pub(crate) struct Line {
     pub(crate) call: Call,
-    modulation: Modulation,
+    offer: Offer,
     handshake: Option<Handshake>,
 }
 
 #[derive(Debug)]
 struct Handshake {
     role: Role,
-    modulation: Modulation,
+    offer: Offer,
     pump: Box<dyn DataPump>,
     answer_tone: Tone,
     answer_tone_detector: ToneDetector,
@@ -43,16 +43,16 @@ struct Handshake {
 impl Line {
     /// A line in `role`, or silent with no handshake for a call placed with
     /// `;`, until [`Line::start`] is called.
-    pub(crate) fn new(call: Call, modulation: Modulation, role: Option<Role>) -> Self {
+    pub(crate) fn new(call: Call, offer: Offer, role: Option<Role>) -> Self {
         Self {
             call,
-            modulation,
-            handshake: role.map(|role| Handshake::new(modulation, role)),
+            offer,
+            handshake: role.map(|role| Handshake::new(offer, role)),
         }
     }
 
     pub(crate) fn start(&mut self, role: Role) {
-        self.handshake = Some(Handshake::new(self.modulation, role));
+        self.handshake = Some(Handshake::new(self.offer, role));
     }
 
     pub(crate) fn has_handshake(&self) -> bool {
@@ -100,11 +100,11 @@ impl Line {
 }
 
 impl Handshake {
-    fn new(modulation: Modulation, role: Role) -> Self {
-        let pump = modulation.pump(role);
+    fn new(offer: Offer, role: Role) -> Self {
+        let pump = offer.pump(role);
         Self {
             role,
-            modulation,
+            offer,
             decoder: None,
             pump,
             answer_tone: Tone::new(ANSWER_TONE_HZ, ANSWER_TONE_DBM0),
@@ -136,7 +136,7 @@ impl Handshake {
             && !self.pump.sends_own_answer_tone()
             && self.answer_tone_detector.process(samples)
         {
-            self.pump = self.modulation.pump(self.role);
+            self.pump = self.offer.pump(self.role);
             return received;
         }
 

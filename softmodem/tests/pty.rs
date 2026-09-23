@@ -60,8 +60,10 @@ async fn a_computer_dials_and_every_byte_reaches_the_other_computer() {
         let mut isp = open(isp_port);
         let mut caller = open(caller_port);
         caller.write_all(b"ATDT0300\r").unwrap();
-        read_until(&mut caller, b"CONNECT\r\n");
-        read_until(&mut isp, b"CONNECT\r\n");
+        for port in [&mut caller, &mut isp] {
+            read_until(port, b"CONNECT");
+            read_until(port, b"\r\n");
+        }
         caller.write_all(&every_byte()).unwrap();
         let mut received = vec![0; 256];
         isp.read_exact(&mut received).unwrap();

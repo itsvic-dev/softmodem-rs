@@ -24,8 +24,12 @@ pub enum Command {
         value: u8,
     },
     ReadRegister(u8),
-    /// `+MS=`, the modulation for the next call.
-    SetCarrier(Carrier),
+    /// `+MS=`, the highest modulation for the next call, and whether automode
+    /// may fall back from it. Automode is on unless the command turns it off.
+    SetCarrier {
+        carrier: Carrier,
+        automode: bool,
+    },
     /// `+MS?`.
     ReadCarrier,
     /// `+MS=?`.
@@ -184,11 +188,14 @@ impl Parser<'_> {
                     .into_iter()
                     .find(|c| c.name().as_bytes() == name)
                     .ok_or(ParseError)?;
+                let mut automode = true;
                 if self.peek() == Some(b',') {
                     self.at += 1;
-                    if self.number()?.unwrap_or(0) != 0 {
-                        return Err(ParseError);
-                    }
+                    automode = match self.number()? {
+                        None | Some(1) => true,
+                        Some(0) => false,
+                        Some(_) => return Err(ParseError),
+                    };
                 }
                 while self.peek() == Some(b',') {
                     self.at += 1;
@@ -196,7 +203,7 @@ impl Parser<'_> {
                         self.at += 1;
                     }
                 }
-                Command::SetCarrier(carrier)
+                Command::SetCarrier { carrier, automode }
             }
             _ => return Err(ParseError),
         };
@@ -329,11 +336,24 @@ mod tests {
     #[test]
     fn parses_the_modulation() {
         assert_eq!(
-            parse(b"+ms=v22;+MS=V21,0,300,300;+MS=V22B;E0").unwrap(),
+            parse(b"+ms=v22;+MS=V21,0,300,300;+MS=V22B,1;+MS=V22,;E0").unwrap(),
             [
-                Command::SetCarrier(Carrier::V22),
-                Command::SetCarrier(Carrier::V21),
-                Command::SetCarrier(Carrier::V22bis),
+                Command::SetCarrier {
+                    carrier: Carrier::V22,
+                    automode: true
+                },
+                Command::SetCarrier {
+                    carrier: Carrier::V21,
+                    automode: false
+                },
+                Command::SetCarrier {
+                    carrier: Carrier::V22bis,
+                    automode: true
+                },
+                Command::SetCarrier {
+                    carrier: Carrier::V22,
+                    automode: true
+                },
                 Command::Echo(false),
             ]
         );
@@ -344,7 +364,7 @@ mod tests {
     #[test]
     fn rejects_modulations_it_cannot_run() {
         assert_eq!(parse(b"+MS=V32"), Err(ParseError));
-        assert_eq!(parse(b"+MS=V22,1"), Err(ParseError));
+        assert_eq!(parse(b"+MS=V22,2"), Err(ParseError));
         assert_eq!(parse(b"+MS=V22BIS"), Err(ParseError));
         assert_eq!(parse(b"+MS"), Err(ParseError));
         assert_eq!(parse(b"+MS=V22X"), Err(ParseError));
