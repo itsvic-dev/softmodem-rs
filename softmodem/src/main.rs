@@ -1,14 +1,17 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use softmodem::{Modem, Role};
 use softmodem_terminal::cuse::CusePort;
-use softmodem_terminal::port::Plain;
+use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
+use softmodem_terminal::settings::Settings;
 use softmodem_transport::sip::{Account, Sip};
+use softmodem_transport::speaker::Speaker;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
@@ -79,6 +82,9 @@ struct ModemArgs {
     /// Directory to record each call into, as one WAV file per direction.
     #[arg(long)]
     dump: Option<PathBuf>,
+    /// Play each call on the default sound output, as ATL and ATM set.
+    #[arg(long)]
+    speaker: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -125,34 +131,64 @@ async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()>
         std::fs::create_dir_all(directory)
             .with_context(|| format!("creating {}", directory.display()))?;
     }
-    let dump = args.dump;
-    let on_call = move |call: Call, role: Role| match &dump {
-        Some(directory) => record(call, directory, role),
-        None => call,
+    let speaker = if args.speaker {
+        Some(Arc::new(Speaker::open().context("opening the speaker")?))
+    } else {
+        None
+    };
+    let station = Station {
+        transport,
+        profile,
+        dump: args.dump,
+        speaker,
     };
 
     if let Some(link) = args.pty {
         let pty = Pty::open(Some(&link))?;
         info!(path = %pty.path().display(), link = %link.display(), "serial port ready");
-        Modem::new(transport, pty, profile, on_call)
-            .run(shutdown_signal())
-            .await?;
+        station.run(pty).await
     } else if let Some(name) = args.cuse {
         let port = CusePort::open(&name).context("opening /dev/cuse")?;
         info!(device = %format!("/dev/{name}"), "serial port ready");
-        Modem::new(transport, port, profile, on_call)
-            .run(shutdown_signal())
-            .await?;
+        station.run(port).await
     } else {
-        let port = Plain {
-            input: tokio::io::stdin(),
-            output: tokio::io::stdout(),
-        };
-        Modem::new(transport, port, profile, on_call)
-            .run(shutdown_signal())
-            .await?;
+        station
+            .run(Plain {
+                input: tokio::io::stdin(),
+                output: tokio::io::stdout(),
+            })
+            .await
     }
-    Ok(())
+}
+
+struct Station<T> {
+    transport: T,
+    profile: Settings,
+    dump: Option<PathBuf>,
+    speaker: Option<Arc<Speaker>>,
+}
+
+impl<T: Transport> Station<T> {
+    async fn run(self, port: impl SerialPort) -> anyhow::Result<()> {
+        let dump = self.dump;
+        let speaker = self.speaker.clone();
+        let on_call = move |call: Call, role: Role| {
+            let call = match &dump {
+                Some(directory) => record(call, directory, role),
+                None => call,
+            };
+            match &speaker {
+                Some(speaker) => speaker.play(call),
+                None => call,
+            }
+        };
+        let mut modem = Modem::new(self.transport, port, self.profile, on_call);
+        if let Some(speaker) = self.speaker {
+            modem = modem.with_speaker(move |gain| speaker.set_gain(gain));
+        }
+        modem.run(shutdown_signal()).await?;
+        Ok(())
+    }
 }
 
 fn record(call: Call, directory: &Path, role: Role) -> Call {
