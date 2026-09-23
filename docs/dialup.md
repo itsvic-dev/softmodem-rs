@@ -359,6 +359,29 @@ it settles on V.21. Whether a given chipset reaches V.21 without help is not
 known. Expect to force it on the calling modem with a chipset-specific command
 (for example `AT+MS=V21` on Rockwell parts), and dial blind with `ATX3`.
 
+#### Against spandsp
+
+`softmodem-interop` checks the modem against spandsp, whose V.21 and answer
+tones are in many real products. It links spandsp, so it only builds in the
+dev shell, and the modem itself does not depend on it.
+
+- spandsp demodulates our V.21, and we demodulate spandsp's, on both
+  channels.
+- spandsp's detector hears our answer tone as V.25 ANS.
+- Whole calls, with spandsp's parts as the far modem: we call one that
+  answers with ANS, with ANS and phase reversals, and with V.8 ANSam and
+  phase reversals, the tone a modern modem sends. A V.25 caller that waits for
+  our answer tone and channel 2 calls us. Data crosses both ways each time.
+
+Those calls found a bug no test between two of our own modems could: the
+answering modem reports `CONNECT` up to a second before the caller does, and
+spandsp, like `pppd`, sends at once. The caller dropped what arrived before
+its own `CONNECT` and misframed the first characters. It now keeps them.
+
+What spandsp cannot stand in for is a modem's automode, the probing a real
+modem does when it hears ANS instead of ANSam. That still needs the real
+modem.
+
 ## Three things that decide whether it works
 
 1. **Bit timing recovery.** Track the bit centre and correct on transitions.
