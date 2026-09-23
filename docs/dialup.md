@@ -178,7 +178,7 @@ command mode, on hook.
 | `I0` to `I9` | Identification. `I0` product, `I3` version, `I4` modulations. |
 | `L0` to `L3` | Speaker volume. `L0` and `L1` low, `L2` medium, `L3` high. |
 | `M0` to `M2` | Speaker off, on until `CONNECT`, always on. |
-| `O` | Return to data mode from online command mode. |
+| `O`, `O1` | Return to data mode from online command mode. `O1` retrains a V.22bis line first. |
 | `Q0`, `Q1` | Result codes shown, suppressed. |
 | `V0`, `V1` | Result codes as digits, as words. |
 | `X0` to `X4` | Which result codes are used, see below. |
@@ -532,7 +532,7 @@ answer tone is a separate part, as with V.21.
 
 Checked against V.22 bis (1988) in the same fascicle, pages 82 to 97. This
 is mode 2, 2400 bit/s start-stop, with its fallback to V.22 at 1200 bit/s.
-It does not do the optional rate change of § 6.6 or the test loops.
+It does the optional rate change of § 6.6, but not the test loops.
 
 The line is V.22's: the same carriers, guard tone, levels, 600 baud, square
 root raised cosine with 75% roll-off, scrambler, ±7 Hz, and carrier detect
@@ -584,6 +584,27 @@ and goes on as from step 4. An end that sent S1 and hears none back within
 1.2 s sends it again. After a loss of signal, received data stays held at
 binary 1 for 100 ms after the signal returns, in case a retrain follows
 (§ 6.5).
+
+A rate change (§ 6.6, figure 9, table 4) is the same exchange with another
+dibit after S1: 11 asks for 2400 bit/s, 01 or 10 for 1200 bit/s. Scrambled
+binary 1 descrambles to 11, so a retrain is a rate change that asks for
+2400 bit/s. The far end answers once it has heard 32 of the same dibit, with
+S1 and the dibit it agrees to, and both go on at that rate, 450 ms after the
+exchange for the receiver and 600 ms for the transmitter.
+
+This modem, in these terms:
+
+- It starts a retrain when its equaliser error stays above 0.045 for 300 ms.
+  With random decisions that error can read at most (0.632)²/6 ≈ 0.067, so
+  a higher threshold would never fire. A clean line reads about 0.0005.
+- If it loses equalisation again within 10 s of a retrain, it asks for
+  1200 bit/s instead. `ATO1` retrains by hand and asks for 2400 bit/s, so it
+  also steps back up.
+- An S1 that ends within 1 s of its own counts as the reply, as § 6.6.1 f)
+  allows. Without that rule, two ends that start a retrain at once each take
+  the other's reply for a new request and bounce S1 for ever.
+- Carrier detect stays on through a retrain, as § 6.4 asks, so `S10` does
+  not hang up.
 
 spandsp's V.22bis modem at 2400 bit/s is the reference.
 
@@ -822,7 +843,8 @@ Everything before it can be built and tested with two instances on one host.
 9. V.22bis, selected with `AT+MS=V22B`, with its fallback to V.22 and its
    answer to a retrain. Done: between two instances, against spandsp in
    both roles and in fallback, and with `pppd` in
-   `checks.aarch64-linux.ppp-v22bis`. It does not start a retrain itself.
+   `checks.aarch64-linux.ppp-v22bis`. It starts retrains, steps down to
+   1200 bit/s when a retrain does not hold, and retrains on `ATO1`.
 10. Automode: V.8, and V.32bis Annex A with a V.21 step of our own, on by
     default. Done: two instances meet at the best rate both have in every
     pairing with a fixed modulation, V.8 works against spandsp in both
