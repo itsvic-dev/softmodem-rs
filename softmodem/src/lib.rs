@@ -34,17 +34,30 @@ impl Role {
 }
 
 /// Sends `input` and writes what the far end sends to `output`, until the
-/// far end hangs up, carrier is lost, or `input` ends and has been sent.
+/// far end hangs up, carrier is lost, `input` ends and has been sent, or
+/// `stop` completes. Every one of these hangs up cleanly.
 ///
 /// # Errors
 ///
 /// Fails if `input` or `output` fails.
-pub async fn run<R, W>(mut call: Call, role: Role, input: R, output: W) -> io::Result<()>
+pub async fn run<R, W>(
+    mut call: Call,
+    role: Role,
+    input: R,
+    output: W,
+    stop: impl Future<Output = ()>,
+) -> io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let result = pump(&mut call, role, input, output).await;
+    let result = tokio::select! {
+        result = pump(&mut call, role, input, output) => result,
+        () = stop => {
+            info!("hanging up on request");
+            Ok(())
+        }
+    };
     call.hang_up().await;
     result
 }

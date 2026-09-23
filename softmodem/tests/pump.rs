@@ -35,8 +35,15 @@ async fn send_across(impairment: Impairment) -> Vec<u8> {
         Role::Originate,
         originate_in,
         tokio::io::sink(),
+        std::future::pending(),
     );
-    let answer = softmodem::run(incoming.unwrap(), Role::Answer, answer_in, answer_out);
+    let answer = softmodem::run(
+        incoming.unwrap(),
+        Role::Answer,
+        answer_in,
+        answer_out,
+        std::future::pending(),
+    );
     let (originated, answered) = timeout(Duration::from_secs(20), async {
         tokio::join!(originate, answer)
     })

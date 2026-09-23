@@ -51,9 +51,16 @@ async fn every_byte_crosses_from_one_serial_port_to_the_other() {
                 outgoing.unwrap(),
                 Role::Originate,
                 &originate_port,
-                &originate_port
+                &originate_port,
+                std::future::pending(),
             ),
-            softmodem::run(incoming.unwrap(), Role::Answer, &answer_port, &answer_port),
+            softmodem::run(
+                incoming.unwrap(),
+                Role::Answer,
+                &answer_port,
+                &answer_port,
+                std::future::pending(),
+            ),
         )
     };
 

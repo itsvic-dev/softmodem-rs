@@ -8,6 +8,8 @@ use softmodem::Role;
 use softmodem_terminal::pty::Pty;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::watch;
 use tracing::info;
 
 /// A V.21 modem that places real calls.
@@ -92,6 +94,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     if let Some(pty) = &pty {
         info!(path = %pty.path().display(), "serial port ready");
     }
+    let (request_stop, stop) = watch::channel(false);
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = request_stop.send(true);
+    });
+
     match role {
         WireRole::Originate {
             peer,
@@ -99,14 +107,20 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             number,
         } => {
             let mut wire = Wire::bind(local, Some(peer), impairment).await?;
-            let call = wire.dial(&number).await?;
-            serve(call, Role::Originate, &options, pty.as_ref()).await
+            let call = tokio::select! {
+                call = wire.dial(&number) => call?,
+                () = stopped(stop.clone()) => return Ok(()),
+            };
+            serve(call, Role::Originate, &options, pty.as_ref(), stop).await
         }
         WireRole::Answer { local } => {
             let mut wire = Wire::bind(local, None, impairment).await?;
             loop {
-                let call = wire.accept().await?;
-                serve(call, Role::Answer, &options, pty.as_ref()).await?;
+                let call = tokio::select! {
+                    call = wire.accept() => call?,
+                    () = stopped(stop.clone()) => return Ok(()),
+                };
+                serve(call, Role::Answer, &options, pty.as_ref(), stop.clone()).await?;
                 if pty.is_none() {
                     return Ok(());
                 }
@@ -120,16 +134,34 @@ async fn serve(
     role: Role,
     options: &WireOptions,
     pty: Option<&Pty>,
+    stop: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let call = match &options.dump {
         Some(directory) => record(call, directory, role)?,
         None => call,
     };
+    let stop = stopped(stop);
     match pty {
-        Some(pty) => softmodem::run(call, role, pty, pty).await?,
-        None => softmodem::run(call, role, tokio::io::stdin(), tokio::io::stdout()).await?,
+        Some(pty) => softmodem::run(call, role, pty, pty, stop).await?,
+        None => {
+            softmodem::run(call, role, tokio::io::stdin(), tokio::io::stdout(), stop).await?;
+        }
     }
     Ok(())
+}
+
+async fn stopped(mut stop: watch::Receiver<bool>) {
+    let _ = stop.wait_for(|&stopping| stopping).await;
+}
+
+async fn shutdown_signal() {
+    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
 }
 
 fn record(call: Call, directory: &Path, role: Role) -> anyhow::Result<Call> {
