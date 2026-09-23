@@ -5,6 +5,14 @@ pub mod uart;
 
 pub const SAMPLE_RATE: f64 = 8000.0;
 
+/// Peak amplitude on the i16 scale of a sine at `dbm0`. G.711 puts the A-law
+/// overload point, 32256 after expansion, at +3.14 dBm0.
+#[must_use]
+#[expect(clippy::approx_constant, reason = "G.711's +3.14 dBm0, not pi")]
+pub fn sine_peak(dbm0: f64) -> f64 {
+    32256.0 * 10f64.powf((dbm0 - 3.14) / 20.0)
+}
+
 #[expect(
     clippy::cast_possible_truncation,
     reason = "the value is clamped to the i16 range first"

@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
 
-use crate::{SAMPLE_RATE, to_sample};
+use crate::{SAMPLE_RATE, sine_peak, to_sample};
 
 /// One direction of an FSK link.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,6 +27,9 @@ pub const V21_ANSWER: Channel = Channel {
     baud: 300.0,
 };
 
+/// The highest transmit level V.21 allows, from its § 6.
+pub const V21_MAX_LEVEL_DBM0: f64 = -13.0;
+
 impl Channel {
     fn samples_per_bit(&self) -> f64 {
         SAMPLE_RATE / self.baud
@@ -47,10 +50,10 @@ pub struct Modulator {
 
 impl Modulator {
     #[must_use]
-    pub fn new(channel: Channel, amplitude: i16) -> Self {
+    pub fn new(channel: Channel, level_dbm0: f64) -> Self {
         Self {
             channel,
-            amplitude: f64::from(amplitude),
+            amplitude: sine_peak(level_dbm0),
             phase: 0.0,
             bit_elapsed: 1.0,
             bit: true,
@@ -87,10 +90,10 @@ impl Modulator {
     }
 }
 
-// Tone peak on the i16 scale: about -43 dBm0 on and -48 dBm0 off, per V.21.
-const CARRIER_ON: f64 = 160.0;
-const CARRIER_OFF: f64 = 90.0;
-const CARRIER_ON_SAMPLES: u32 = 80;
+// V.21 § 8.3 and table 2, switched network: on in 300 to 700 ms, off in 20 to 80 ms.
+const CARRIER_ON_DBM0: f64 = -43.0;
+const CARRIER_OFF_DBM0: f64 = -48.0;
+const CARRIER_ON_SAMPLES: u32 = 3200;
 const CARRIER_OFF_SAMPLES: u32 = 400;
 const TIMING_GAIN: f64 = 0.2;
 
@@ -106,6 +109,8 @@ pub struct Demodulator {
     last_decision: f64,
     carrier: bool,
     carrier_count: u32,
+    carrier_on: f64,
+    carrier_off: f64,
 }
 
 impl Demodulator {
@@ -120,6 +125,8 @@ impl Demodulator {
             last_decision: 0.0,
             carrier: false,
             carrier_count: 0,
+            carrier_on: sine_peak(CARRIER_ON_DBM0),
+            carrier_off: sine_peak(CARRIER_OFF_DBM0),
         }
     }
 
@@ -137,12 +144,13 @@ impl Demodulator {
             let level = 2.0 * (mark + space).sqrt();
             self.track_carrier(level);
 
-            let decision = if level < CARRIER_OFF {
-                1.0
-            } else {
+            let present = level >= self.carrier_off;
+            let decision = if present {
                 (mark - space) / (mark + space)
+            } else {
+                1.0
             };
-            if (decision > 0.0) != (self.last_decision > 0.0) && level >= CARRIER_OFF {
+            if present && (decision > 0.0) != (self.last_decision > 0.0) {
                 let error = if self.bit_phase < 0.5 {
                     self.bit_phase
                 } else {
@@ -162,9 +170,9 @@ impl Demodulator {
 
     fn track_carrier(&mut self, level: f64) {
         let flipping = if self.carrier {
-            level < CARRIER_OFF
+            level < self.carrier_off
         } else {
-            level > CARRIER_ON
+            level > self.carrier_on
         };
         if !flipping {
             self.carrier_count = 0;

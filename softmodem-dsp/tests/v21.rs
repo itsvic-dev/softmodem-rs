@@ -1,8 +1,12 @@
-use softmodem_dsp::fsk::{Channel, Demodulator, Modulator, V21_ANSWER, V21_ORIGINATE};
+use softmodem_dsp::fsk::{
+    Channel, Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE,
+};
+use softmodem_dsp::sine_peak;
 use softmodem_dsp::uart::{Decoder, frame};
 
 const FRAME: usize = 160;
-const LEVEL: i16 = 8000;
+const LEVEL: f64 = V21_MAX_LEVEL_DBM0;
+const LEAD_IN: usize = 6000;
 
 fn payload() -> Vec<u8> {
     (0..=255)
@@ -12,7 +16,7 @@ fn payload() -> Vec<u8> {
 
 fn modulate(channel: Channel, bytes: &[u8]) -> Vec<i16> {
     let mut modulator = Modulator::new(channel, LEVEL);
-    let mut out = vec![0; 800];
+    let mut out = vec![0; LEAD_IN];
     modulator.render(&mut out);
     modulator.push_bits(bytes.iter().flat_map(|&b| frame(b)));
     while modulator.pending() > 0 {
@@ -105,7 +109,7 @@ fn clamp(x: f64) -> i16 {
 }
 
 fn add_noise(samples: Vec<i16>, snr_db: f64) -> Vec<i16> {
-    let sigma = f64::from(LEVEL) / 2f64.sqrt() / 10f64.powf(snr_db / 20.0);
+    let sigma = sine_peak(LEVEL) / 2f64.sqrt() / 10f64.powf(snr_db / 20.0);
     let mut noise = Noise(0x9E37_79B9_7F4A_7C15);
     samples
         .into_iter()
@@ -176,6 +180,19 @@ fn tracks_a_sender_clock_that_is_off_by_half_a_percent() {
 }
 
 #[test]
+fn tolerates_the_12_hz_line_drift_v21_requires() {
+    for drift in [-12.0, 12.0] {
+        let shifted = Channel {
+            mark_hz: V21_ORIGINATE.mark_hz + drift,
+            space_hz: V21_ORIGINATE.space_hz + drift,
+            ..V21_ORIGINATE
+        };
+        let received = demodulate(V21_ORIGINATE, &modulate(shifted, &payload()));
+        assert_eq!(received.bytes, payload(), "corrupted at {drift} Hz drift");
+    }
+}
+
+#[test]
 fn rejects_the_other_channel_in_full_duplex() {
     let other = modulate(V21_ANSWER, &payload().into_iter().rev().collect::<Vec<_>>());
     let received = link(V21_ORIGINATE, |s| {
@@ -216,16 +233,44 @@ fn silence_and_idle_mark_yield_nothing() {
     assert!(demodulate(V21_ORIGINATE, &idle).bytes.is_empty());
 }
 
-#[test]
-fn carrier_comes_and_goes() {
-    let mut modulator = Modulator::new(V21_ORIGINATE, LEVEL);
-    let mut tone = vec![0; 1600];
-    modulator.render(&mut tone);
-
+fn carrier_edges(samples: &[i16]) -> Vec<usize> {
     let mut demodulator = Demodulator::new(V21_ORIGINATE);
     let mut bits = Vec::new();
-    demodulator.process(&tone, &mut bits);
-    assert!(demodulator.carrier());
-    demodulator.process(&[0; 800], &mut bits);
-    assert!(!demodulator.carrier());
+    let mut edges = Vec::new();
+    let mut carrier = false;
+    for (n, sample) in samples.iter().enumerate() {
+        demodulator.process(std::slice::from_ref(sample), &mut bits);
+        if demodulator.carrier() != carrier {
+            carrier = demodulator.carrier();
+            edges.push(n);
+        }
+    }
+    edges
+}
+
+#[test]
+fn carrier_detect_meets_the_switched_network_response_times() {
+    let mut modulator = Modulator::new(V21_ORIGINATE, -42.0);
+    let mut samples = vec![0; 8000];
+    modulator.render(&mut samples);
+    samples.extend([0; 8000]);
+
+    let edges = carrier_edges(&samples);
+    let ms = |n: usize| n / 8;
+    assert_eq!(edges.len(), 2);
+    assert!(
+        (300..=700).contains(&ms(edges[0])),
+        "on after {} ms",
+        ms(edges[0])
+    );
+    let off = ms(edges[1]) - 1000;
+    assert!((20..=80).contains(&off), "off after {off} ms");
+}
+
+#[test]
+fn carrier_detect_ignores_tones_below_the_threshold() {
+    let mut modulator = Modulator::new(V21_ORIGINATE, -44.0);
+    let mut samples = vec![0; 16000];
+    modulator.render(&mut samples);
+    assert!(carrier_edges(&samples).is_empty());
 }
