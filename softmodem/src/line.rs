@@ -55,6 +55,7 @@ struct Handshake {
     carrier_since: Option<usize>,
     heard_carrier: bool,
     connected: bool,
+    early: Vec<u8>,
 }
 
 impl Line {
@@ -125,6 +126,7 @@ impl Handshake {
             carrier_since: None,
             heard_carrier: false,
             connected: false,
+            early: Vec::new(),
         }
     }
 
@@ -157,13 +159,17 @@ impl Handshake {
 
         let mut bits = Vec::new();
         self.demodulator.process(samples, &mut bits);
+        let bytes = bits.into_iter().filter_map(|b| self.decoder.push(b));
         if self.connected {
-            received
-                .bytes
-                .extend(bits.into_iter().filter_map(|b| self.decoder.push(b)));
-            if !self.demodulator.carrier() {
-                self.decoder.reset();
-            }
+            received.bytes.extend(bytes);
+        } else {
+            // The far end may send before we report CONNECT; a real modem keeps it.
+            self.early.extend(bytes);
+        }
+        if !self.demodulator.carrier() {
+            self.decoder.reset();
+        }
+        if self.connected {
             return received;
         }
 
@@ -177,6 +183,7 @@ impl Handshake {
         if ready {
             self.connected = true;
             received.connected = true;
+            received.bytes = std::mem::take(&mut self.early);
         }
         received
     }

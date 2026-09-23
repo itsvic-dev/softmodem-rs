@@ -242,6 +242,16 @@ async fn a_call_rings_is_answered_and_carries_data_both_ways() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn keeps_what_the_answerer_sends_before_the_caller_connects() {
+    let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
+    a.command("ATDT0300").await;
+    b.expect("CONNECT").await;
+    b.send(b"sent the moment the answerer connected").await;
+    a.expect("CONNECT").await;
+    a.expect("sent the moment the answerer connected").await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn escapes_to_command_mode_and_back_and_hangs_up() {
     let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
     a.command("ATDT0300").await;
