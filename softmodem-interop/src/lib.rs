@@ -1,5 +1,5 @@
 //! Safe wrappers around the few spandsp parts the interop tests use: V.21
-//! with spandsp's own async framing, and modem answer tones.
+//! and V.22 with spandsp's own async framing, and modem answer tones.
 
 use std::collections::VecDeque;
 use std::ffi::{c_char, c_int, c_void};
@@ -18,6 +18,7 @@ struct FskSpec {
 type GetBit = unsafe extern "C" fn(*mut c_void) -> c_int;
 type PutBit = unsafe extern "C" fn(*mut c_void, c_int);
 type PutByte = unsafe extern "C" fn(*mut c_void, c_int);
+type Status = unsafe extern "C" fn(*mut c_void, c_int);
 type ToneReport = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int);
 
 #[link(name = "spandsp")]
@@ -54,6 +55,22 @@ unsafe extern "C" {
     fn async_rx_put_bit(user: *mut c_void, bit: c_int);
     fn async_rx_free(s: *mut c_void) -> c_int;
 
+    fn v22bis_init(
+        s: *mut c_void,
+        bit_rate: c_int,
+        guard: c_int,
+        calling_party: bool,
+        get_bit: GetBit,
+        get_bit_user: *mut c_void,
+        put_bit: PutBit,
+        put_bit_user: *mut c_void,
+    ) -> *mut c_void;
+    fn v22bis_set_modem_status_handler(s: *mut c_void, handler: Status, user: *mut c_void);
+    fn v22bis_tx(s: *mut c_void, amp: *mut i16, len: c_int) -> c_int;
+    fn v22bis_rx(s: *mut c_void, amp: *const i16, len: c_int) -> c_int;
+    fn v22bis_get_current_bit_rate(s: *mut c_void) -> c_int;
+    fn v22bis_free(s: *mut c_void) -> c_int;
+
     fn modem_connect_tones_tx_init(s: *mut c_void, tone: c_int) -> *mut c_void;
     fn modem_connect_tones_tx(s: *mut c_void, amp: *mut i16, len: c_int) -> c_int;
     fn modem_connect_tones_tx_free(s: *mut c_void) -> c_int;
@@ -70,6 +87,7 @@ unsafe extern "C" {
 
 const SIG_STATUS_CARRIER_UP: c_int = -2;
 const SIG_STATUS_CARRIER_DOWN: c_int = -1;
+const SIG_STATUS_TRAINING_SUCCEEDED: c_int = -4;
 const FSK_FRAME_MODE_ASYNC: c_int = 0;
 
 /// One of spandsp's preset FSK channels.
@@ -94,6 +112,8 @@ fn spec(channel: FskChannel) -> *const FskSpec {
 unsafe impl Send for FskTx {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for FskRx {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for V22 {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for ToneTx {}
 // SAFETY: as for `FskTx`.
@@ -236,6 +256,139 @@ impl Drop for FskRx {
         // SAFETY: allocated in `new` and not freed before.
         unsafe {
             fsk_rx_free(self.fsk);
+            async_rx_free(self.framing);
+        }
+    }
+}
+
+/// The guard tone a V.22 answering modem sends with its carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardTone {
+    None = 0,
+    Hz550 = 1,
+    Hz1800 = 2,
+}
+
+#[derive(Default)]
+struct V22Status {
+    carrier: bool,
+    trained: bool,
+}
+
+unsafe extern "C" fn v22_status(user: *mut c_void, status: c_int) {
+    // SAFETY: `user` is the boxed `V22Status` owned by the `V22`.
+    let state = unsafe { &mut *user.cast::<V22Status>() };
+    match status {
+        SIG_STATUS_CARRIER_UP => state.carrier = true,
+        SIG_STATUS_CARRIER_DOWN => {
+            state.carrier = false;
+            state.trained = false;
+        }
+        SIG_STATUS_TRAINING_SUCCEEDED => state.trained = true,
+        _ => {}
+    }
+}
+
+/// spandsp's V.22bis modem held at 1200 bit/s, which is V.22, sending and
+/// receiving 8N1 characters through V.14. It has no answer tone of its own.
+pub struct V22 {
+    modem: *mut c_void,
+    framing: *mut c_void,
+    bits: Box<Outgoing>,
+    received: Box<Received>,
+    status: Box<V22Status>,
+}
+
+impl V22 {
+    #[must_use]
+    pub fn new(calling: bool, guard: GuardTone) -> Self {
+        let mut bits = Box::<Outgoing>::default();
+        let mut received = Box::<Received>::default();
+        let mut status = Box::<V22Status>::default();
+        let queue = ptr::addr_of_mut!(*bits).cast::<c_void>();
+        let sink = ptr::addr_of_mut!(*received).cast::<c_void>();
+        let report = ptr::addr_of_mut!(*status).cast::<c_void>();
+        // SAFETY: spandsp allocates both states, `drop` frees them, the boxes outlive them.
+        unsafe {
+            let framing = async_rx_init(ptr::null_mut(), 8, 0, 1, true, put_byte, sink);
+            let modem = v22bis_init(
+                ptr::null_mut(),
+                1200,
+                guard as c_int,
+                calling,
+                next_bit,
+                queue,
+                async_rx_put_bit,
+                framing,
+            );
+            v22bis_set_modem_status_handler(modem, v22_status, report);
+            Self {
+                modem,
+                framing,
+                bits,
+                received,
+                status,
+            }
+        }
+    }
+
+    pub fn send(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.bits.0.push_back(0);
+            self.bits
+                .0
+                .extend((0..8).map(|i| c_int::from(byte >> i & 1)));
+            self.bits.0.push_back(1);
+        }
+    }
+
+    #[must_use]
+    pub fn pending(&self) -> usize {
+        self.bits.0.len()
+    }
+
+    pub fn render(&mut self, out: &mut [i16]) {
+        // SAFETY: `out` is a valid buffer of the length passed.
+        unsafe {
+            v22bis_tx(self.modem, out.as_mut_ptr(), length(out.len()));
+        }
+    }
+
+    pub fn process(&mut self, samples: &[i16]) {
+        // SAFETY: `samples` is a valid buffer of the length passed.
+        unsafe {
+            v22bis_rx(self.modem, samples.as_ptr(), length(samples.len()));
+        }
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.received.bytes
+    }
+
+    #[must_use]
+    pub fn carrier(&self) -> bool {
+        self.status.carrier
+    }
+
+    /// Whether the handshake is done and data flows.
+    #[must_use]
+    pub fn trained(&self) -> bool {
+        self.status.trained
+    }
+
+    #[must_use]
+    pub fn bit_rate(&self) -> c_int {
+        // SAFETY: allocated in `new`.
+        unsafe { v22bis_get_current_bit_rate(self.modem) }
+    }
+}
+
+impl Drop for V22 {
+    fn drop(&mut self) {
+        // SAFETY: allocated in `new` and not freed before.
+        unsafe {
+            v22bis_free(self.modem);
             async_rx_free(self.framing);
         }
     }
