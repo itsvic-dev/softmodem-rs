@@ -177,6 +177,22 @@ impl Settings {
         Duration::from_millis(u64::from(self.registers[12]) * 20)
     }
 
+    /// The speaker volume under `L` and `M`, from 0 for off to 1 for full.
+    #[must_use]
+    pub fn speaker_gain(&self, connected: bool) -> f32 {
+        let on = match self.monitor {
+            0 => false,
+            1 => !connected,
+            _ => true,
+        };
+        match (on, self.loudness) {
+            (false, _) => 0.0,
+            (true, 0 | 1) => 0.25,
+            (true, 2) => 0.5,
+            (true, _) => 1.0,
+        }
+    }
+
     /// The bytes that report `code` to the computer, or nothing under `Q1`.
     #[must_use]
     pub fn report(&self, code: ResultCode) -> Vec<u8> {
@@ -280,6 +296,21 @@ mod tests {
         assert!(!settings.apply(&Command::Answer));
         assert!(!settings.echo);
         assert_eq!(settings.auto_answer_rings(), 1);
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "the gains are exact constants")]
+    fn the_speaker_follows_m_and_l() {
+        let with = |monitor, loudness| Settings {
+            loudness,
+            monitor,
+            ..Settings::default()
+        };
+        assert_eq!(with(0, 3).speaker_gain(false), 0.0);
+        assert_eq!(with(1, 2).speaker_gain(false), 0.5);
+        assert_eq!(with(1, 2).speaker_gain(true), 0.0);
+        assert_eq!(with(2, 3).speaker_gain(true), 1.0);
+        assert_eq!(with(2, 0).speaker_gain(true), 0.25);
     }
 
     #[test]
