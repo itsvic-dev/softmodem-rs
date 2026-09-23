@@ -235,7 +235,9 @@ impl DataPump for Answer {
             }
             AnswerStage::Jm { menu } => {
                 let modes = menu.modes;
-                if self.link.hear(input).contains(&Heard::Cj) {
+                // V.8 § 8.2.3 allows the end of CM in place of a lost CJ.
+                let cj = self.link.hear(input).contains(&Heard::Cj);
+                if cj || !self.link.demodulator.carrier() {
                     self.stage = AnswerStage::Gap {
                         until: self.sent + GAP_SAMPLES,
                         next: Some(chosen(self.top, modes, Role::Answer)),
