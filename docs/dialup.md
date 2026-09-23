@@ -99,7 +99,7 @@ right, not an Asterisk module and not an AudioSocket client. Thus the calling
 side is a normal endpoint that can live anywhere, and it can later be replaced
 by a real modem behind an ATA without a change to the answering side.
 
-Three layers, deliberately separable.
+Three layers, deliberately separable: transport, modem, terminal.
 
 ### SIP and RTP
 
@@ -173,6 +173,10 @@ V.21, and the answer tone is 2225 Hz instead of 2100 Hz.
 | answering | 2225 Hz | 2025 Hz |
 
 ### Real modems
+
+The first real modem is a generic serial 56k modem, reported as a standard
+AT modem by both Windows and Slackware. That says nothing about the chipset.
+`ATI3`, `ATI4` and `ATI6` usually identify it.
 
 A modern modem calls with V.8 and expects ANSam, a 2100 Hz tone with 15 Hz
 amplitude modulation. When it hears a plain V.25 answer tone instead, it falls
@@ -249,20 +253,35 @@ At 300 bit/s, 30 bytes per second, LCP and IPCP exchange a few hundred bytes
 in total, so expect about 10 to 20 s between `CONNECT` and an address on a
 clean line, and more with retransmits.
 
+## Transport
+
+The modem and terminal layers do not know about SIP. They talk to a transport
+interface with four operations: dial a number, report an incoming call, send
+and receive 20 ms frames of samples, and hang up. There are two
+implementations.
+
+**Wire.** RTP packets sent with `ezk-rtp` over UDP to a fixed peer, with no
+signalling. Dial and answer are a minimal exchange on the same socket. This is
+what two instances use during development. It is UDP and not TCP on purpose:
+TCP hides loss and reordering, and then the receive path goes untested until
+SIP arrives. The wire can inject loss, reordering and delay.
+
+**SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. Since the
+media path is shared, this step adds only signalling.
+
 ## Milestones
 
-1. DSP in isolation, unit tested with impairments.
-2. Two instances back to back over a local UDP socket, no SIP, raw bytes
-   across.
-3. SIP user agent that calls the PBX echo test and decodes its own echo. The
-   echo returns channel 1, so this needs a loopback mode in which the caller
-   demodulates its own transmit channel. It proves SIP, RTP, A-law and the
-   receive path across the real network with one instance.
-4. Two instances through the PBX, one answering, raw bytes across.
-5. `pppd` on both ptys, an address, a ping across.
-6. AT layer, so `ATDT` works from a terminal.
-7. Bell 103.
-8. A real modem behind an ATA calling the answering side.
+The last milestone is far away and needs hardware that is not available yet.
+Everything before it can be built and tested with two instances on one host.
+
+1. V.21 DSP in isolation, unit tested with loss, noise, gain error and clock
+   offset.
+2. Transport interface and the wire. Two instances, raw bytes across.
+3. `pppd` on both ptys over the wire, an address, a ping across.
+4. AT layer, so `ATDT` and `ATA` work on the wire transport.
+5. SIP transport, two instances through the PBX.
+6. Bell 103.
+7. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
 
@@ -295,7 +314,7 @@ text it gives up the factor of two or three that V.42bis would have provided.
 
 - Receive path: is "no playout clock" safe, or does something between the
   two ends retime the stream?
-- Which modem will be the first real one to call in, and does its chipset
-  reach V.21 from automode?
+- Which chipset is in the generic 56k modem, and does it reach V.21 from
+  automode?
 - Should the answering side authenticate SIP at all, beyond PPP's own PAP or
   CHAP?
