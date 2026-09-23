@@ -1,6 +1,10 @@
-{ softmodem }:
+{
+  softmodem,
+  carrier ? "V21",
+}:
 
 let
+  modulation = "+MS=${carrier}";
   port = "/run/softmodem/ttyS0";
   # The default 3 s restart is shorter than one round trip at 300 bit/s.
   pppOptions = "nodetach local noauth nocrtscts noccp noipv6 mru 296 mtu 296 asyncmap 0 lcp-restart 15 ipcp-restart 15 debug";
@@ -15,7 +19,7 @@ let
   };
 in
 {
-  name = "softmodem-ppp";
+  name = "softmodem-ppp-${carrier}";
 
   nodes = {
     isp =
@@ -25,7 +29,7 @@ in
         environment.systemPackages = [ softmodem ];
 
         # Quiet, so that RING and CONNECT do not reach pppd as line noise.
-        systemd.services.softmodem = modemService "--init ATE0Q1S0=1";
+        systemd.services.softmodem = modemService "--init ATE0Q1S0=1${modulation}";
 
         systemd.services.pppd = {
           wantedBy = [ "multi-user.target" ];
@@ -57,7 +61,7 @@ in
             until isp=$(getent ahostsv4 isp | head -n 1 | cut -d ' ' -f 1) && [ -n "$isp" ]; do
               sleep 1
             done
-            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem --init 'AT&C1'
+            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem --init 'AT&C1${modulation}'
           '';
           serviceConfig = {
             RuntimeDirectory = "softmodem";

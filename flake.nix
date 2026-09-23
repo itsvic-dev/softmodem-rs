@@ -34,6 +34,12 @@
         in
         {
           ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
+          ppp-v22 = pkgs.testers.runNixOSTest (
+            import ./nix/tests/ppp.nix {
+              inherit softmodem;
+              carrier = "V22";
+            }
+          );
           cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
         }
       );
