@@ -57,7 +57,7 @@ in
             until isp=$(getent ahostsv4 isp | head -n 1 | cut -d ' ' -f 1) && [ -n "$isp" ]; do
               sleep 1
             done
-            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem
+            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem --init 'AT&C1'
           '';
           serviceConfig = {
             RuntimeDirectory = "softmodem";
@@ -84,15 +84,24 @@ in
     caller.wait_for_unit("softmodem.service")
     caller.wait_until_succeeds("test -L ${port}")
 
+    import time
+
+    def hangups():
+        return int(isp.succeed("journalctl -u pppd | grep -c 'Modem hangup' || true").strip())
+
     for attempt in (1, 2):
         with subtest(f"call {attempt}"):
+            before = hangups()
+            dialled = time.monotonic()
             caller.systemctl("start pppd.service")
             caller.wait_until_succeeds("ip -4 addr show ppp0 | grep -q 10.32.0.2", timeout=180)
+            print(f"call {attempt}: address after {time.monotonic() - dialled:.1f} s from dialling")
             caller.succeed("ping -c 1 -W 30 10.32.0.1")
             isp.succeed("ping -c 1 -W 30 10.32.0.2")
             caller.systemctl("stop pppd.service")
             for machine in (caller, isp):
                 machine.wait_until_succeeds(f"journalctl -u softmodem | grep -c 'call ended' | grep -qx {attempt}", timeout=90)
+            isp.wait_until_succeeds(f"[ $(journalctl -u pppd | grep -c 'Modem hangup') -gt {before} ]", timeout=30)
 
     caller.systemctl("stop softmodem.service")
     isp.systemctl("stop softmodem.service")
