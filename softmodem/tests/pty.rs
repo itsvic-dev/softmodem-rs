@@ -36,8 +36,7 @@ fn serve(wire: Wire, init: &str) -> PathBuf {
     let path = pty.path().to_owned();
     let profile = profile(init).unwrap();
     tokio::spawn(async move {
-        let pty = pty;
-        Modem::new(wire, &pty, &pty, profile, |call, _| call)
+        Modem::new(wire, pty, profile, |call, _| call)
             .run(std::future::pending())
             .await
             .unwrap();

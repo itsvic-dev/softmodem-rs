@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use softmodem::{Modem, Role};
+use softmodem_terminal::port::Plain;
 use softmodem_terminal::pty::Pty;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
@@ -96,12 +97,15 @@ async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()>
     if let Some(link) = args.pty {
         let pty = Pty::open(Some(&link))?;
         info!(path = %pty.path().display(), link = %link.display(), "serial port ready");
-        Modem::new(transport, &pty, &pty, profile, on_call)
+        Modem::new(transport, pty, profile, on_call)
             .run(shutdown_signal())
             .await?;
     } else {
-        let (input, output) = (tokio::io::stdin(), tokio::io::stdout());
-        Modem::new(transport, input, output, profile, on_call)
+        let port = Plain {
+            input: tokio::io::stdin(),
+            output: tokio::io::stdout(),
+        };
+        Modem::new(transport, port, profile, on_call)
             .run(shutdown_signal())
             .await?;
     }

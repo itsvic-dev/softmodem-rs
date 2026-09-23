@@ -7,9 +7,11 @@ use std::time::Duration;
 use softmodem_terminal::command::{self, Command, Dial};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
+use softmodem_terminal::port::SerialPort;
+use softmodem_terminal::settings::Dcd;
 use softmodem_terminal::settings::{ResultCode, Settings};
 use softmodem_transport::{Call, DialError, Incoming, Transport};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
 use tracing::{debug, info, warn};
@@ -21,6 +23,7 @@ const RING_INTERVAL: Duration = Duration::from_secs(6);
 const LOW_WATER_BITS: usize = 20;
 const COMMAND_READ: usize = 64;
 const DATA_READ: usize = 4;
+const DCD_DROP_DELAY: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
 enum Mode {
@@ -37,10 +40,9 @@ struct Ringing<C> {
 }
 
 /// A modem on one serial port and one line.
-pub struct Modem<T: Transport, R, W, F> {
+pub struct Modem<T: Transport, P, F> {
     transport: T,
-    input: R,
-    output: W,
+    port: P,
     on_call: F,
     profile: Settings,
     settings: Settings,
@@ -52,6 +54,7 @@ pub struct Modem<T: Transport, R, W, F> {
     mode: Mode,
     carrier_lost_at: Option<Instant>,
     ticker: Interval,
+    dcd: bool,
 }
 
 fn frame_clock() -> Interval {
@@ -60,20 +63,18 @@ fn frame_clock() -> Interval {
     ticker
 }
 
-impl<T, R, W, F> Modem<T, R, W, F>
+impl<T, P, F> Modem<T, P, F>
 where
     T: Transport,
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    P: SerialPort,
     F: FnMut(Call, Role) -> Call,
 {
     /// A modem that starts from `profile`, the settings `ATZ` returns to.
     /// `on_call` sees every call as it is placed or answered, to record it.
-    pub fn new(transport: T, input: R, output: W, profile: Settings, on_call: F) -> Self {
+    pub fn new(transport: T, port: P, profile: Settings, on_call: F) -> Self {
         Self {
             transport,
-            input,
-            output,
+            port,
             on_call,
             settings: profile.clone(),
             profile,
@@ -85,6 +86,7 @@ where
             mode: Mode::Command,
             carrier_lost_at: None,
             ticker: frame_clock(),
+            dcd: false,
         }
     }
 
@@ -97,6 +99,7 @@ where
     pub async fn run(mut self, stop: impl Future<Output = ()>) -> io::Result<()> {
         let mut stop = pin!(stop);
         let mut buf = [0; COMMAND_READ];
+        self.sync_dcd().await?;
 
         loop {
             let in_data = matches!(self.mode, Mode::Data { .. });
@@ -115,7 +118,7 @@ where
                     self.hang_up().await;
                     return Ok(());
                 }
-                read = self.input.read(&mut buf[..read_size]), if want_input => {
+                read = self.port.read(&mut buf[..read_size]), if want_input => {
                     let n = read?;
                     if n == 0 {
                         self.hang_up().await;
@@ -185,6 +188,10 @@ where
                     self.hang_up().await;
                     self.settings = self.profile.clone();
                 }
+                Command::FactoryReset => {
+                    self.hang_up().await;
+                    self.settings = Settings::default();
+                }
                 Command::OffHook(true) => {
                     self.off_hook = true;
                     if let Some(ringing) = self.ringing.take() {
@@ -210,7 +217,8 @@ where
                 }
             }
         }
-        self.report(ResultCode::Ok).await
+        self.report(ResultCode::Ok).await?;
+        self.sync_dcd().await
     }
 
     async fn answer(&mut self) -> io::Result<()> {
@@ -256,7 +264,7 @@ where
         let wait = self.settings.blind_dial_wait() + self.settings.comma_pause() * dial.pauses;
         info!(number, "dialling");
         let transport = &mut self.transport;
-        let input = &mut self.input;
+        let input = &mut self.port;
         let mut abort = [0];
         let outcome = tokio::select! {
             result = async {
@@ -424,6 +432,7 @@ where
             };
             self.carrier_lost_at = None;
             self.report(ResultCode::Connect).await?;
+            self.sync_dcd().await?;
         }
         if matches!(self.mode, Mode::Data { .. }) && !received.bytes.is_empty() {
             self.write(&received.bytes).await?;
@@ -442,7 +451,26 @@ where
 
     async fn hang_up_with(&mut self, code: ResultCode) -> io::Result<()> {
         self.hang_up().await;
-        self.report(code).await
+        self.report(code).await?;
+        self.sync_dcd().await
+    }
+
+    async fn sync_dcd(&mut self) -> io::Result<()> {
+        let connected = self.line.as_ref().is_some_and(Line::has_handshake)
+            && matches!(self.mode, Mode::Data { .. } | Mode::OnlineCommand);
+        let dcd = match self.settings.dcd {
+            Dcd::AlwaysOn => true,
+            Dcd::FollowsCarrier => connected,
+        };
+        if dcd == self.dcd {
+            return Ok(());
+        }
+        if !dcd {
+            // Lets the computer read the result code before a hang-up discards it.
+            sleep(DCD_DROP_DELAY).await;
+        }
+        self.dcd = dcd;
+        self.port.set_carrier(dcd)
     }
 
     async fn report(&mut self, code: ResultCode) -> io::Result<()> {
@@ -454,8 +482,8 @@ where
         if bytes.is_empty() {
             return Ok(());
         }
-        self.output.write_all(bytes).await?;
-        self.output.flush().await
+        self.port.write_all(bytes).await?;
+        self.port.flush().await
     }
 }
 
@@ -491,7 +519,9 @@ pub fn profile(init: &str) -> Result<Settings, String> {
     let commands = command::parse(text.as_bytes()).map_err(|_| format!("cannot parse {init:?}"))?;
     let mut settings = Settings::default();
     for command in &commands {
-        if !settings.apply(command) {
+        if *command == Command::FactoryReset {
+            settings = Settings::default();
+        } else if !settings.apply(command) {
             return Err(format!("{command:?} does not belong in a stored profile"));
         }
     }

@@ -1,18 +1,68 @@
+use std::io;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use softmodem::{Modem, profile};
+use softmodem_terminal::port::SerialPort;
 use softmodem_terminal::settings::Settings;
 use softmodem_transport::loopback::{self, Loopback};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
+use tokio::io::{
+    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf, duplex,
+};
 use tokio::time::{sleep, timeout};
 
 const PATIENCE: Duration = Duration::from_secs(120);
 const PAST_GUARD: Duration = Duration::from_millis(1100);
 
+type DcdHistory = Arc<Mutex<Vec<bool>>>;
+
+struct Port {
+    stream: DuplexStream,
+    dcd: DcdHistory,
+}
+
+impl AsyncRead for Port {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Port {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+    }
+}
+
+impl SerialPort for Port {
+    fn set_carrier(&mut self, on: bool) -> io::Result<()> {
+        self.dcd.lock().unwrap().push(on);
+        Ok(())
+    }
+}
+
 struct Computer {
     port: DuplexStream,
     seen: Vec<u8>,
     cursor: usize,
+    dcd: DcdHistory,
 }
 
 impl Computer {
@@ -87,13 +137,18 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 fn attach(transport: Loopback, settings: Settings) -> Computer {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (computer, modem_side) = duplex(4096);
-    let (input, output) = tokio::io::split(modem_side);
-    let modem = Modem::new(transport, input, output, settings, |call, _| call);
+    let dcd = DcdHistory::default();
+    let port = Port {
+        stream: modem_side,
+        dcd: dcd.clone(),
+    };
+    let modem = Modem::new(transport, port, settings, |call, _| call);
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
     Computer {
         port: computer,
         seen: Vec::new(),
         cursor: 0,
+        dcd,
     }
 }
 
@@ -275,6 +330,60 @@ async fn a_semicolon_places_the_call_without_a_handshake() {
     b.expect("CONNECT").await;
     a.send(b"late start").await;
     b.expect("late start").await;
+}
+
+impl Computer {
+    fn dcd(&self) -> Vec<bool> {
+        self.dcd.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn dcd_stays_on_under_c0() {
+    let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
+    a.command("ATDT0300").await;
+    a.expect("CONNECT").await;
+    b.expect("CONNECT").await;
+    a.escape().await;
+    a.command("ATH").await;
+    a.expect("OK").await;
+    b.expect("NO CARRIER").await;
+    assert_eq!(a.dcd(), [true]);
+    assert_eq!(b.dcd(), [true]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dcd_follows_carrier_under_c1() {
+    let (mut a, mut b) = two_modems("ATE0&C1", "ATE0&C1S0=1");
+    a.command("AT").await;
+    a.expect("OK").await;
+    assert!(a.dcd().is_empty(), "DCD rose before a call");
+
+    a.command("ATDT0300").await;
+    a.expect("CONNECT").await;
+    b.expect("CONNECT").await;
+    assert_eq!(a.dcd(), [true]);
+    assert_eq!(b.dcd(), [true]);
+
+    a.escape().await;
+    a.command("ATH").await;
+    a.expect("OK").await;
+    b.expect("NO CARRIER").await;
+    sleep(Duration::from_secs(1)).await;
+    assert_eq!(a.dcd(), [true, false]);
+    assert_eq!(b.dcd(), [true, false]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dcd_follows_a_change_of_c_at_once() {
+    let (mut a, _b) = two_modems("ATE0&C1", "");
+    a.command("AT&C0").await;
+    a.expect("OK").await;
+    assert_eq!(a.dcd(), [true]);
+    a.command("AT&F&C1").await;
+    a.expect("OK").await;
+    sleep(Duration::from_secs(1)).await;
+    assert_eq!(a.dcd(), [true, false]);
 }
 
 #[tokio::test(start_paused = true)]
