@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::command::Command;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCode {
     Ok,
@@ -84,6 +86,29 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Applies `command` if it only changes a setting, and tells whether it did.
+    pub fn apply(&mut self, command: &Command) -> bool {
+        match *command {
+            Command::Echo(on) => self.echo = on,
+            Command::Quiet(on) => self.quiet = on,
+            Command::Verbose(on) => self.verbose = on,
+            Command::ResultSet(level) => self.result_set = level,
+            Command::Loudness(level) => self.loudness = level,
+            Command::Monitor(mode) => self.monitor = mode,
+            Command::SetRegister { register, value } => {
+                self.registers[usize::from(register)] = value;
+            }
+            Command::Ignored => {}
+            _ => return false,
+        }
+        true
+    }
+
+    #[must_use]
+    pub fn register(&self, register: u8) -> u8 {
+        self.registers[usize::from(register)]
+    }
+
     #[must_use]
     pub fn auto_answer_rings(&self) -> u8 {
         self.registers[0]
@@ -224,6 +249,19 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(blind.blind_dial_wait(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn applies_only_commands_that_change_settings() {
+        let mut settings = Settings::default();
+        assert!(settings.apply(&Command::Echo(false)));
+        assert!(settings.apply(&Command::SetRegister {
+            register: 0,
+            value: 1
+        }));
+        assert!(!settings.apply(&Command::Answer));
+        assert!(!settings.echo);
+        assert_eq!(settings.auto_answer_rings(), 1);
     }
 
     #[test]
