@@ -434,6 +434,7 @@ where
     async fn hang_up(&mut self) {
         if let Some(line) = self.line.take() {
             line.call.hang_up().await;
+            info!("call ended");
         }
         self.mode = Mode::Command;
         self.carrier_lost_at = None;
