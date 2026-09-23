@@ -60,6 +60,7 @@ impl Computer {
 }
 
 async fn modem(user: &str, password: &str, init: &str) -> Computer {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let sip = Sip::register(Account {
         registrar: var("SOFTMODEM_PBX"),
         user: var(user),
@@ -104,6 +105,39 @@ async fn a_call_through_the_pbx_carries_data_and_hangs_up() {
     caller.command("ATH").await;
     caller.expect("OK").await;
     answerer.expect("NO CARRIER").await;
+}
+
+#[tokio::test]
+#[ignore = "needs a live SIP registrar and two accounts"]
+async fn a_modem_in_a_call_is_busy_to_another_caller() {
+    let mut caller = modem("USER1", "USER1_PASS", "ATE0").await;
+    let mut answerer = modem("USER2", "USER2_PASS", "ATE0S0=1").await;
+    caller.command(&format!("ATDT{}", var("USER2"))).await;
+    caller.expect("CONNECT").await;
+    answerer.expect("CONNECT").await;
+
+    let mut second = modem("USER1", "USER1_PASS", "ATE0").await;
+    second.command(&format!("ATDT{}", var("USER2"))).await;
+    second.expect("BUSY").await;
+
+    caller.send(b"still connected").await;
+    answerer.expect("still connected").await;
+}
+
+#[tokio::test]
+#[ignore = "needs a live SIP registrar and two accounts"]
+async fn a_dial_given_up_stops_the_ringing() {
+    let mut caller = modem("USER1", "USER1_PASS", "ATE0").await;
+    let mut answerer = modem("USER2", "USER2_PASS", "ATE0").await;
+    caller.command(&format!("ATDT{}", var("USER2"))).await;
+    answerer.expect("RING").await;
+    caller.send(b"x").await;
+    caller.expect("NO CARRIER").await;
+
+    sleep(Duration::from_secs(1)).await;
+    answerer.seen.clear();
+    let rang_again = timeout(Duration::from_secs(13), answerer.expect("RING")).await;
+    assert!(rang_again.is_err(), "the answerer kept ringing");
 }
 
 #[tokio::test]
