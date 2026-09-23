@@ -236,11 +236,35 @@ ended and it detects channel 2, then sends channel 1 mark and reports
 `CONNECT`. It ignores carrier while the answer tone lasts, because the tone
 is close enough to channel 2 to trip carrier detect.
 
+#### DCD
+
+`&C0`, the Hayes default, keeps DCD on. `&C1` makes it follow carrier: on at
+`CONNECT`, off when the call ends, 200 ms after the result code so that the
+computer can read it first.
+
+A pseudoterminal has no DCD line, so dropping carrier hangs up the port
+instead. The modem opens a fresh pseudoterminal, moves the link to it, and
+closes the old one. Every program that had the old one open sees a hang-up,
+which `pppd` reports as `Modem hangup`, and one that reopens the link gets the
+new port. `pppd` notices at its next write, so within its LCP echo interval.
+Rising DCD cannot be shown this way, and a terminal program such as `minicom`
+has to reopen the port after each call, so `&C1` is for `pppd`.
+
+What emulators see, as of 86Box's `char` layer and QEMU's 16550:
+
+- 86Box's pipe backend, pointed at the pseudoterminal, reports DCD as "the
+  descriptor is open". The hang-up drops it until the backend reconnects,
+  which it does only with reconnect enabled. The guest sees DCD fall at the
+  end of a call and nothing else.
+- 86Box's host serial backend and QEMU's `-chardev serial` read DCD and RI
+  with `TIOCMGET`, which a pseudoterminal does not answer. Both would show
+  the real lines only if the port were a character device that does.
+
 #### Not modelled
 
 A pseudoterminal has no DTR, so the computer cannot hang up by dropping it.
 `pppd` hangs up with `+++` and `ATH` in its disconnect script, as on a line
-without modem control.
+without modem control. RI is not signalled either.
 
 The pty is the DTE side and is much faster than the line. `softmodem` keeps a
 small transmit buffer and stops reading from the pty when it is full. The
@@ -400,9 +424,9 @@ in total. On a clean wire the VM test (`checks.<linux>.ppp`) measures:
 
 - 6.6 s from `ATDT` to `CONNECT`, which is mostly the V.25 answer sequence.
 - 10 s from `CONNECT` to an address on the first call.
-- About 25 s on the next call. The ISP's `pppd` has not seen the first call
-  end, because nothing tells it, so it is still in the old session and has to
-  renegotiate from there. A DCD signal it could watch would fix this.
+- The same on every later call, now that `&C1` hangs up the port. Before
+  that, the ISP's `pppd` never saw a call end, stayed in the old session, and
+  the next call took about 25 s to renegotiate from there.
 - About 6 s round trip for a 64 byte ping.
 
 ## Transport
