@@ -50,7 +50,28 @@ pub struct Settings {
     pub loudness: u8,
     pub monitor: u8,
     pub dcd: Dcd,
+    pub carrier: Carrier,
     pub registers: [u8; 256],
+}
+
+/// The modulation set by `+MS`, with the names V.250 gives them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Carrier {
+    #[default]
+    V21,
+    V22,
+}
+
+impl Carrier {
+    pub const ALL: [Self; 2] = [Self::V21, Self::V22];
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::V21 => "V21",
+            Self::V22 => "V22",
+        }
+    }
 }
 
 /// What DCD shows the computer, set by `&C`.
@@ -91,6 +112,7 @@ impl Default for Settings {
             loudness: 2,
             monitor: 1,
             dcd: Dcd::AlwaysOn,
+            carrier: Carrier::default(),
             registers,
         }
     }
@@ -113,6 +135,7 @@ impl Settings {
                     Dcd::AlwaysOn
                 };
             }
+            Command::SetCarrier(carrier) => self.carrier = carrier,
             Command::SetRegister { register, value } => {
                 self.registers[usize::from(register)] = value;
             }
@@ -293,9 +316,12 @@ mod tests {
             register: 0,
             value: 1
         }));
+        assert!(settings.apply(&Command::SetCarrier(Carrier::V22)));
         assert!(!settings.apply(&Command::Answer));
+        assert!(!settings.apply(&Command::ReadCarrier));
         assert!(!settings.echo);
         assert_eq!(settings.auto_answer_rings(), 1);
+        assert_eq!(settings.carrier, Carrier::V22);
     }
 
     #[test]

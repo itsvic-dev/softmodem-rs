@@ -1,5 +1,7 @@
 //! Parses the text of an AT command line, after the `AT`.
 
+use crate::settings::Carrier;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Answer,
@@ -22,6 +24,12 @@ pub enum Command {
         value: u8,
     },
     ReadRegister(u8),
+    /// `+MS=`, the modulation for the next call.
+    SetCarrier(Carrier),
+    /// `+MS?`.
+    ReadCarrier,
+    /// `+MS=?`.
+    ListCarriers,
     /// An extended or vendor command, accepted without effect.
     Ignored,
 }
@@ -143,12 +151,59 @@ impl Parser<'_> {
                 self.number()?;
                 Command::Ignored
             }
+            b'+' if self.text[self.at..].starts_with(b"MS") => {
+                self.at += 2;
+                self.modulation()?
+            }
             b'+' => {
-                while self.next().is_some_and(|b| b != b';') {}
+                self.skip_extended();
                 Command::Ignored
             }
             _ => return Err(ParseError),
         })
+    }
+
+    fn skip_extended(&mut self) {
+        while self.next().is_some_and(|b| b != b';') {}
+    }
+
+    fn modulation(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::ReadCarrier,
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::ListCarriers
+            }
+            (Some(b'='), _) => {
+                let start = self.at;
+                while self.peek().is_some_and(|b| b.is_ascii_alphanumeric()) {
+                    self.at += 1;
+                }
+                let carrier = match &self.text[start..self.at] {
+                    b"V21" => Carrier::V21,
+                    b"V22" => Carrier::V22,
+                    _ => return Err(ParseError),
+                };
+                if self.peek() == Some(b',') {
+                    self.at += 1;
+                    if self.number()?.unwrap_or(0) != 0 {
+                        return Err(ParseError);
+                    }
+                }
+                while self.peek() == Some(b',') {
+                    self.at += 1;
+                    while self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                        self.at += 1;
+                    }
+                }
+                Command::SetCarrier(carrier)
+            }
+            _ => return Err(ParseError),
+        };
+        match self.next() {
+            None | Some(b';') => Ok(command),
+            Some(_) => Err(ParseError),
+        }
     }
 
     fn register(&mut self) -> Result<Command, ParseError> {
@@ -259,7 +314,7 @@ mod tests {
     #[test]
     fn accepts_vendor_commands_without_effect() {
         assert_eq!(
-            parse(b"&K3&D2\\N0%C0+MS=V21;E1").unwrap(),
+            parse(b"&K3&D2\\N0%C0+FCLASS=0;E1").unwrap(),
             [
                 Command::Ignored,
                 Command::Ignored,
@@ -269,6 +324,28 @@ mod tests {
                 Command::Echo(true),
             ]
         );
+    }
+
+    #[test]
+    fn parses_the_modulation() {
+        assert_eq!(
+            parse(b"+ms=v22;+MS=V21,0,300,300;E0").unwrap(),
+            [
+                Command::SetCarrier(Carrier::V22),
+                Command::SetCarrier(Carrier::V21),
+                Command::Echo(false),
+            ]
+        );
+        assert_eq!(parse(b"+MS?").unwrap(), [Command::ReadCarrier]);
+        assert_eq!(parse(b"+MS=?").unwrap(), [Command::ListCarriers]);
+    }
+
+    #[test]
+    fn rejects_modulations_it_cannot_run() {
+        assert_eq!(parse(b"+MS=V32"), Err(ParseError));
+        assert_eq!(parse(b"+MS=V22,1"), Err(ParseError));
+        assert_eq!(parse(b"+MS"), Err(ParseError));
+        assert_eq!(parse(b"+MS=V22X"), Err(ParseError));
     }
 
     #[test]
