@@ -269,6 +269,18 @@ SIP arrives. The wire can inject loss, reordering and delay.
 **SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. Since the
 media path is shared, this step adds only signalling.
 
+### WAV dumps
+
+A wrapper around any transport writes each call to WAV files: one for the
+samples sent and one for the samples received, after loss and gap fill.
+Format is 8 kHz mono 16-bit PCM, which every player opens. The
+received file shows exactly what the demodulator saw, so a failed call can be
+replayed into the demodulator offline and turned into a test case. And you
+can listen to the handshake.
+
+Because it wraps the transport interface, it works the same on the wire and
+on SIP.
+
 ## Milestones
 
 The last milestone is far away and needs hardware that is not available yet.
@@ -276,7 +288,8 @@ Everything before it can be built and tested with two instances on one host.
 
 1. V.21 DSP in isolation, unit tested with loss, noise, gain error and clock
    offset.
-2. Transport interface and the wire. Two instances, raw bytes across.
+2. Transport interface, the wire and WAV dumps. Two instances, raw bytes
+   across.
 3. `pppd` on both ptys over the wire, an address, a ping across.
 4. AT layer, so `ATDT` and `ATA` work on the wire transport.
 5. SIP transport, two instances through the PBX.
