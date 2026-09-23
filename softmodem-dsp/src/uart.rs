@@ -11,6 +11,8 @@ pub fn frame(byte: u8) -> impl Iterator<Item = bool> {
 pub struct Decoder {
     state: State,
     framing_errors: u64,
+    v14: bool,
+    deleted_stop: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -34,6 +36,17 @@ impl Decoder {
         Self::default()
     }
 
+    /// A decoder for start-stop characters carried over a synchronous channel
+    /// as V.14 describes. It also accepts a character whose stop bit a fast
+    /// sender deleted, though not two such characters in a row.
+    #[must_use]
+    pub fn v14() -> Self {
+        Self {
+            v14: true,
+            ..Self::default()
+        }
+    }
+
     pub fn push(&mut self, bit: bool) -> Option<u8> {
         let (next, out) = match (self.state, bit) {
             (State::Idle, false) => (State::Data { byte: 0, count: 0 }, None),
@@ -53,8 +66,16 @@ impl Decoder {
                     )
                 }
             }
-            (State::Stop { byte }, true) => (State::Idle, Some(byte)),
+            (State::Stop { byte }, true) => {
+                self.deleted_stop = false;
+                (State::Idle, Some(byte))
+            }
+            (State::Stop { byte }, false) if self.v14 && !self.deleted_stop => {
+                self.deleted_stop = true;
+                (State::Data { byte: 0, count: 0 }, Some(byte))
+            }
             (State::Stop { .. }, false) => {
+                self.deleted_stop = false;
                 self.framing_errors += 1;
                 (State::Hunt, None)
             }
@@ -66,6 +87,7 @@ impl Decoder {
     /// Drops a partly received character, for when carrier is lost.
     pub fn reset(&mut self) {
         self.state = State::Idle;
+        self.deleted_stop = false;
     }
 
     #[must_use]
@@ -79,7 +101,10 @@ mod tests {
     use super::*;
 
     fn decode(bits: impl IntoIterator<Item = bool>) -> (Vec<u8>, u64) {
-        let mut decoder = Decoder::new();
+        decode_with(Decoder::new(), bits)
+    }
+
+    fn decode_with(mut decoder: Decoder, bits: impl IntoIterator<Item = bool>) -> (Vec<u8>, u64) {
         let bytes = bits.into_iter().filter_map(|b| decoder.push(b)).collect();
         (bytes, decoder.framing_errors())
     }
@@ -115,5 +140,42 @@ mod tests {
         bits.extend(std::iter::repeat_n(true, 3));
         bits.extend(frame(b'B'));
         assert_eq!(decode(bits), (vec![b'B'], 1));
+    }
+
+    fn without_stop_bit(byte: u8) -> impl Iterator<Item = bool> {
+        frame(byte).take(9)
+    }
+
+    #[test]
+    fn v14_accepts_a_deleted_stop_bit() {
+        let bits: Vec<bool> = without_stop_bit(b'A')
+            .chain(frame(b'B'))
+            .chain(without_stop_bit(b'C'))
+            .chain(frame(b'D'))
+            .collect();
+        assert_eq!(
+            decode_with(Decoder::v14(), bits.clone()),
+            (b"ABCD".to_vec(), 0)
+        );
+        assert_ne!(decode(bits).0, b"ABCD");
+    }
+
+    #[test]
+    fn v14_still_rejects_two_deleted_stop_bits_in_a_row() {
+        let bits: Vec<bool> = without_stop_bit(b'A')
+            .chain(without_stop_bit(b'B'))
+            .chain([false])
+            .chain(std::iter::repeat_n(true, 3))
+            .chain(frame(b'D'))
+            .collect();
+        assert_eq!(decode_with(Decoder::v14(), bits), (b"AD".to_vec(), 1));
+    }
+
+    #[test]
+    fn v14_counts_a_break_as_a_framing_error() {
+        let bits = std::iter::repeat_n(false, 23).chain(std::iter::repeat_n(true, 20));
+        let (bytes, errors) = decode_with(Decoder::v14(), bits);
+        assert_eq!(bytes, [0]);
+        assert_eq!(errors, 1);
     }
 }
