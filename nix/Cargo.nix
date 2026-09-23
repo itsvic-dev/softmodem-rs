@@ -555,7 +555,7 @@ rec {
           "default" = [ "std" ];
           "std" = [ "libc/std" ];
         };
-        resolvedDefaultFeatures = [ "std" ];
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "ezk" = rec {
         crateName = "ezk";
@@ -1400,6 +1400,28 @@ rec {
           "loom" = [ "dep:loom" ];
         };
       };
+      "signal-hook-registry" = rec {
+        crateName = "signal-hook-registry";
+        version = "1.4.8";
+        edition = "2015";
+        sha256 = "06vc7pmnki6lmxar3z31gkyg9cw7py5x9g7px70gy2hil75nkny4";
+        libName = "signal_hook_registry";
+        authors = [
+          "Michal 'vorner' Vaner <vorner@vorner.cz>"
+          "Masaki Hara <ackie.h.gmai@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "errno";
+            packageId = "errno";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+        ];
+
+      };
       "slotmap" = rec {
         crateName = "slotmap";
         version = "1.1.1";
@@ -1503,7 +1525,7 @@ rec {
           {
             name = "tokio";
             packageId = "tokio";
-            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "sync" "time" ];
+            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
           }
           {
             name = "tracing";
@@ -1545,7 +1567,7 @@ rec {
           {
             name = "tokio";
             packageId = "tokio";
-            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "sync" "time" ];
+            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
           }
         ];
 
@@ -1576,7 +1598,7 @@ rec {
           {
             name = "tokio";
             packageId = "tokio";
-            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "sync" "time" ];
+            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
           }
           {
             name = "tracing";
@@ -1891,6 +1913,12 @@ rec {
             packageId = "pin-project-lite";
           }
           {
+            name = "signal-hook-registry";
+            packageId = "signal-hook-registry";
+            optional = true;
+            target = { target, features }: (target."unix" or false);
+          }
+          {
             name = "socket2";
             packageId = "socket2";
             optional = true;
@@ -1948,7 +1976,7 @@ rec {
           "tracing" = [ "dep:tracing" ];
           "windows-sys" = [ "dep:windows-sys" ];
         };
-        resolvedDefaultFeatures = [ "bytes" "default" "io-std" "io-util" "libc" "macros" "mio" "net" "rt" "rt-multi-thread" "socket2" "sync" "time" "tokio-macros" "windows-sys" ];
+        resolvedDefaultFeatures = [ "bytes" "default" "io-std" "io-util" "libc" "macros" "mio" "net" "rt" "rt-multi-thread" "signal" "signal-hook-registry" "socket2" "sync" "time" "tokio-macros" "windows-sys" ];
       };
       "tokio-macros" = rec {
         crateName = "tokio-macros";
