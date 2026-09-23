@@ -63,6 +63,7 @@ impl Run {
 /// back.
 #[derive(Debug)]
 pub(crate) struct V22 {
+    role: Role,
     phase: Phase,
     modulator: Modulator,
     demodulator: Demodulator,
@@ -92,6 +93,7 @@ impl V22 {
             ),
         };
         Self {
+            role,
             phase,
             modulator,
             demodulator,
@@ -109,6 +111,15 @@ impl V22 {
         self.phase = Phase::Settling {
             until: self.sent + SETTLE_SAMPLES,
         };
+    }
+
+    // § 6.3.1.1: the caller's 765 ms wait holds back only what it sends.
+    fn receiving(&self) -> bool {
+        match self.phase {
+            Phase::Data => true,
+            Phase::Settling { .. } => self.role == Role::Originate,
+            _ => false,
+        }
     }
 
     fn heard(&mut self, line: bool) {
@@ -186,7 +197,7 @@ impl DataPump for V22 {
         let mut line = Vec::new();
         self.demodulator.process(input, &mut line);
         for bit in line {
-            if self.phase == Phase::Data {
+            if self.receiving() {
                 bits.push(self.descrambler.descramble(bit));
             } else {
                 self.heard(bit);
@@ -195,7 +206,7 @@ impl DataPump for V22 {
     }
 
     fn carrier(&self) -> bool {
-        self.phase == Phase::Data && self.demodulator.carrier()
+        self.receiving() && self.demodulator.carrier()
     }
 
     fn engaged(&self) -> bool {

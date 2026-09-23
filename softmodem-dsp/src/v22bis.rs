@@ -226,6 +226,15 @@ impl V22bis {
         });
     }
 
+    // Received data flows before this end may send, as in V.22.
+    fn receiving(&self) -> bool {
+        match self.speed {
+            Some(Speed::Fast { .. }) => self.fast_heard(),
+            Some(Speed::Slow { .. }) => self.role == Role::Originate || self.ready,
+            None => false,
+        }
+    }
+
     fn fast_heard(&self) -> bool {
         self.fast_ones >= FAST_ONES
     }
@@ -304,7 +313,7 @@ impl DataPump for V22bis {
             for &bit in dibit {
                 let descrambled = self.slow_descrambler.descramble(bit);
                 match self.speed {
-                    Some(Speed::Slow { .. }) if self.ready => bits.push(descrambled),
+                    Some(Speed::Slow { .. }) if self.receiving() => bits.push(descrambled),
                     None => self.handshake_bit(bit, descrambled),
                     _ => {}
                 }
@@ -325,7 +334,7 @@ impl DataPump for V22bis {
     }
 
     fn carrier(&self) -> bool {
-        self.connected && self.fast.carrier()
+        self.receiving() && self.fast.carrier()
     }
 
     fn engaged(&self) -> bool {
