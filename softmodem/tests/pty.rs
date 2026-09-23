@@ -1,10 +1,10 @@
+use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use softmodem::Role;
+use softmodem::{Modem, profile};
 use softmodem_terminal::pty::Pty;
-use softmodem_transport::Transport;
 use softmodem_transport::wire::{Impairment, Wire};
 use tokio::time::timeout;
 
@@ -14,7 +14,7 @@ fn every_byte() -> Vec<u8> {
     (0..=255).collect()
 }
 
-fn open(path: PathBuf) -> std::fs::File {
+fn open(path: PathBuf) -> File {
     std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -22,53 +22,55 @@ fn open(path: PathBuf) -> std::fs::File {
         .unwrap()
 }
 
+fn read_until(port: &mut File, marker: &[u8]) {
+    let mut seen = Vec::new();
+    let mut byte = [0];
+    while !seen.ends_with(marker) {
+        port.read_exact(&mut byte).unwrap();
+        seen.push(byte[0]);
+    }
+}
+
+fn serve(wire: Wire, init: &str) -> PathBuf {
+    let pty = Pty::open(None).unwrap();
+    let path = pty.path().to_owned();
+    let profile = profile(init).unwrap();
+    tokio::spawn(async move {
+        let pty = pty;
+        Modem::new(wire, &pty, &pty, profile, |call, _| call)
+            .run(std::future::pending())
+            .await
+            .unwrap();
+    });
+    path
+}
+
 #[tokio::test]
-async fn every_byte_crosses_from_one_serial_port_to_the_other() {
-    let mut answering = Wire::bind(LOOPBACK.parse().unwrap(), None, Impairment::default())
+async fn a_computer_dials_and_every_byte_reaches_the_other_computer() {
+    let answering = Wire::bind(LOOPBACK.parse().unwrap(), None, Impairment::default())
         .await
         .unwrap();
     let peer = answering.local_addr().unwrap();
-    let mut calling = Wire::bind(LOOPBACK.parse().unwrap(), Some(peer), Impairment::default())
+    let calling = Wire::bind(LOOPBACK.parse().unwrap(), Some(peer), Impairment::default())
         .await
         .unwrap();
-    let (outgoing, incoming) = tokio::join!(calling.dial("0300"), answering.accept());
+    let caller_port = serve(calling, "ATE0");
+    let isp_port = serve(answering, "ATE0S0=1");
 
-    let originate_port = Pty::open(None).unwrap();
-    let answer_port = Pty::open(None).unwrap();
-    let sending_to = originate_port.path().to_owned();
-    let receiving_from = answer_port.path().to_owned();
-
-    let programs = tokio::task::spawn_blocking(move || {
-        let mut answer_side = open(receiving_from);
-        open(sending_to).write_all(&every_byte()).unwrap();
-        let mut bytes = vec![0; 256];
-        answer_side.read_exact(&mut bytes).unwrap();
-        bytes
+    let computers = tokio::task::spawn_blocking(move || {
+        let mut isp = open(isp_port);
+        let mut caller = open(caller_port);
+        caller.write_all(b"ATDT0300\r").unwrap();
+        read_until(&mut caller, b"CONNECT\r\n");
+        read_until(&mut isp, b"CONNECT\r\n");
+        caller.write_all(&every_byte()).unwrap();
+        let mut received = vec![0; 256];
+        isp.read_exact(&mut received).unwrap();
+        received
     });
-    let modems = async {
-        tokio::join!(
-            softmodem::run(
-                outgoing.unwrap(),
-                Role::Originate,
-                &originate_port,
-                &originate_port,
-                std::future::pending(),
-            ),
-            softmodem::run(
-                incoming.unwrap(),
-                Role::Answer,
-                &answer_port,
-                &answer_port,
-                std::future::pending(),
-            ),
-        )
-    };
-
-    tokio::select! {
-        _ = modems => panic!("the call ended before the bytes arrived"),
-        received = timeout(Duration::from_secs(20), programs) => {
-            let received = received.expect("the bytes never arrived").unwrap();
-            assert_eq!(received, every_byte());
-        }
-    }
+    let received = timeout(Duration::from_secs(40), computers)
+        .await
+        .expect("the bytes never arrived")
+        .unwrap();
+    assert_eq!(received, every_byte());
 }

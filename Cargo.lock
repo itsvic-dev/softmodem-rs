@@ -497,7 +497,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "fastrand",
  "softmodem-dsp",
  "softmodem-terminal",
  "softmodem-transport",

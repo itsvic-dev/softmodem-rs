@@ -4,13 +4,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use softmodem::Role;
+use softmodem::{Modem, Role};
 use softmodem_terminal::pty::Pty;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::watch;
-use tracing::info;
+use tracing::{info, warn};
 
 /// A V.21 modem that places real calls.
 #[derive(Parser)]
@@ -22,49 +21,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Talk to another softmodem over UDP, with data on stdin and stdout.
-    Wire {
-        #[command(subcommand)]
-        role: WireRole,
-        #[command(flatten)]
-        options: WireOptions,
-    },
-}
-
-#[derive(Subcommand)]
-enum WireRole {
-    /// Call the far end.
-    Originate {
-        #[arg(long)]
-        peer: SocketAddr,
-        #[arg(long, default_value = "0.0.0.0:0")]
-        local: SocketAddr,
-        #[arg(long, default_value = "0300")]
-        number: String,
-    },
-    /// Wait for one call.
-    Answer {
-        #[arg(long)]
-        local: SocketAddr,
-    },
+    /// Use a direct UDP wire to another softmodem as the phone line.
+    Wire(WireArgs),
 }
 
 #[derive(Args)]
-struct WireOptions {
-    /// Use a pseudoterminal linked from this path instead of stdin and stdout.
-    #[arg(long, global = true)]
-    pty: Option<PathBuf>,
-    /// Directory to record each call into, as one WAV file per direction.
-    #[arg(long, global = true)]
-    dump: Option<PathBuf>,
+struct WireArgs {
+    /// Address to take calls on.
+    #[arg(long)]
+    local: SocketAddr,
+    /// Where ATD calls.
+    #[arg(long)]
+    peer: Option<SocketAddr>,
     /// Chance that an outgoing packet is dropped.
-    #[arg(long, global = true, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.0)]
     loss: f64,
     /// Chance that an outgoing packet is sent after the next one.
-    #[arg(long, global = true, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 0.0)]
     reorder: f64,
-    #[arg(long, global = true, default_value_t = 0)]
+    #[arg(long, default_value_t = 0)]
     seed: u64,
+    #[command(flatten)]
+    modem: ModemArgs,
+}
+
+#[derive(Args)]
+struct ModemArgs {
+    /// Serial port as a pseudoterminal linked from this path, not stdin and stdout.
+    #[arg(long)]
+    pty: Option<PathBuf>,
+    /// Commands for the stored profile that ATZ restores, such as "ATS0=1".
+    #[arg(long, default_value = "")]
+    init: String,
+    /// Directory to record each call into, as one WAV file per direction.
+    #[arg(long)]
+    dump: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -80,78 +71,59 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    let Command::Wire { role, options } = cli.command;
+    let Command::Wire(args) = cli.command;
     let impairment = Impairment {
-        loss: options.loss,
-        reorder: options.reorder,
-        seed: options.seed,
+        loss: args.loss,
+        reorder: args.reorder,
+        seed: args.seed,
     };
-    let pty = options
-        .pty
-        .as_deref()
-        .map(|link| Pty::open(Some(link)))
-        .transpose()?;
-    if let Some(pty) = &pty {
-        info!(path = %pty.path().display(), "serial port ready");
-    }
-    let (request_stop, stop) = watch::channel(false);
-    tokio::spawn(async move {
-        shutdown_signal().await;
-        let _ = request_stop.send(true);
-    });
-
-    match role {
-        WireRole::Originate {
-            peer,
-            local,
-            number,
-        } => {
-            let mut wire = Wire::bind(local, Some(peer), impairment).await?;
-            let call = tokio::select! {
-                call = wire.dial(&number) => call?,
-                () = stopped(stop.clone()) => return Ok(()),
-            };
-            serve(call, Role::Originate, &options, pty.as_ref(), stop).await
-        }
-        WireRole::Answer { local } => {
-            let mut wire = Wire::bind(local, None, impairment).await?;
-            loop {
-                let call = tokio::select! {
-                    call = wire.accept() => call?,
-                    () = stopped(stop.clone()) => return Ok(()),
-                };
-                serve(call, Role::Answer, &options, pty.as_ref(), stop.clone()).await?;
-                if pty.is_none() {
-                    return Ok(());
-                }
-            }
-        }
-    }
+    let wire = Wire::bind(args.local, args.peer, impairment).await?;
+    serve(wire, args.modem).await
 }
 
-async fn serve(
-    call: Call,
-    role: Role,
-    options: &WireOptions,
-    pty: Option<&Pty>,
-    stop: watch::Receiver<bool>,
-) -> anyhow::Result<()> {
-    let call = match &options.dump {
-        Some(directory) => record(call, directory, role)?,
+async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()> {
+    let profile = softmodem::profile(&args.init).map_err(anyhow::Error::msg)?;
+    if let Some(directory) = &args.dump {
+        std::fs::create_dir_all(directory)
+            .with_context(|| format!("creating {}", directory.display()))?;
+    }
+    let dump = args.dump;
+    let on_call = move |call: Call, role: Role| match &dump {
+        Some(directory) => record(call, directory, role),
         None => call,
     };
-    let stop = stopped(stop);
-    match pty {
-        Some(pty) => softmodem::run(call, role, pty, pty, stop).await?,
-        None => {
-            softmodem::run(call, role, tokio::io::stdin(), tokio::io::stdout(), stop).await?;
-        }
+
+    if let Some(link) = args.pty {
+        let pty = Pty::open(Some(&link))?;
+        info!(path = %pty.path().display(), link = %link.display(), "serial port ready");
+        Modem::new(transport, &pty, &pty, profile, on_call)
+            .run(shutdown_signal())
+            .await?;
+    } else {
+        let (input, output) = (tokio::io::stdin(), tokio::io::stdout());
+        Modem::new(transport, input, output, profile, on_call)
+            .run(shutdown_signal())
+            .await?;
     }
     Ok(())
 }
 
-async fn stopped(mut stop: watch::Receiver<bool>) {
-    let _ = stop.wait_for(|&stopping| stopping).await;
+fn record(call: Call, directory: &Path, role: Role) -> Call {
+    let started = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let name = match role {
+        Role::Originate => "originate",
+        Role::Answer => "answer",
+    };
+    let prefix = directory.join(format!("{started}-{name}"));
+    match wav::Recorder::create(&prefix) {
+        Ok(recorder) => recorder.record(call),
+        Err(error) => {
+            warn!(%error, prefix = %prefix.display(), "not recording this call");
+            call
+        }
+    }
 }
 
 async fn shutdown_signal() {
@@ -162,18 +134,4 @@ async fn shutdown_signal() {
         _ = tokio::signal::ctrl_c() => {}
         _ = terminate.recv() => {}
     }
-}
-
-fn record(call: Call, directory: &Path, role: Role) -> anyhow::Result<Call> {
-    std::fs::create_dir_all(directory)
-        .with_context(|| format!("creating {}", directory.display()))?;
-    let started = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let name = match role {
-        Role::Originate => "originate",
-        Role::Answer => "answer",
-    };
-    Ok(wav::record(
-        call,
-        &directory.join(format!("{started}-{name}")),
-    )?)
 }
