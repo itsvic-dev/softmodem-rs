@@ -7,7 +7,9 @@ use crate::command::Command;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCode {
     Ok,
+    /// A connection at 300 bit/s.
     Connect,
+    Connect1200,
     Ring,
     NoCarrier,
     Error,
@@ -16,6 +18,16 @@ pub enum ResultCode {
 }
 
 impl ResultCode {
+    /// The `CONNECT` code for a connection at `bit_rate`.
+    #[must_use]
+    pub fn connect(bit_rate: u32) -> Self {
+        if bit_rate == 1200 {
+            Self::Connect1200
+        } else {
+            Self::Connect
+        }
+    }
+
     fn digit(self) -> u8 {
         match self {
             Self::Ok => 0,
@@ -23,6 +35,7 @@ impl ResultCode {
             Self::Ring => 2,
             Self::NoCarrier => 3,
             Self::Error => 4,
+            Self::Connect1200 => 5,
             Self::NoDialtone => 6,
             Self::Busy => 7,
         }
@@ -32,6 +45,7 @@ impl ResultCode {
         match self {
             Self::Ok => "OK",
             Self::Connect => "CONNECT",
+            Self::Connect1200 => "CONNECT 1200",
             Self::Ring => "RING",
             Self::NoCarrier => "NO CARRIER",
             Self::Error => "ERROR",
@@ -223,6 +237,7 @@ impl Settings {
             return Vec::new();
         }
         let code = match code {
+            ResultCode::Connect1200 if self.result_set == 0 => ResultCode::Connect,
             ResultCode::Busy if self.result_set < 3 => ResultCode::NoCarrier,
             ResultCode::NoDialtone if !matches!(self.result_set, 2 | 4) => ResultCode::NoCarrier,
             code => code,
@@ -284,6 +299,23 @@ mod tests {
         assert_eq!(at(3).report(ResultCode::Busy), b"\r\nBUSY\r\n");
         assert_eq!(at(3).report(ResultCode::NoDialtone), b"\r\nNO CARRIER\r\n");
         assert_eq!(at(2).report(ResultCode::NoDialtone), b"\r\nNO DIALTONE\r\n");
+    }
+
+    #[test]
+    fn reports_the_rate_above_300_bit_s_except_under_x0() {
+        let at = |result_set, verbose| Settings {
+            verbose,
+            result_set,
+            ..Settings::default()
+        };
+        let connect = ResultCode::connect(1200);
+        assert_eq!(at(1, true).report(connect), b"\r\nCONNECT 1200\r\n");
+        assert_eq!(at(4, false).report(connect), b"5\r");
+        assert_eq!(at(0, true).report(connect), b"\r\nCONNECT\r\n");
+        assert_eq!(
+            at(4, true).report(ResultCode::connect(300)),
+            b"\r\nCONNECT\r\n"
+        );
     }
 
     #[test]
