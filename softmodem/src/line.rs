@@ -1,5 +1,7 @@
 //! One call's audio: the answer sequence, then a data pump.
 
+use std::time::Duration;
+
 use softmodem_dsp::pump::{DataPump, Modulation, Role};
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_dsp::uart::{Decoder, frame};
@@ -61,8 +63,12 @@ impl Line {
         self.handshake.as_ref().map(|h| h.pump.bit_rate())
     }
 
-    pub(crate) fn pending_bits(&self) -> usize {
-        self.handshake.as_ref().map_or(0, |h| h.pump.pending())
+    /// How long the bits queued to send will take.
+    #[expect(clippy::cast_precision_loss, reason = "a few hundred bits")]
+    pub(crate) fn queued(&self) -> Duration {
+        self.handshake.as_ref().map_or(Duration::ZERO, |h| {
+            Duration::from_secs_f64(h.pump.pending() as f64 / f64::from(h.pump.bit_rate()))
+        })
     }
 
     pub(crate) fn send(&mut self, bytes: &[u8]) {

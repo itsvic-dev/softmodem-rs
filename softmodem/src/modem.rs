@@ -9,8 +9,7 @@ use softmodem_terminal::command::{self, Command, Dial};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
 use softmodem_terminal::port::SerialPort;
-use softmodem_terminal::settings::Dcd;
-use softmodem_terminal::settings::{ResultCode, Settings};
+use softmodem_terminal::settings::{Carrier, Dcd, ResultCode, Settings};
 use softmodem_transport::{Call, DialError, Incoming, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
@@ -22,7 +21,7 @@ use crate::line::Line;
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const RING_INTERVAL: Duration = Duration::from_secs(6);
 const RING_ON: Duration = Duration::from_secs(2);
-const LOW_WATER_BITS: usize = 20;
+const LOW_WATER: Duration = Duration::from_millis(67);
 const COMMAND_READ: usize = 64;
 const DATA_READ: usize = 4;
 const DCD_DROP_DELAY: Duration = Duration::from_millis(200);
@@ -124,7 +123,7 @@ where
                 || self
                     .line
                     .as_ref()
-                    .is_some_and(|line| line.pending_bits() < LOW_WATER_BITS);
+                    .is_some_and(|line| line.queued() < LOW_WATER);
             let read_size = if in_data { DATA_READ } else { COMMAND_READ };
             let listening = self.line.is_none();
             let next_ring = self.ringing.as_ref().map(|r| r.next_ring);
@@ -233,6 +232,15 @@ where
                     self.write(&self.settings.line(&format!("{value:03}")))
                         .await?;
                 }
+                Command::ReadCarrier => {
+                    let text = format!("+MS: {},0", self.settings.carrier.name());
+                    self.write(&self.settings.line(&text)).await?;
+                }
+                Command::ListCarriers => {
+                    let names: Vec<&str> = Carrier::ALL.iter().map(|c| c.name()).collect();
+                    let text = format!("+MS: ({}),(0)", names.join(","));
+                    self.write(&self.settings.line(&text)).await?;
+                }
                 other => {
                     self.settings.apply(&other);
                 }
@@ -324,7 +332,11 @@ where
 
     fn attach(&mut self, call: Call, role: Option<Role>, deadline: Instant) {
         let call = (self.on_call)(call, role.unwrap_or(Role::Originate));
-        self.line = Some(Line::new(call, Modulation::default(), role));
+        let modulation = match self.settings.carrier {
+            Carrier::V21 => Modulation::V21,
+            Carrier::V22 => Modulation::V22,
+        };
+        self.line = Some(Line::new(call, modulation, role));
         self.mode = Mode::Handshake { deadline };
         self.carrier_lost_at = None;
         self.ticker.reset();
@@ -341,10 +353,11 @@ where
             };
             return Ok(());
         }
+        let code = ResultCode::connect(line.bit_rate().unwrap_or_default());
         self.mode = Mode::Data {
             escape: EscapeDetector::new(Instant::now().into_std()),
         };
-        self.report(ResultCode::Connect).await
+        self.report(code).await
     }
 
     async fn incoming(&mut self, event: Incoming<T::Caller>) -> io::Result<()> {
@@ -458,14 +471,13 @@ where
         };
         let received = line.receive(&samples);
         if received.connected && matches!(self.mode, Mode::Handshake { .. }) {
-            if let Some(bit_rate) = line.bit_rate() {
-                info!("CONNECT {bit_rate}");
-            }
+            let bit_rate = line.bit_rate().unwrap_or_default();
+            info!("CONNECT {bit_rate}");
             self.mode = Mode::Data {
                 escape: EscapeDetector::new(Instant::now().into_std()),
             };
             self.carrier_lost_at = None;
-            self.report(ResultCode::Connect).await?;
+            self.report(ResultCode::connect(bit_rate)).await?;
             self.sync_dcd().await?;
         }
         if matches!(self.mode, Mode::Data { .. }) && !received.bytes.is_empty() {
@@ -544,7 +556,7 @@ fn identify(n: u8) -> Option<String> {
     match n {
         0 => Some("softmodem".into()),
         3 => Some(format!("softmodem {}", env!("CARGO_PKG_VERSION"))),
-        4 => Some("V.21 300 bit/s".into()),
+        4 => Some("V.21 300 bit/s, V.22 1200 bit/s".into()),
         _ => None,
     }
 }
