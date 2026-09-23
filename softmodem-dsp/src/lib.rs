@@ -3,6 +3,7 @@
 mod correlator;
 pub mod fsk;
 pub mod pump;
+pub mod scrambler;
 pub mod tone;
 pub mod uart;
 mod v21;
