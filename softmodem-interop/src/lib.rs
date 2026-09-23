@@ -90,6 +90,15 @@ fn spec(channel: FskChannel) -> *const FskSpec {
     }
 }
 
+// SAFETY: each wrapper owns its spandsp state alone, and spandsp has no thread affinity.
+unsafe impl Send for FskTx {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for FskRx {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for ToneTx {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for ToneRx {}
+
 fn length(samples: usize) -> c_int {
     c_int::try_from(samples).expect("a frame fits in a c_int")
 }
