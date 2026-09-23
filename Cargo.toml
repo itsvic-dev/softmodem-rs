@@ -5,7 +5,7 @@ members = ["softmodem", "softmodem-dsp", "softmodem-interop", "softmodem-termina
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 softmodem = { path = "softmodem" }

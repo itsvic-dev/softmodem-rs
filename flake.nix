@@ -13,9 +13,6 @@
         "aarch64-darwin"
       ];
       forSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-
-      linux = builtins.filter (nixpkgs.lib.hasSuffix "-linux") systems;
-      forLinux = f: nixpkgs.lib.genAttrs linux (system: f nixpkgs.legacyPackages.${system});
     in
     {
       overlays.default = final: _prev: {
@@ -27,13 +24,19 @@
         default = softmodem;
       });
 
-      checks = forLinux (
+      checks = forSystems (
         pkgs:
         let
           softmodem = pkgs.callPackage ./nix/softmodem.nix { };
         in
         {
-          ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
+          reuse = pkgs.runCommand "softmodem-reuse" { nativeBuildInputs = [ pkgs.reuse ]; } ''
+            reuse --root ${self} lint
+            touch $out
+          '';
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          ppp =pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
           ppp-v22 = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
               inherit softmodem;

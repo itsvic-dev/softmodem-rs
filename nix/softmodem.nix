@@ -13,7 +13,7 @@ cargoNix.workspaceMembers.softmodem.build.overrideAttrs (old: {
   meta = {
     description = "A V.21 modem that places real calls over SIP";
     mainProgram = "softmodem";
-    license = lib.licenses.mit;
+    license = lib.licenses.gpl3Plus;
     platforms = lib.platforms.unix;
   };
 })

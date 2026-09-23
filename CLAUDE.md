@@ -41,6 +41,9 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
   `kvm`, and it copies each side's WAV recordings into `result/`.
   `checks.aarch64-linux.ppp-v22` and `ppp-v22bis` are the same test at 1200
   and 2400 bit/s.
+- The project is GPL-3.0-or-later under REUSE: `REUSE.toml` covers every
+  file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
+  licence needs its own annotation there and its text in `LICENSES/`.
 - spandsp is LGPL-2.1: call it through `softmodem-interop` only, never read
   its source to shape our code. The ITU texts in `docs/specs/` are the
   reference.
