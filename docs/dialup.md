@@ -156,6 +156,22 @@ V.21 uses two channels so that both ends can transmit at once:
 | 1, originating | 980 Hz | 1180 Hz |
 | 2, answering | 1650 Hz | 1850 Hz |
 
+Checked against V.21 (11/88), from CCITT Blue Book Fascicle VIII.1, which
+also sets the other figures the implementation follows:
+
+- Transmit level at most -13 dBm0 (§ 6).
+- The demodulator tolerates ±12 Hz between received and nominal frequencies
+  (§ 3).
+- Carrier detect on above -43 dBm, off below -48 dBm, with at least 2 dB of
+  hysteresis (§ 8.3). On the digital path these are taken as dBm0.
+- Carrier detect on after 300 to 700 ms, off after 20 to 80 ms, the switched
+  network figures of table 2.
+
+V.21 allows any rate up to 300 bit/s and does not require a bit clock (§ 2,
+§ 4): a hardware V.21 modem passes the tone decision straight to the UART.
+This demodulator recovers bit timing at exactly 300 bit/s instead, so it only
+carries 300 bit/s async.
+
 Answer sequence, from V.25, to be checked against the ITU text before
 implementation: after the call is answered, silence for 1.8 to 2.5 s, then
 the 2100 Hz answer tone for 2.6 to 4.0 s, then 75 ms of silence, then
