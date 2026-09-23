@@ -156,8 +156,8 @@ command mode, on hook.
 | `E0`, `E1` | Command echo off, on. |
 | `H0`, `H1` | On hook (hang up), off hook (incoming calls get busy). |
 | `I0` to `I9` | Identification. `I0` product, `I3` version, `I4` modulations. |
-| `L0` to `L3` | Speaker volume. Stored only, as there is no speaker yet. |
-| `M0` to `M2` | Speaker mode. Stored only. |
+| `L0` to `L3` | Speaker volume. `L0` and `L1` low, `L2` medium, `L3` high. |
+| `M0` to `M2` | Speaker off, on until `CONNECT`, always on. |
 | `O` | Return to data mode from online command mode. |
 | `Q0`, `Q1` | Result codes shown, suppressed. |
 | `V0`, `V1` | Result codes as digits, as words. |
@@ -520,6 +520,19 @@ can listen to the handshake.
 Because it wraps the transport interface, it works the same on the wire and
 on SIP.
 
+### Speaker
+
+`--speaker` plays each call on the host's default sound output through
+`cpal`, which is CoreAudio on macOS and ALSA on Linux. Like the WAV dumps it
+wraps the call, and it mixes both directions, as a real modem's speaker
+hears the line. The samples are resampled from 8 kHz to the device rate by
+linear interpolation. Each direction is held back 60 ms after it runs dry,
+to ride out late frames, and is cut to 200 ms if it falls behind.
+
+The modem sets the gain from `L` and `M` each time they or the call change.
+Under the default `M1` the handshake is heard and the data is not. Without
+`--speaker`, `L` and `M` are stored only.
+
 ## Milestones
 
 The last milestone is far away and needs hardware that is not available yet.
@@ -538,7 +551,7 @@ Everything before it can be built and tested with two instances on one host.
 5. SIP transport, two instances through the PBX. Done: data both ways,
    hang-up and busy, with PPP over it still to try.
 6. Bell 103.
-7. A speaker: call audio on the host sound output, under `L` and `M`.
+7. A speaker: call audio on the host sound output, under `L` and `M`. Done.
 8. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why

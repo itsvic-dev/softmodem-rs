@@ -9,7 +9,8 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
   escape. No IO outside `pty`.
 - `softmodem-transport`: carries audio frames for a call, and rings, answers
   and refuses calls. A-law, the reorder window, the UDP wire, an in-memory
-  loopback, SIP through a registrar, and WAV recording.
+  loopback, SIP through a registrar, WAV recording, and the speaker on the
+  host sound output.
 - `softmodem`: the modem state machine that joins them, and the binary.
 - `softmodem-interop`: tests only, against spandsp's V.21 and answer tones.
   It links spandsp through pkg-config, which only the dev shell provides.
