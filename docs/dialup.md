@@ -723,8 +723,10 @@ Recorded so these are not re-investigated.
   replaceable by an ATA later.
 - **spandsp for the DSP.** It carries V.21, V.23, Bell 103 and 202, V.22bis,
   the fax datapumps, and V.42 with V.42bis. It stops below V.32, so it does
-  not reach the interesting speeds, and taking it means C behind FFI. Its V.21
-  remains the obvious reference implementation to read.
+  not reach the interesting speeds, and taking it means C behind FFI. It stays
+  a black box that the interop tests call through its API. Its source is not
+  read, because it is LGPL-2.1 and our code must not become a derived work.
+  The ITU text is the only reference for how things work.
 - **D-Modem as the calling side.** GPL-2.0, last pushed July 2023, genuinely
   used. Rejected for the `dsplibs.o` blob: non-free, 32-bit x86 only,
   unfixable, and it would have pinned the caller to an x86_64 host with
