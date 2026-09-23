@@ -1538,8 +1538,9 @@ rec {
         ];
         devDependencies = [
           {
-            name = "fastrand";
-            packageId = "fastrand";
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" "test-util" ];
           }
         ];
 
@@ -1976,7 +1977,7 @@ rec {
           "tracing" = [ "dep:tracing" ];
           "windows-sys" = [ "dep:windows-sys" ];
         };
-        resolvedDefaultFeatures = [ "bytes" "default" "io-std" "io-util" "libc" "macros" "mio" "net" "rt" "rt-multi-thread" "signal" "signal-hook-registry" "socket2" "sync" "time" "tokio-macros" "windows-sys" ];
+        resolvedDefaultFeatures = [ "bytes" "default" "io-std" "io-util" "libc" "macros" "mio" "net" "rt" "rt-multi-thread" "signal" "signal-hook-registry" "socket2" "sync" "test-util" "time" "tokio-macros" "windows-sys" ];
       };
       "tokio-macros" = rec {
         crateName = "tokio-macros";
