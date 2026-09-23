@@ -265,6 +265,13 @@ up by dropping DTR. The options that follow from that:
   it learns that a call has ended.
 - `mru 296`, so a corrupted frame is cheap.
 - `asyncmap 0`, since the path is 8-bit clean.
+- `lcp-restart 15` and `ipcp-restart 15`. One LCP frame takes about a second
+  each way, so a round trip is close to the 3 s default. With the default,
+  each end retransmits before the answer arrives, the stale requests queue up,
+  and one that arrives after LCP opens restarts the negotiation. This was seen
+  in the VM test, not predicted.
+- `noipv6` and `noccp`, since each extra control protocol adds a second or
+  more of negotiation.
 
 VJ header compression is a trade-off on this link, not a free gain. It saves
 most of the 40 byte TCP/IP header, but after a lost frame the receiver
@@ -273,8 +280,8 @@ practice means one TCP retransmit timeout per lost frame. Measure before
 enabling it.
 
 At 300 bit/s, 30 bytes per second, LCP and IPCP exchange a few hundred bytes
-in total, so expect about 10 to 20 s between `CONNECT` and an address on a
-clean line, and more with retransmits.
+in total. On a clean wire the VM test (`checks.<linux>.ppp`) measures 10.6 s
+from `CONNECT` to an address, and a 64 byte ping takes about 6 s round trip.
 
 ## Transport
 

@@ -18,4 +18,9 @@ A V.21 modem that places real calls over SIP. The design is `docs/dialup.md`.
 - Two instances on one host, recording every call:
   `softmodem wire answer --local 127.0.0.1:5300 --dump dumps` and
   `softmodem wire originate --peer 127.0.0.1:5300 --dump dumps < file`.
-  The answering side hangs up when its stdin ends, so keep it open.
+  The answering side hangs up when its stdin ends, so keep it open. With
+  `--pty <link>` each side serves a raw pseudoterminal instead, and the
+  answering side takes calls in a loop.
+- `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
+  `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
+  `kvm`, and it copies each side's WAV recordings into `result/`.
