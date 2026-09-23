@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["softmodem", "softmodem-dsp"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+softmodem-dsp = { path = "softmodem-dsp" }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
