@@ -63,6 +63,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "softmodem-interop" = rec {
+      packageId = "softmodem-interop";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "softmodem-interop";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "softmodem-terminal" = rec {
       packageId = "softmodem-terminal";
       build = internal.buildRustCrateWithFeatures {
@@ -3443,6 +3453,17 @@ rec {
         libName = "pin_project_lite";
 
       };
+      "pkg-config" = rec {
+        crateName = "pkg-config";
+        version = "0.3.34";
+        edition = "2021";
+        sha256 = "0j05h08nzg0q8rf6lzw7nry0b7kn7x97vc9n4hwrl52fqzxn9d7n";
+        libName = "pkg_config";
+        authors = [
+          "Alex Crichton <alex@alexcrichton.com>"
+        ];
+
+      };
       "portable-atomic" = rec {
         crateName = "portable-atomic";
         version = "1.15.0";
@@ -4485,6 +4506,47 @@ rec {
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../softmodem-dsp; };
         libName = "softmodem_dsp";
+
+      };
+      "softmodem-interop" = rec {
+        crateName = "softmodem-interop";
+        version = "0.1.0";
+        edition = "2024";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ../softmodem-interop; };
+        libName = "softmodem_interop";
+        buildDependencies = [
+          {
+            name = "pkg-config";
+            packageId = "pkg-config";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "softmodem";
+            packageId = "softmodem";
+          }
+          {
+            name = "softmodem-dsp";
+            packageId = "softmodem-dsp";
+          }
+          {
+            name = "softmodem-terminal";
+            packageId = "softmodem-terminal";
+          }
+          {
+            name = "softmodem-transport";
+            packageId = "softmodem-transport";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" "test-util" ];
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+          }
+        ];
 
       };
       "softmodem-terminal" = rec {
