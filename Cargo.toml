@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["softmodem", "softmodem-dsp", "softmodem-terminal", "softmodem-transport"]
+members = ["softmodem", "softmodem-dsp", "softmodem-interop", "softmodem-terminal", "softmodem-transport"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+softmodem = { path = "softmodem" }
 softmodem-dsp = { path = "softmodem-dsp" }
 softmodem-terminal = { path = "softmodem-terminal" }
 softmodem-transport = { path = "softmodem-transport" }

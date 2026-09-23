@@ -47,6 +47,9 @@
             rustfmt
             rust-analyzer
             crate2nix
+            # Only for softmodem-interop, which tests against spandsp.
+            pkg-config
+            spandsp3
           ];
         };
       });

@@ -1,0 +1,20 @@
+[package]
+name = "softmodem-interop"
+description = "Tests the modem against spandsp's V.21 and answer tones."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[build-dependencies]
+pkg-config = "0.3"
+
+[dev-dependencies]
+softmodem.workspace = true
+softmodem-dsp.workspace = true
+softmodem-terminal.workspace = true
+softmodem-transport.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
