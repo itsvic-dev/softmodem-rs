@@ -127,15 +127,120 @@ and bit timing recovery.
 
 `openpty`, 8N1 async framing, and an AT interpreter.
 
-Commands: `ATZ`, `AT&F`, `ATE0`/`ATE1`, `ATV0`/`ATV1`, `ATQ0`/`ATQ1`,
-`ATS0=n`, `ATDT`, `ATDP`, `ATA`, `ATH`, `ATO`, and `+++` with guard times (one
-second of silence before and after). Any other syntactically valid command
-returns `OK`, because chat scripts send chipset-specific strings such as
-`AT&C1&D2` and fail on `ERROR`. Result codes: `OK`, `ERROR`, `CONNECT`,
-`RING`, `NO CARRIER`, `BUSY`, in both verbal and numeric form.
+The computer talks to the modem, never to the line, in command mode. It
+controls the modem with the basic Hayes command set, and the modem places and
+takes calls through its transport as a result. One process both dials and
+answers, as one modem on one line does.
 
-`ATDT<digits>` becomes a SIP URI. The dialling rules are configuration, not
-code.
+#### Modes
+
+- **Command mode, on hook.** Bytes from the computer are command lines.
+  An incoming call gives `RING`, repeated every 6 s while the far end waits.
+- **Dialling and handshake.** After `ATD` or `ATA`. Any byte from the
+  computer aborts with `NO CARRIER`, and so does no `CONNECT` within `S7`.
+- **Data mode.** Bytes pass to and from the line. `+++` with guard times
+  goes to online command mode.
+- **Online command mode.** The call stays up, the line idles on mark. `ATO`
+  goes back to data mode, `ATH` hangs up.
+
+The far end hanging up, or carrier lost for `S10`, gives `NO CARRIER` and
+command mode, on hook.
+
+#### Commands
+
+| Command | Effect here |
+|---|---|
+| `A` | Answer a ringing call. |
+| `A/` | Repeat the last command line, at once, without `AT` or CR. |
+| `D` | Dial. See the modifiers below. |
+| `E0`, `E1` | Command echo off, on. |
+| `H0`, `H1` | On hook (hang up), off hook (incoming calls get busy). |
+| `I0` to `I9` | Identification. `I0` product, `I3` version, `I4` modulations. |
+| `L0` to `L3` | Speaker volume. Stored only, as there is no speaker yet. |
+| `M0` to `M2` | Speaker mode. Stored only. |
+| `O` | Return to data mode from online command mode. |
+| `Q0`, `Q1` | Result codes shown, suppressed. |
+| `V0`, `V1` | Result codes as digits, as words. |
+| `X0` to `X4` | Which result codes are used, see below. |
+| `Z` | Hang up and reset to the stored profile. |
+| `Sn=v`, `Sn?` | Write, read an S-register. |
+
+Extended commands (`&`, `\`, `%` and `+` prefixes) are accepted and return
+`OK` without effect, because chat scripts send chipset-specific strings such
+as `AT&C1&D2` and fail on `ERROR`.
+
+The stored profile is the Hayes defaults with the `--init` command line
+applied, for example `--init 'ATS0=1'` on the ISP. It is applied at start
+and again by every `ATZ`. So the ISP's `pppd` needs no chat script.
+
+#### Dial modifiers
+
+A VoIP call sends the whole number at once, so most modifiers have no
+meaning. `T` and `P` are ignored. `W` and `@` return at once, as there is
+always a dial tone and never a wait for quiet. `!` is ignored. `,` waits `S8`
+seconds before the call is placed. These work as on a real modem:
+
+- `R` dials in reverse mode: the modem answers the call it placed, with
+  answer tone and channel 2.
+- `;` places the call and returns to command mode without a handshake.
+- `L` redials the last number.
+
+What remains is digits, `*`, `#` and `A` to `D`, which become the number
+given to the transport. For SIP that becomes a URI under dialling rules that
+are configuration, not code.
+
+#### Result codes
+
+| Digit | Words | From |
+|---|---|---|
+| 0 | `OK` | `X0` |
+| 1 | `CONNECT` | `X0` |
+| 2 | `RING` | `X0` |
+| 3 | `NO CARRIER` | `X0` |
+| 4 | `ERROR` | `X0` |
+| 6 | `NO DIALTONE` | `X2`, `X4` |
+| 7 | `BUSY` | `X3`, `X4` |
+
+At 300 bit/s Hayes reports plain `CONNECT`, so `X1` adds nothing here.
+Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
+The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
+framed by CR LF, with `V0` it is the digit and CR, both using `S3` and `S4`.
+
+#### S-registers
+
+All 256 hold a value. These have an effect:
+
+| Register | Meaning | Default |
+|---|---|---|
+| `S0` | Rings before auto-answer, 0 for never. | 0 |
+| `S1` | Rings counted so far. | 0 |
+| `S2` | Escape character. | 43, `+` |
+| `S3` | Line terminator. | 13, CR |
+| `S4` | Response line feed. | 10, LF |
+| `S5` | Backspace. | 8 |
+| `S6` | Seconds to wait before a blind dial, with `X0`, `X1`, `X3`. | 2 |
+| `S7` | Seconds to wait for `CONNECT` after `D` or `A`. | 50 |
+| `S8` | Seconds per `,` in a dial string. | 2 |
+| `S10` | Tenths of a second without carrier before hanging up. | 14 |
+| `S12` | Escape guard time, in fiftieths of a second. | 50 |
+
+`S9`, carrier detect time, is stored but not used: V.21 sets it to 300 to
+700 ms, and the demodulator keeps 400 ms.
+
+#### Answer sequence
+
+The answering modem sends silence for 2 s, the 2100 Hz answer tone for
+3.3 s, 75 ms of silence, then channel 2 mark, and reports `CONNECT` when it
+detects channel 1. The originating modem is silent until the answer tone has
+ended and it detects channel 2, then sends channel 1 mark and reports
+`CONNECT`. It ignores carrier while the answer tone lasts, because the tone
+is close enough to channel 2 to trip carrier detect.
+
+#### Not modelled
+
+A pseudoterminal has no DTR, so the computer cannot hang up by dropping it.
+`pppd` hangs up with `+++` and `ATH` in its disconnect script, as on a line
+without modem control.
 
 The pty is the DTE side and is much faster than the line. `softmodem` keeps a
 small transmit buffer and stops reading from the pty when it is full. The
@@ -328,7 +433,8 @@ Everything before it can be built and tested with two instances on one host.
    sends the V.25 answer tone. Until SIP exists, the transport is the wire.
 5. SIP transport, two instances through the PBX.
 6. Bell 103.
-7. A real modem behind the SPA2102 calling the answering side.
+7. A speaker: call audio on the host sound output, under `L` and `M`.
+8. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
 
