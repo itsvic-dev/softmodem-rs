@@ -478,6 +478,65 @@ bit is missing.
 spandsp's V.22bis modem started at 1200 bit/s is the V.22 reference. Its
 answer tone is a separate part, as with V.21.
 
+## V.22bis
+
+Checked against V.22 bis (1988) in the same fascicle, pages 82 to 97. This
+is mode 2, 2400 bit/s start-stop, with its fallback to V.22 at 1200 bit/s.
+It does not do the optional rate change of § 6.6 or the test loops.
+
+The line is V.22's: the same carriers, guard tone, levels, 600 baud, square
+root raised cosine with 75% roll-off, scrambler, ±7 Hz, and carrier detect
+thresholds (§§ 2, 3.3, 5).
+
+- 2400 bit/s sends quadbits (§ 2.5.2.1). The first two bits change the
+  quadrant as V.22 table 1 does. The last two pick one of four points in the
+  new quadrant. In quadrant 1, on a grid of ±1 and ±3:
+
+  | Bits 3 and 4 | Point |
+  |---|---|
+  | 00 | (1, 1) |
+  | 01 | (3, 1) |
+  | 10 | (1, 3) |
+  | 11 | (3, 3) |
+
+  The other quadrants are this one turned by 90°, 180° and 270°, so a
+  receiver locked a quarter turn off still decodes the right bits.
+- 1200 bit/s sends dibits as quadrant changes, always on the 01 point of the
+  quadrant, which keeps it compatible with V.22 (§ 2.5.2.2).
+- The scrambler's 64 ones guard runs at all times, handshake included, and
+  resets its count when it fires (§ 5.1).
+- Carrier detect goes off 40 to 65 ms after the signal falls below the
+  threshold, or 10 to 24 ms in the V.22 fallback. After a dropout it comes
+  back on in 40 to 205 ms (§ 3.2).
+
+S1 is unscrambled double dibits 00 and 11 at 1200 bit/s for 100 ± 3 ms: the
+phase turns by 90° and 270° in turn. The handshake at 2400 bit/s (§ 6.3.1.1,
+figure 5), after the V.25 answer sequence:
+
+1. The answering modem sends unscrambled binary 1 at 1200 bit/s, as in V.22.
+2. The caller hears it for 155 ± 10 ms, stays silent 456 ± 10 ms, sends S1,
+   then scrambled binary 1 at 1200 bit/s.
+3. When the answering modem hears the end of S1, it sends S1 back, then
+   scrambled binary 1 at 1200 bit/s.
+4. Each end, counting from the end of the S1 it heard: at 450 ± 10 ms its
+   receiver may make 16-way decisions, at 600 ± 10 ms it sends scrambled
+   binary 1 at 2400 bit/s, and 200 ± 10 ms later it may send data.
+5. Each end turns carrier detect on and takes data once it has heard 32 bits
+   of scrambled binary 1 at 2400 bit/s in a row.
+
+If an end hears scrambled binary 1 at 1200 bit/s for 270 ± 40 ms instead of
+S1, the far end is a V.22 modem, and the V.22 handshake finishes at
+1200 bit/s (§ 6.3.1.2, figures 6 and 7).
+
+A retrain (§ 6.4, figure 8) starts when an end loses equalisation, or when
+it hears S1 during data. It sends S1, then scrambled binary 1 at 1200 bit/s,
+and goes on as from step 4. An end that sent S1 and hears none back within
+1.2 s sends it again. After a loss of signal, received data stays held at
+binary 1 for 100 ms after the signal returns, in case a retrain follows
+(§ 6.5).
+
+spandsp's V.22bis modem at 2400 bit/s is the reference.
+
 ## Three things that decide whether it works
 
 1. **Bit timing recovery.** Track the bit centre and correct on transitions.
