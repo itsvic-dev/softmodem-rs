@@ -100,6 +100,190 @@ impl Modulator {
     }
 }
 
+fn dibit(quarter_turns: u8) -> (bool, bool) {
+    match quarter_turns {
+        0 => (false, true),
+        1 => (false, false),
+        2 => (true, false),
+        _ => (true, true),
+    }
+}
+
+// V.22 § 3.3 and table 3.
+const CARRIER_ON_DBM0: f64 = -43.0;
+const CARRIER_OFF_DBM0: f64 = -48.0;
+const CARRIER_ON_SAMPLES: u32 = 1200;
+const CARRIER_OFF_SAMPLES: u32 = 136;
+const LEVEL_WINDOW: usize = 40;
+const TIMING_GAIN: f64 = 0.05;
+
+type Complex = (f64, f64);
+
+fn lerp(a: Complex, b: Complex, t: f64) -> Complex {
+    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+}
+
+/// Turns DPSK on one carrier back into bits. It recovers symbol timing from
+/// the signal, so the sender's clock may differ from ours, and it decodes each
+/// symbol against the one before, so the carrier may be a few hertz off.
+#[derive(Debug)]
+pub struct Demodulator {
+    carrier_step: f64,
+    carrier_phase: f64,
+    taps: Vec<f64>,
+    mixed: VecDeque<Complex>,
+    powers: VecDeque<f64>,
+    power_sum: f64,
+    symbol_step: f64,
+    symbol_phase: f64,
+    previous: Complex,
+    middle: Complex,
+    last_symbol: Complex,
+    present: bool,
+    carrier: bool,
+    carrier_count: u32,
+    carrier_on: f64,
+    carrier_off: f64,
+}
+
+impl Demodulator {
+    #[must_use]
+    pub fn new(carrier_hz: f64) -> Self {
+        let samples_per_symbol = SAMPLE_RATE / V22_BAUD;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            reason = "the filter is a few dozen taps"
+        )]
+        let half = (SPAN as f64 * samples_per_symbol).round() as i32;
+        let taps: Vec<f64> = (-half..=half)
+            .map(|n| root_raised_cosine(f64::from(n) / samples_per_symbol))
+            .collect();
+        let gain: f64 = taps.iter().sum();
+        let taps: Vec<f64> = taps.into_iter().map(|g| g / gain).collect();
+        Self {
+            carrier_step: carrier_hz / SAMPLE_RATE,
+            carrier_phase: 0.0,
+            mixed: VecDeque::from(vec![(0.0, 0.0); taps.len()]),
+            taps,
+            powers: VecDeque::from(vec![0.0; LEVEL_WINDOW]),
+            power_sum: 0.0,
+            symbol_step: V22_BAUD / SAMPLE_RATE,
+            symbol_phase: 0.0,
+            previous: (0.0, 0.0),
+            middle: (0.0, 0.0),
+            last_symbol: (0.0, 0.0),
+            present: false,
+            carrier: false,
+            carrier_count: 0,
+            carrier_on: sine_peak(CARRIER_ON_DBM0),
+            carrier_off: sine_peak(CARRIER_OFF_DBM0),
+        }
+    }
+
+    /// Whether carrier has been on the line long enough to count, with the
+    /// V.22 thresholds and response times.
+    #[must_use]
+    pub fn carrier(&self) -> bool {
+        self.carrier
+    }
+
+    /// Appends the bits found in `input` to `bits`, two for each symbol while
+    /// any signal is on the line, before carrier detect agrees that it is.
+    pub fn process(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        for &sample in input {
+            let x = f64::from(sample);
+            let angle = TAU * self.carrier_phase;
+            self.carrier_phase = (self.carrier_phase + self.carrier_step).fract();
+            self.mixed.pop_front();
+            self.mixed.push_back((x * angle.cos(), -x * angle.sin()));
+            let y = self
+                .taps
+                .iter()
+                .zip(&self.mixed)
+                .fold((0.0, 0.0), |(re, im), (g, (a, b))| (re + g * a, im + g * b));
+
+            let power = y.0 * y.0 + y.1 * y.1;
+            self.power_sum += power - self.powers.pop_front().unwrap_or_default();
+            self.powers.push_back(power);
+            #[expect(clippy::cast_precision_loss, reason = "the window is 40")]
+            let level = 2.0 * (self.power_sum.max(0.0) / LEVEL_WINDOW as f64).sqrt();
+            self.present = level >= self.carrier_off;
+            self.track_carrier(level);
+
+            self.clock(y, bits);
+            self.previous = y;
+        }
+    }
+
+    fn clock(&mut self, y: Complex, bits: &mut Vec<bool>) {
+        let before = self.symbol_phase;
+        let after = before + self.symbol_step;
+        if before < 0.5 && after >= 0.5 {
+            self.middle = lerp(self.previous, y, (0.5 - before) / self.symbol_step);
+        }
+        if after < 1.0 {
+            self.symbol_phase = after;
+            return;
+        }
+        let symbol = lerp(self.previous, y, (1.0 - before) / self.symbol_step);
+        self.symbol_phase = after - 1.0;
+        self.symbol(symbol, bits);
+    }
+
+    fn symbol(&mut self, symbol: Complex, bits: &mut Vec<bool>) {
+        let last = self.last_symbol;
+        self.last_symbol = symbol;
+
+        // Gardner timing error.
+        let step = (symbol.0 - last.0, symbol.1 - last.1);
+        let energy = symbol.0 * symbol.0 + symbol.1 * symbol.1 + last.0 * last.0 + last.1 * last.1;
+        if energy > 0.0 {
+            let error = (self.middle.0 * step.0 + self.middle.1 * step.1) / energy;
+            self.symbol_phase += TIMING_GAIN * error;
+        }
+
+        if !self.present {
+            return;
+        }
+        let turn = (
+            symbol.0 * last.0 + symbol.1 * last.1,
+            symbol.1 * last.0 - symbol.0 * last.1,
+        );
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "rounded and wrapped into 0 to 3 first"
+        )]
+        let quarter = ((turn.1.atan2(turn.0) / FRAC_PI_2).round().rem_euclid(4.0)) as u8;
+        let (first, second) = dibit(quarter);
+        bits.push(first);
+        bits.push(second);
+    }
+
+    fn track_carrier(&mut self, level: f64) {
+        let flipping = if self.carrier {
+            level < self.carrier_off
+        } else {
+            level > self.carrier_on
+        };
+        if !flipping {
+            self.carrier_count = 0;
+            return;
+        }
+        self.carrier_count += 1;
+        let needed = if self.carrier {
+            CARRIER_OFF_SAMPLES
+        } else {
+            CARRIER_ON_SAMPLES
+        };
+        if self.carrier_count >= needed {
+            self.carrier = !self.carrier;
+            self.carrier_count = 0;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
