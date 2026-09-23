@@ -1,10 +1,10 @@
 {
   softmodem,
-  carrier ? "V21",
+  label ? "V21",
+  modulation ? "+MS=V21,0",
 }:
 
 let
-  modulation = "+MS=${carrier}";
   port = "/run/softmodem/ttyS0";
   # The default 3 s restart is shorter than one round trip at 300 bit/s.
   pppOptions = "nodetach local noauth nocrtscts noccp noipv6 mru 296 mtu 296 asyncmap 0 lcp-restart 15 ipcp-restart 15 debug";
@@ -19,7 +19,7 @@ let
   };
 in
 {
-  name = "softmodem-ppp-${carrier}";
+  name = "softmodem-ppp-${label}";
 
   nodes = {
     isp =

@@ -36,17 +36,26 @@
           '';
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
-          ppp =pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
+          ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
           ppp-v22 = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
               inherit softmodem;
-              carrier = "V22";
+              label = "V22";
+              modulation = "+MS=V22,0";
             }
           );
           ppp-v22bis = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
               inherit softmodem;
-              carrier = "V22B";
+              label = "V22B";
+              modulation = "+MS=V22B,0";
+            }
+          );
+          ppp-automode = pkgs.testers.runNixOSTest (
+            import ./nix/tests/ppp.nix {
+              inherit softmodem;
+              label = "automode";
+              modulation = "";
             }
           );
           cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
