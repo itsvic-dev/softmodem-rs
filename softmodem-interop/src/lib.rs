@@ -20,6 +20,23 @@ type PutBit = unsafe extern "C" fn(*mut c_void, c_int);
 type PutByte = unsafe extern "C" fn(*mut c_void, c_int);
 type Status = unsafe extern "C" fn(*mut c_void, c_int);
 type ToneReport = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int);
+type V8Result = unsafe extern "C" fn(*mut c_void, *mut V8Parms);
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct V8Parms {
+    status: c_int,
+    modem_connect_tone: c_int,
+    send_ci: c_int,
+    v92: c_int,
+    call_function: c_int,
+    modulations: std::ffi::c_uint,
+    protocol: c_int,
+    pstn_access: c_int,
+    pcm_modem_availability: c_int,
+    nsf: c_int,
+    t66: c_int,
+}
 
 #[link(name = "spandsp")]
 unsafe extern "C" {
@@ -70,6 +87,17 @@ unsafe extern "C" {
     fn v22bis_rx(s: *mut c_void, amp: *const i16, len: c_int) -> c_int;
     fn v22bis_get_current_bit_rate(s: *mut c_void) -> c_int;
     fn v22bis_free(s: *mut c_void) -> c_int;
+
+    fn v8_init(
+        s: *mut c_void,
+        calling_party: bool,
+        parms: *mut V8Parms,
+        result_handler: V8Result,
+        user: *mut c_void,
+    ) -> *mut c_void;
+    fn v8_tx(s: *mut c_void, amp: *mut i16, max_len: c_int) -> c_int;
+    fn v8_rx(s: *mut c_void, amp: *const i16, len: c_int) -> c_int;
+    fn v8_free(s: *mut c_void) -> c_int;
 
     fn modem_connect_tones_tx_init(s: *mut c_void, tone: c_int) -> *mut c_void;
     fn modem_connect_tones_tx(s: *mut c_void, amp: *mut i16, len: c_int) -> c_int;
@@ -391,6 +419,94 @@ impl Drop for V22bis {
         unsafe {
             v22bis_free(self.modem);
             async_rx_free(self.framing);
+        }
+    }
+}
+
+const V8_STATUS_V8_CALL: c_int = 2;
+const V8_CALL_V_SERIES: c_int = 6;
+const V8_MOD_V21: std::ffi::c_uint = 1 << 1;
+const V8_MOD_V22: std::ffi::c_uint = 1 << 2;
+
+/// What a V.8 exchange agreed, as spandsp reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V8Outcome {
+    pub agreed: bool,
+    pub v22bis: bool,
+    pub v21: bool,
+}
+
+unsafe extern "C" fn v8_result(user: *mut c_void, result: *mut V8Parms) {
+    // SAFETY: `user` is the boxed slot owned by the `V8`, `result` is valid for this call.
+    unsafe {
+        *user.cast::<Option<V8Parms>>() = Some(*result);
+    }
+}
+
+/// spandsp's V.8, offering V.22bis, V.21 or both. The answering side sends
+/// `ANSam` with phase reversals itself.
+pub struct V8 {
+    state: *mut c_void,
+    result: Box<Option<V8Parms>>,
+}
+
+// SAFETY: as for `FskTx`.
+unsafe impl Send for V8 {}
+
+impl V8 {
+    #[must_use]
+    pub fn new(calling: bool, v22bis: bool, v21: bool) -> Self {
+        let mut result = Box::<Option<V8Parms>>::default();
+        let mut parms = V8Parms {
+            modem_connect_tone: if calling {
+                0
+            } else {
+                AnswerTone::AnsamPr as c_int
+            },
+            v92: -1,
+            call_function: V8_CALL_V_SERIES,
+            modulations: if v22bis { V8_MOD_V22 } else { 0 } | if v21 { V8_MOD_V21 } else { 0 },
+            nsf: -1,
+            t66: -1,
+            ..V8Parms::default()
+        };
+        let slot = ptr::addr_of_mut!(*result).cast::<c_void>();
+        // SAFETY: spandsp allocates the state and copies `parms`, `drop` frees it, the slot outlives it.
+        let state = unsafe { v8_init(ptr::null_mut(), calling, &raw mut parms, v8_result, slot) };
+        Self { state, result }
+    }
+
+    pub fn render(&mut self, out: &mut [i16]) {
+        out.fill(0);
+        // SAFETY: `out` is a valid buffer of the length passed.
+        unsafe {
+            v8_tx(self.state, out.as_mut_ptr(), length(out.len()));
+        }
+    }
+
+    pub fn process(&mut self, samples: &[i16]) {
+        // SAFETY: `samples` is a valid buffer of the length passed.
+        unsafe {
+            v8_rx(self.state, samples.as_ptr(), length(samples.len()));
+        }
+    }
+
+    /// The outcome once spandsp has reported one.
+    #[must_use]
+    pub fn outcome(&self) -> Option<V8Outcome> {
+        self.result.map(|parms| V8Outcome {
+            agreed: parms.status == V8_STATUS_V8_CALL,
+            v22bis: parms.modulations & V8_MOD_V22 != 0,
+            v21: parms.modulations & V8_MOD_V21 != 0,
+        })
+    }
+}
+
+impl Drop for V8 {
+    fn drop(&mut self) {
+        // SAFETY: allocated in `new` and not freed before.
+        unsafe {
+            v8_free(self.state);
         }
     }
 }

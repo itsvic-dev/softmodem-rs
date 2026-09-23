@@ -30,16 +30,19 @@ pub fn exchange(caller: &mut V22bis, answerer: &mut V22bis, frames: usize) {
 
 pub struct Ours {
     pub pump: Box<dyn DataPump>,
-    decoder: Decoder,
+    decoder: Option<Decoder>,
     pub bytes: Vec<u8>,
 }
 
 impl Ours {
     pub fn new(modulation: Modulation, role: Role) -> Self {
-        let pump = modulation.pump(role);
+        Self::from_pump(modulation.pump(role))
+    }
+
+    pub fn from_pump(pump: Box<dyn DataPump>) -> Self {
         Self {
-            decoder: pump.decoder(),
             pump,
+            decoder: None,
             bytes: Vec::new(),
         }
     }
@@ -52,9 +55,23 @@ impl Ours {
     fn receive(&mut self, samples: &[i16]) {
         let mut bits = Vec::new();
         self.pump.receive(samples, &mut bits);
+        if bits.is_empty() {
+            return;
+        }
+        let pump = &self.pump;
+        let decoder = self.decoder.get_or_insert_with(|| pump.decoder());
         self.bytes
-            .extend(bits.into_iter().filter_map(|b| self.decoder.push(b)));
+            .extend(bits.into_iter().filter_map(|b| decoder.push(b)));
     }
+}
+
+/// Sends data both ways over a trained link and checks that it arrives.
+pub fn carry_data(ours: &mut Ours, theirs: &mut V22bis) {
+    ours.send(&payload());
+    theirs.send(&reversed());
+    with_spandsp(ours, theirs, FRAMES);
+    assert_eq!(theirs.bytes(), payload(), "spandsp lost what we sent");
+    assert_eq!(ours.bytes, reversed(), "we lost what spandsp sent");
 }
 
 pub fn with_spandsp(ours: &mut Ours, theirs: &mut V22bis, frames: usize) {
@@ -85,10 +102,5 @@ pub fn round_trip(modulation: Modulation, role: Role, theirs: &mut V22bis, bit_r
         bit_rate,
         "spandsp settled at the wrong rate"
     );
-
-    ours.send(&payload());
-    theirs.send(&reversed());
-    with_spandsp(&mut ours, theirs, FRAMES);
-    assert_eq!(theirs.bytes(), payload(), "spandsp lost what we sent");
-    assert_eq!(ours.bytes, reversed(), "we lost what spandsp sent");
+    carry_data(&mut ours, theirs);
 }
