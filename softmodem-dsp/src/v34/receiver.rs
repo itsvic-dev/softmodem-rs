@@ -51,6 +51,8 @@ const LEVEL_SMOOTHING: f64 = 1.0 / 8192.0;
 const SILENCE: f64 = 0.02;
 // Below this share of the usual energy, as when the far end falls silent, nothing adapts.
 const QUIET: f64 = 0.5;
+// A signal this far above the level so far starts it again, as after silence.
+const ONSET: f64 = 100.0;
 const ENERGY_SMOOTHING: f64 = 1.0 / 1024.0;
 
 fn root_raised_cosine(t: f64) -> f64 {
@@ -266,6 +268,9 @@ impl Equalizer {
     /// The equalised point for `symbol`.
     pub fn output(&mut self, symbol: &Symbol) -> Complex {
         let heard = power(symbol.symbol);
+        if heard > ONSET * self.input_power {
+            self.symbols = 0;
+        }
         if heard > SILENCE * self.input_power {
             self.symbols = self.symbols.saturating_add(1);
             let weight = f64::from(self.symbols).recip().max(LEVEL_SMOOTHING);
