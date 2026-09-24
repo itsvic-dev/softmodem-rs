@@ -181,7 +181,7 @@ pub struct Modulation {
 impl Default for Modulation {
     fn default() -> Self {
         Self {
-            carrier: Carrier::V22bis,
+            carrier: Carrier::V34,
             automode: true,
         }
     }
@@ -530,11 +530,11 @@ mod tests {
     }
 
     #[test]
-    fn offers_v22bis_with_automode_by_default() {
+    fn offers_v34_with_automode_by_default() {
         assert_eq!(
             Settings::default().modulation,
             Modulation {
-                carrier: Carrier::V22bis,
+                carrier: Carrier::V34,
                 automode: true
             }
         );

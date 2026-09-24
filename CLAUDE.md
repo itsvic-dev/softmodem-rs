@@ -1,6 +1,6 @@
 # softmodem
 
-A V.21, V.22 and V.22bis modem with V.42 and V.42bis that places real calls
+A V.21, V.22, V.22bis and V.34 modem with V.42 and V.42bis that places real calls
 over SIP. The design is in `docs/`, starting at `docs/README.md`.
 
 - `softmodem-dsp`: modulators, demodulators and tones over linear 8 kHz
@@ -47,7 +47,7 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.
   `ppp` runs fixed V.21, `ppp-v22` and `ppp-v22bis` fixed V.22 and V.22bis,
-  and `ppp-automode` the default, V.8 up to V.22bis.
+  and `ppp-automode` the default, V.8 up to V.34.
 - The project is GPL-3.0-or-later under REUSE: `REUSE.toml` covers every
   file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
   licence needs its own annotation there and its text in `LICENSES/`.
