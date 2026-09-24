@@ -17,6 +17,8 @@ const ANSWER_DELAY: usize = 320;
 const TAIL: usize = 80;
 // § 11.2.1.2.3 and § 11.2.1.2.6: tone A for at least 50 ms first.
 const TONE_FIRST: usize = 400;
+// 150 ms past the reversal, not 10: slmodemd hears silence sooner as a restart.
+const HELD_TAIL: usize = 1200;
 // § 11.2.1.1.7 and § 11.2.1.2.6: L2 for at most 550 ms and a round trip.
 const L2_MOST: usize = 4400;
 // L2 is measured from 20 ms in, for 400 ms, within the 500 ms of § 11.2.1.1.5.
@@ -113,8 +115,10 @@ enum Step {
     Probe,
     /// Call: tone B, waiting for the reversal of § 11.2.1.1.3.
     ToneB,
-    /// Waiting for the far reversal that starts its L1 and L2.
-    AwaitProbe,
+    /// Answer: tone A, reversed once, until the far reversal that starts its L1 and L2.
+    AwaitProbe {
+        reversed: bool,
+    },
     Measure {
         from: usize,
     },
@@ -395,18 +399,16 @@ impl Phase2 {
             }
             Step::Probe if self.tx == Tx::L2 && self.detector.present() => {
                 self.start(Tx::Tone, None);
-                self.step = Step::AwaitProbe;
+                self.step = Step::AwaitProbe { reversed: false };
             }
-            Step::AwaitProbe => {
-                if self.role == Role::Answer
-                    && self.tx == Tx::Tone
-                    && self.tx_until.is_none()
-                    && self.sent >= self.tone_from + TONE_FIRST
-                {
-                    let at = self.sent;
-                    self.reverse_at(at);
+            Step::AwaitProbe { reversed } => {
+                if !reversed && self.sent >= self.tone_from + TONE_FIRST {
+                    self.tone.reverse_after(0);
+                    self.tx_until = Some(self.sent + HELD_TAIL);
+                    self.step = Step::AwaitProbe { reversed: true };
                 }
                 if let Some(at) = reversal {
+                    self.start(Tx::Silence, None);
                     self.measure_from(at);
                 }
             }
