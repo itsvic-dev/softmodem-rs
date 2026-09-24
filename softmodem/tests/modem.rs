@@ -250,9 +250,10 @@ async fn two_modems_connect_with_v42_and_carry_data_both_ways() {
     a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
     b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
 
-    let text: String = (0..300)
+    let text = (0..300)
         .map(|n| format!("line {n} from the caller\r\n"))
-        .collect();
+        .collect::<Vec<_>>()
+        .concat();
     a.send(text.as_bytes()).await;
     b.send(b"hello from the answerer").await;
     b.expect(&text).await;
