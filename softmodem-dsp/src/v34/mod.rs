@@ -13,6 +13,7 @@ pub mod info;
 pub mod modulator;
 pub mod mp;
 pub mod probing;
+pub mod rates;
 pub mod receiver;
 pub mod shell;
 pub mod tones;
