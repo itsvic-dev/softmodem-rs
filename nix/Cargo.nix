@@ -5567,6 +5567,10 @@ rec {
             packageId = "softmodem-dsp";
           }
           {
+            name = "softmodem-link";
+            packageId = "softmodem-link";
+          }
+          {
             name = "softmodem-terminal";
             packageId = "softmodem-terminal";
           }

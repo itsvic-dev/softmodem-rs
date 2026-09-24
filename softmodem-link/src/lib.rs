@@ -25,6 +25,8 @@ const ANSWERER_T400: Duration = Duration::from_millis(1500);
 const ADP_REPEATS: usize = 10;
 const OPENING_FLAGS: usize = 16;
 const FLAGS_HEARD: usize = 3;
+// V.42 runs where V.14 does, so not over V.21 at 300 bit/s.
+const LOWEST_RATE: u32 = 1200;
 
 /// How a call tries V.42, as V.250's `+ES` sets it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +119,9 @@ impl Link {
     pub fn start(&mut self, bit_rate: u32, now: Instant) {
         if !matches!(self.phase, Phase::Idle) {
             return;
+        }
+        if bit_rate < LOWEST_RATE {
+            self.setup.lapm = false;
         }
         // V.42 Appendix IV: the far end may be sending a whole frame of its own.
         let frame_bits = (u32::from(DEFAULT_N401) + 8) * 10;
@@ -424,6 +429,13 @@ mod tests {
         let mut call = Call::new(required, Setup::NORMAL);
         call.run(Duration::from_secs(1));
         assert_eq!(call.caller.status(), Status::Released);
+    }
+
+    #[test]
+    fn stays_plain_at_300_bit_s() {
+        let mut link = Link::new(Role::Originate, V42, Decoder::new());
+        link.start(300, Instant::now());
+        assert_eq!(link.status(), Status::Normal);
     }
 
     #[test]

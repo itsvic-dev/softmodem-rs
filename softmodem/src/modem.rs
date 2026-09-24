@@ -5,6 +5,7 @@ use std::pin::pin;
 use std::time::Duration;
 
 use softmodem_dsp::pump::{Modulation, Offer, Role};
+use softmodem_link::Setup;
 use softmodem_terminal::command::{self, Command, Dial};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
@@ -16,12 +17,11 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
 use tracing::{debug, info, warn};
 
-use crate::line::Line;
+use crate::line::{Line, Setups};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const RING_INTERVAL: Duration = Duration::from_secs(6);
 const RING_ON: Duration = Duration::from_secs(2);
-const LOW_WATER: Duration = Duration::from_millis(67);
 const COMMAND_READ: usize = 64;
 const DATA_READ: usize = 4;
 const DCD_DROP_DELAY: Duration = Duration::from_millis(200);
@@ -119,11 +119,7 @@ where
         loop {
             self.sync_speaker();
             let in_data = matches!(self.mode, Mode::Data { .. });
-            let want_input = !in_data
-                || self
-                    .line
-                    .as_ref()
-                    .is_some_and(|line| line.queued() < LOW_WATER);
+            let want_input = !in_data || self.line.as_ref().is_some_and(Line::wants_input);
             let read_size = if in_data { DATA_READ } else { COMMAND_READ };
             let listening = self.line.is_none();
             let next_ring = self.ringing.as_ref().map(|r| r.next_ring);
@@ -171,7 +167,7 @@ where
                         &mut data,
                     );
                     if let Some(line) = &mut self.line {
-                        line.send(&data);
+                        line.send(&data, Instant::now().into_std());
                     }
                 }
                 Mode::Handshake { .. } => {
@@ -245,6 +241,25 @@ where
                     let names: Vec<&str> = Carrier::ALL.iter().map(|c| c.name()).collect();
                     let text = format!("+MS: ({}),(0,1)", names.join(","));
                     self.write(&self.settings.line(&text)).await?;
+                }
+                Command::ReadErrorControl => {
+                    let control = self.settings.error_control;
+                    let text = format!(
+                        "+ES: {},{},{}",
+                        control.orig_rqst, control.orig_fbk, control.ans_fbk
+                    );
+                    self.write(&self.settings.line(&text)).await?;
+                }
+                Command::ListErrorControl => {
+                    self.write(&self.settings.line("+ES: (0-3),(0-3),(0-5)"))
+                        .await?;
+                }
+                Command::ReadErrorReport => {
+                    let text = format!("+ER: {}", u8::from(self.settings.error_control.report));
+                    self.write(&self.settings.line(&text)).await?;
+                }
+                Command::ListErrorReport => {
+                    self.write(&self.settings.line("+ER: (0,1)")).await?;
                 }
                 other => {
                     self.settings.apply(&other);
@@ -346,7 +361,20 @@ where
             },
             automode: chosen.automode,
         };
-        self.line = Some(Line::new(call, offer, role));
+        let control = self.settings.error_control;
+        let setups = Setups {
+            originate: Setup {
+                lapm: control.originator_tries(),
+                detection: control.originator_detects(),
+                required: control.originator_requires(),
+            },
+            answer: Setup {
+                lapm: control.answerer_tries(),
+                detection: true,
+                required: control.answerer_requires(),
+            },
+        };
+        self.line = Some(Line::new(call, offer, setups, role));
         self.mode = Mode::Handshake { deadline };
         self.carrier_lost_at = None;
         self.ticker.reset();
@@ -426,7 +454,11 @@ where
         let Some(line) = &mut self.line else {
             return Ok(());
         };
-        let samples = line.transmit();
+        let samples = line.transmit(Instant::now().into_std());
+        if line.released() {
+            info!("error control ended the call");
+            return self.hang_up_with(ResultCode::NoCarrier).await;
+        }
         match line.call.audio_out.try_send(samples) {
             Ok(()) => {}
             // Blocking here would stop this modem draining its own receive queue.
@@ -451,7 +483,7 @@ where
                         self.mode = Mode::OnlineCommand;
                         self.report(ResultCode::Ok).await?;
                     }
-                    Some(Timeout::Release(bytes)) => line.send(&bytes),
+                    Some(Timeout::Release(bytes)) => line.send(&bytes, now.into_std()),
                     None => {}
                 }
             }
@@ -482,14 +514,23 @@ where
         let Some(line) = &mut self.line else {
             return Ok(());
         };
-        let received = line.receive(&samples);
+        let received = line.receive(&samples, Instant::now().into_std());
+        if line.released() {
+            info!("error control ended the call");
+            return self.hang_up_with(ResultCode::NoCarrier).await;
+        }
         if received.connected && matches!(self.mode, Mode::Handshake { .. }) {
             let bit_rate = line.bit_rate().unwrap_or_default();
-            info!("CONNECT {bit_rate}");
+            let protocol = if received.reliable { "LAPM" } else { "NONE" };
+            info!("CONNECT {bit_rate}, error control {protocol}");
             self.mode = Mode::Data {
                 escape: EscapeDetector::new(Instant::now().into_std()),
             };
             self.carrier_lost_at = None;
+            if self.settings.error_control.report && !self.settings.quiet {
+                let text = format!("+ER: {protocol}");
+                self.write(&self.settings.line(&text)).await?;
+            }
             self.report(ResultCode::connect(bit_rate)).await?;
             self.sync_dcd().await?;
         }
@@ -569,7 +610,7 @@ fn identify(n: u8) -> Option<String> {
     match n {
         0 => Some("softmodem".into()),
         3 => Some(format!("softmodem {}", env!("CARGO_PKG_VERSION"))),
-        4 => Some("V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s".into()),
+        4 => Some("V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM".into()),
         _ => None,
     }
 }

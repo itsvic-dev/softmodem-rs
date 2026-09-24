@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 softmodem-dsp.workspace = true
+softmodem-link.workspace = true
 softmodem-terminal.workspace = true
 softmodem-transport.workspace = true
 

@@ -1740,6 +1740,7 @@ dependencies = [
  "anyhow",
  "clap",
  "softmodem-dsp",
+ "softmodem-link",
  "softmodem-terminal",
  "softmodem-transport",
  "tokio",

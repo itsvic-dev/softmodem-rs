@@ -219,8 +219,79 @@ async fn identifies_itself() {
     a.expect_next(format!("\r\nsoftmodem {}\r\n\r\nOK\r\n", env!("CARGO_PKG_VERSION")).as_bytes())
         .await;
     a.command("ATI4").await;
-    a.expect_next(b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s\r\n\r\nOK\r\n")
+    a.expect_next(
+        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM\r\n\r\nOK\r\n",
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn reads_and_lists_the_error_control() {
+    let (mut a, _b) = two_modems("ATE0\\N2", "");
+    a.command("AT+ES?;+ER?").await;
+    a.expect_next(b"\r\n+ES: 3,3,5\r\n\r\n+ER: 0\r\n\r\nOK\r\n")
         .await;
+    a.command("AT+ES=,1;+ER=1;+ES?;+ER?").await;
+    a.expect_next(b"\r\n+ES: 3,1,5\r\n\r\n+ER: 1\r\n\r\nOK\r\n")
+        .await;
+    a.command("AT&F+ES?").await;
+    a.expect_next(b"\r\n+ES: 3,0,2\r\n\r\nOK\r\n").await;
+    a.command("AT+ES=?;+ER=?").await;
+    a.expect_next(b"AT+ES=?;+ER=?\r\r\n+ES: (0-3),(0-3),(0-5)\r\n\r\n+ER: (0,1)\r\n\r\nOK\r\n")
+        .await;
+    a.command("AT+ES=4").await;
+    a.expect_next(b"AT+ES=4\r\r\nERROR\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_modems_connect_with_v42_and_carry_data_both_ways() {
+    let (mut a, mut b) = two_modems("ATE0+ER=1", "ATE0S0=1+ER=1");
+    a.command("ATDT0300").await;
+    a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
+    b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
+
+    let text: String = (0..300)
+        .map(|n| format!("line {n} from the caller\r\n"))
+        .collect();
+    a.send(text.as_bytes()).await;
+    b.send(b"hello from the answerer").await;
+    b.expect(&text).await;
+    a.expect("hello from the answerer").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn falls_back_to_plain_data_when_one_end_has_no_v42() {
+    for (caller, answerer) in [("\\N0", ""), ("", "\\N0"), ("+ES=1", "+ES=,,2")] {
+        let (mut a, mut b) = two_modems(
+            &format!("ATE0+ER=1;{caller}"),
+            &format!("ATE0S0=1+ER=1;{answerer}"),
+        );
+        a.command("ATDT0300").await;
+        a.expect("\r\n+ER: NONE\r\n\r\nCONNECT 2400\r\n").await;
+        b.expect("\r\n+ER: NONE\r\n\r\nCONNECT 2400\r\n").await;
+        a.send(b"plain from the caller").await;
+        b.expect("plain from the caller").await;
+        b.send(b"plain from the answerer").await;
+        a.expect("plain from the answerer").await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn hangs_up_when_v42_is_required_and_the_far_end_has_none() {
+    let (mut a, _b) = two_modems("ATE0\\N2", "ATE0S0=1\\N0");
+    a.command("ATDT0300").await;
+    a.expect_next(b"\r\nNO CARRIER\r\n").await;
+    let (mut a, mut b) = two_modems("ATE0\\N0", "ATE0S0=1\\N2");
+    a.command("ATDT0300").await;
+    b.expect("\r\nNO CARRIER\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn v21_stays_plain() {
+    let (mut a, mut b) = two_modems("ATE0+ER=1;+MS=V21", "ATE0S0=1+ER=1;+MS=V21");
+    a.command("ATDT0300").await;
+    a.expect("\r\n+ER: NONE\r\n\r\nCONNECT\r\n").await;
+    b.expect("\r\n+ER: NONE\r\n\r\nCONNECT\r\n").await;
 }
 
 #[tokio::test(start_paused = true)]
