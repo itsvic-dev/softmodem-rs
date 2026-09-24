@@ -49,8 +49,8 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.
-  `ppp` runs fixed V.21, `ppp-v22` and `ppp-v22bis` fixed V.22 and V.22bis,
-  and `ppp-automode` the default, V.8 up to V.34.
+  `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
+  V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.34.
 - The project is GPL-3.0-or-later under REUSE: `REUSE.toml` covers every
   file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
   licence needs its own annotation there and its text in `LICENSES/`.
@@ -60,9 +60,10 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - The CUSE port is Linux only and needs root, so it has its own VM test,
   `checks.aarch64-linux.cuse`, which includes a nested QEMU guest under TCG
   and takes about 3 minutes.
-- `checks.aarch64-linux.slmodemd-v22bis` and `slmodemd-v34` call this
-  modem from slmodemd in an x86-64 guest under TCG, and pass text both
-  ways. `result/dumps/softmodem/` has the call as one stereo WAV,
+- `checks.aarch64-linux.slmodemd-v22bis`, `slmodemd-v34` and
+  `slmodemd-v90` call this modem from slmodemd in an x86-64 guest under
+  TCG, and pass text both ways. In `slmodemd-v90` slmodemd is the V.90
+  analogue modem, so it checks this modem's digital side. `result/dumps/softmodem/` has the call as one stereo WAV,
   slmodemd on the left. `slmodemd-v34-retrain` retrains from ATO1, and
   `slmodemd-v34-noise` adds noise that makes slmodemd retrain, and
   `slmodemd-v34-renegotiate` noise toward this modem only, which makes it

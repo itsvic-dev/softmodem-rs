@@ -51,6 +51,13 @@
               modulation = "+MS=V22B,0";
             }
           );
+          ppp-v90 = pkgs.testers.runNixOSTest (
+            import ./nix/tests/ppp.nix {
+              inherit softmodem;
+              label = "V90";
+              modulation = "+MS=V90,0";
+            }
+          );
           ppp-automode = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
               inherit softmodem;
