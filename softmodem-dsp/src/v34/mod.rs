@@ -14,6 +14,7 @@ pub mod modulator;
 pub mod mp;
 pub mod phase2;
 pub mod probing;
+pub mod pump;
 pub mod rates;
 pub mod receiver;
 pub mod shell;
