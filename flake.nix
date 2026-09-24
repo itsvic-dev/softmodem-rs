@@ -96,6 +96,11 @@
               ours = "+MS=V34,0";
               theirs = "+MS=34,0,2400,33600";
             };
+            slmodemd-v90 = peer {
+              label = "V90";
+              ours = "+MS=V90,0";
+              theirs = "+MS=90";
+            };
             slmodemd-v34-retrain = peer {
               label = "V34-retrain";
               ours = "+MS=V34,0";
