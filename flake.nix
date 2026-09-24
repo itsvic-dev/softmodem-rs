@@ -35,7 +35,7 @@
             touch $out
           '';
         }
-        // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
           ppp-v22 = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
@@ -60,7 +60,7 @@
           );
           cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
         }
-        // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
           let
             guestPkgs = nixpkgs.legacyPackages.x86_64-linux;
             peer =
@@ -111,5 +111,7 @@
       );
 
       formatter = forSystems (pkgs: pkgs.nixfmt);
+
+      hydraJobs.checks = nixpkgs.lib.getAttrs [ "x86_64-linux" "aarch64-linux" ] self.checks;
     };
 }
