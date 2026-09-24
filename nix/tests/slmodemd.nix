@@ -40,7 +40,7 @@ in
         wantedBy = [ "multi-user.target" ];
         after = [ "softmodem.service" ];
         environment.SOFTMODEM_PEER = "127.0.0.1:5300";
-        serviceConfig.ExecStart = "${slmodemd}/bin/slmodemd -e ${bridge}/bin/slmodem-bridge";
+        serviceConfig.ExecStart = "${slmodemd}/bin/slmodemd -d9 -e ${bridge}/bin/slmodem-bridge";
       };
     };
 

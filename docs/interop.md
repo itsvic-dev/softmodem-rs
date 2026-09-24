@@ -74,6 +74,14 @@ dials a softmodem over the UDP wire and carries the audio between them.
 - It only dials, so it tests this modem's answering side.
 - Its `+MS` numbers the modulations: 122 for V.22bis, 34 for V.34.
 - Its dial string keeps the T of `ATDT`.
+- `-d9` logs the Smart Link state machine: the V.8 and V.34 phases, the
+  INFO and MP it hears, and the rate it picks. The check keeps it on, and
+  saves the journal with the recording, so that a failed call shows where
+  it stopped.
+- It ends CM with the preamble of the next menu and then CJ, so CJ must be
+  found wherever its three zero octets come.
+- It trains for 2 s in phase 4, and picks its rate from its own equaliser
+  error.
 
 ## Known cost
 
