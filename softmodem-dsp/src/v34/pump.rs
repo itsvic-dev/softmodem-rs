@@ -646,16 +646,77 @@ mod tests {
 
     const FRAME: usize = 160;
 
-    fn exchange(caller: &mut V34, answerer: &mut V34, frames: usize) -> (Vec<bool>, Vec<bool>) {
+    // G.711 A-law and back, as the transport carries every call.
+    fn alaw(sample: i16) -> i16 {
+        const ENDS: [i32; 8] = [0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF];
+        let value = i32::from(sample) >> 3;
+        let (negative, magnitude) = if value >= 0 {
+            (false, value)
+        } else {
+            (true, -value - 1)
+        };
+        let segment = ENDS.iter().position(|&end| magnitude <= end).unwrap_or(7);
+        let shift = if segment < 2 { 1 } else { segment };
+        let step = ((magnitude.min(0xFFF) >> shift) & 0x0F) << 4;
+        let restored = if segment == 0 {
+            step + 8
+        } else {
+            (step + 0x108) << (segment - 1)
+        };
+        let restored = i16::try_from(restored).unwrap_or(i16::MAX);
+        if negative { -restored } else { restored }
+    }
+
+    fn exchange_over(
+        caller: &mut V34,
+        answerer: &mut V34,
+        frames: usize,
+        line: fn(i16) -> i16,
+    ) -> (Vec<bool>, Vec<bool>) {
         let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
         let (mut at_caller, mut at_answerer) = (Vec::new(), Vec::new());
         for _ in 0..frames {
             caller.transmit(&mut up);
             answerer.transmit(&mut down);
+            let (up, down) = (up.map(line), down.map(line));
             answerer.receive(&up, &mut at_answerer);
             caller.receive(&down, &mut at_caller);
         }
         (at_caller, at_answerer)
+    }
+
+    fn exchange(caller: &mut V34, answerer: &mut V34, frames: usize) -> (Vec<bool>, Vec<bool>) {
+        exchange_over(caller, answerer, frames, |sample| sample)
+    }
+
+    #[test]
+    fn two_ends_carry_data_over_alaw() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let mut frames = 0;
+        while !(caller.connected() && answerer.connected()) && frames < 400 {
+            exchange_over(&mut caller, &mut answerer, 1, alaw);
+            frames += 1;
+        }
+        assert!(caller.connected(), "no V.34 connection over A-law");
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_over(&mut caller, &mut answerer, 80, alaw);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data at {} bit/s would not survive A-law: mse {:?} {:?}",
+            caller.bit_rate(),
+            caller
+                .sink
+                .as_ref()
+                .map(|s| 10.0 * s.equalizer.error().log10()),
+            answerer
+                .sink
+                .as_ref()
+                .map(|s| 10.0 * s.equalizer.error().log10()),
+        );
     }
 
     #[test]

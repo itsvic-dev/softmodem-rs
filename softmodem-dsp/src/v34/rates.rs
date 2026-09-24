@@ -7,9 +7,9 @@ use super::framing::Framing;
 use super::info::Probe;
 use super::probing::Probing;
 
-// Uncoded QAM at 10⁻⁶, less the trellis's 4 dB, with 2 dB of margin.
+// Uncoded QAM at 10⁻⁶, less the trellis's 4 dB, with 5 dB of margin.
 const DB_PER_BIT: f64 = 3.01;
-const REQUIRED_DB: f64 = 9.8;
+const REQUIRED_DB: f64 = 12.8;
 // The part of the band either side of the carrier that the tones must cover.
 const BAND: f64 = 0.45;
 
