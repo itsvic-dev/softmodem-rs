@@ -12,6 +12,7 @@ pub mod framing;
 pub mod info;
 pub mod modulator;
 pub mod mp;
+pub mod phase2;
 pub mod probing;
 pub mod rates;
 pub mod receiver;
