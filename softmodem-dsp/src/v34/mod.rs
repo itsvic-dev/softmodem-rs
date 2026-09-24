@@ -2,6 +2,7 @@
 
 mod bits;
 pub mod info;
+pub mod mp;
 
 /// Table 1, in the order INFO sequences number them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
