@@ -4,8 +4,9 @@ use std::time::{Duration, Instant};
 
 use softmodem_dsp::pump::Role;
 use softmodem_dsp::uart::Decoder;
-use softmodem_interop::V42;
-use softmodem_link::{Link, Setup, Status};
+use softmodem_interop::{CompressionMode, V42, V42bis};
+use softmodem_link::v42bis::{Directions, Parameters};
+use softmodem_link::{CompressionSetup, Link, Setup, Status};
 
 const RATE: u32 = 2400;
 const STEP: Duration = Duration::from_millis(10);
@@ -107,6 +108,79 @@ fn we_call_spandsp_straight_into_lapm() {
 #[test]
 fn spandsp_calls_us_straight_into_lapm() {
     Call::new(Role::Answer, DETECTING, false).carries_data_both_ways();
+}
+
+fn text(len: usize) -> Vec<u8> {
+    b"the carrier carries the data over the line, \0\x33\x66 and back\r\n"
+        .iter()
+        .copied()
+        .cycle()
+        .take(len)
+        .collect()
+}
+
+#[test]
+fn negotiates_v42bis_with_spandsp_and_compresses_from_the_caller() {
+    let offer = Directions {
+        transmit: true,
+        receive: true,
+        parameters: Parameters {
+            codewords: 2048,
+            max_string: 32,
+        },
+    };
+    let setup = Setup {
+        compression: Some(CompressionSetup {
+            offer,
+            required: false,
+        }),
+        ..DETECTING
+    };
+    // spandsp's V.42 proposes and accepts V.42bis only from the caller, at 512 and 6.
+    let expected = Parameters {
+        codewords: 512,
+        max_string: 6,
+    };
+    for role in [Role::Originate, Role::Answer] {
+        let mut call = Call::new(role, setup, true);
+        call.run(Duration::from_secs(5));
+        assert_eq!(call.ours.status(), Status::Reliable, "{role:?}");
+        let agreed = call.ours.compression().expect("spandsp agreed to V.42bis");
+        let caller = role == Role::Originate;
+        assert_eq!(
+            (agreed.transmit, agreed.receive, agreed.parameters),
+            (caller, !caller, expected)
+        );
+        let mut codec = V42bis::new(
+            expected.codewords,
+            expected.max_string,
+            CompressionMode::Dynamic,
+        );
+
+        let ours = text(15_000);
+        let theirs: Vec<u8> = ours.iter().rev().copied().collect();
+        call.ours.send(&ours);
+        call.theirs.send(&if caller {
+            theirs.clone()
+        } else {
+            codec.compress(&theirs)
+        });
+        call.run(Duration::from_secs(90));
+        let sent_to_them = call.theirs.received();
+        let from_us = if caller {
+            assert!(sent_to_them.len() * 2 < ours.len(), "we did not compress");
+            codec.decompress(sent_to_them)
+        } else {
+            sent_to_them.to_vec()
+        };
+        assert!(
+            from_us == ours,
+            "{role:?}: {} of {}",
+            from_us.len(),
+            ours.len()
+        );
+        assert!(call.ours.take_received() == theirs, "{role:?}");
+    }
 }
 
 #[test]
