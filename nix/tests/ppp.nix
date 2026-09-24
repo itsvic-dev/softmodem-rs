@@ -26,6 +26,8 @@ in
       { pkgs, ... }:
       {
         networking.firewall.allowedUDPPorts = [ 5300 ];
+        # dhcpcd would add ppp0's address again with the peer as its broadcast.
+        networking.dhcpcd.denyInterfaces = [ "ppp*" ];
         environment.systemPackages = [ softmodem ];
 
         # Quiet, so that RING and CONNECT do not reach pppd as line noise.
@@ -50,6 +52,7 @@ in
       in
       {
         networking.firewall.allowedUDPPorts = [ 5300 ];
+        networking.dhcpcd.denyInterfaces = [ "ppp*" ];
         environment.systemPackages = [ softmodem ];
 
         systemd.services.softmodem = modemService "" // {
