@@ -30,6 +30,7 @@ const TRN_HEARD: usize = 1536;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
+const J_BITS: usize = 16;
 // What this end's receiver asks the far transmitter for, in MP.
 const TRELLIS: Trellis = Trellis::States16;
 const EXPANDED: bool = false;
@@ -506,21 +507,26 @@ impl Sink {
         self.equalizer.adapt(Self::corner(Self::quarter(z)));
         for bit in self.sequence_bits(z) {
             self.window.push_back(bit);
-            if self.window.len() > 16 {
+            if self.window.len() > 2 * J_BITS {
                 self.window.pop_front();
             }
+            // J repeats, and J′ follows one: a single 16-bit match can come from errors in a long TRN.
+            let bits: Vec<bool> = self.window.iter().copied().collect();
+            let (earlier, last) = bits.split_at(bits.len().saturating_sub(J_BITS));
+            let is = |bits: &[bool], pattern: &str| bits == training::pattern(pattern).as_slice();
             if self.phase == 3 {
-                if self.window.iter().eq(&training::pattern(J_4)) {
-                    far.j = Some(Points::Four);
-                } else if self.window.iter().eq(&training::pattern(J_16)) {
-                    far.j = Some(Points::Sixteen);
+                for (j, points) in [(J_4, Points::Four), (J_16, Points::Sixteen)] {
+                    if is(earlier, j) && is(last, j) {
+                        far.j = Some(points);
+                    }
                 }
                 if far.j.is_some() {
                     self.phase = 4;
                 }
             } else if self.far_role == Role::Originate
                 && !far.trn
-                && self.window.iter().eq(&training::pattern(J_PRIME))
+                && is(last, J_PRIME)
+                && (is(earlier, J_4) || is(earlier, J_16))
             {
                 self.listen = Listen::Trn { from: index + 1 };
             }
