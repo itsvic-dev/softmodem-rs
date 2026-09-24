@@ -4,6 +4,7 @@ use crate::pump::Role;
 
 mod bits;
 pub mod constellation;
+pub mod decoder;
 pub mod dpsk;
 pub mod encoder;
 pub mod framing;
