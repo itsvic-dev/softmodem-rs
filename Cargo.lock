@@ -1774,6 +1774,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "softmodem-slmodem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "softmodem-transport",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "softmodem-terminal"
 version = "0.1.0"
 dependencies = [

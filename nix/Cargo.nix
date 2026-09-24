@@ -83,6 +83,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "softmodem-slmodem" = rec {
+      packageId = "softmodem-slmodem";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "softmodem-slmodem";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "softmodem-terminal" = rec {
       packageId = "softmodem-terminal";
       build = internal.buildRustCrateWithFeatures {
@@ -5664,6 +5674,43 @@ rec {
           {
             name = "softmodem-dsp";
             packageId = "softmodem-dsp";
+          }
+        ];
+
+      };
+      "softmodem-slmodem" = rec {
+        crateName = "softmodem-slmodem";
+        version = "0.1.0";
+        edition = "2024";
+        crateBin = [
+          {
+            name = "slmodem-bridge";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ../softmodem-slmodem; };
+        dependencies = [
+          {
+            name = "anyhow";
+            packageId = "anyhow";
+          }
+          {
+            name = "softmodem-transport";
+            packageId = "softmodem-transport";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
           }
         ];
 
