@@ -1,13 +1,15 @@
 //! Joins slmodemd, from Aon's D-Modem, to a softmodem over its UDP wire, to
 //! test against the Smart Link DSP. slmodemd runs this on ATD as
 //! `slmodem-bridge NUMBER FD`, where FD is its audio socket, and it dials
-//! `SOFTMODEM_PEER`.
+//! `SOFTMODEM_PEER`. `SOFTMODEM_NOISE_AFTER` and `SOFTMODEM_NOISE_RMS` add
+//! noise both ways from that many seconds after the answer.
 //!
 //! The socket carries 16-bit samples at 9600 Hz, and slmodemd answers each
 //! block it reads with a block of the same length. So the far softmodem's
 //! frames set the clock: each one goes to slmodemd, and slmodemd's answer
 //! goes back as the next frame.
 
+mod noise;
 mod resample;
 
 use std::collections::VecDeque;
@@ -21,6 +23,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tracing::info;
 
+use crate::noise::Noise;
 use crate::resample::Resampler;
 
 fn main() -> anyhow::Result<()> {
@@ -60,13 +63,20 @@ async fn run(number: &str, fd: i32, peer: SocketAddr) -> anyhow::Result<()> {
     let mut buf = [0u8; 4096];
     let mut high = Vec::new();
     let mut low = Vec::new();
+    let mut noise = Noise::from_env();
     loop {
         tokio::select! {
             frame = call.audio_in.recv() => {
-                let Some(frame) = frame else {
+                let Some(mut frame) = frame else {
                     info!("the far softmodem hung up");
                     break;
                 };
+                if let Some(noise) = &mut noise {
+                    if noise.tick() {
+                        info!("noise on the line from now");
+                    }
+                    noise.add(&mut frame);
+                }
                 high.clear();
                 up.process(&frame, &mut high);
                 let bytes: Vec<u8> = high.iter().flat_map(|s| s.to_le_bytes()).collect();
@@ -74,11 +84,14 @@ async fn run(number: &str, fd: i32, peer: SocketAddr) -> anyhow::Result<()> {
                     info!("slmodemd hung up");
                     break;
                 }
-                let reply: Vec<i16> = if heard.len() >= FRAME_SAMPLES {
+                let mut reply: Vec<i16> = if heard.len() >= FRAME_SAMPLES {
                     heard.drain(..FRAME_SAMPLES).collect()
                 } else {
                     vec![0; FRAME_SAMPLES]
                 };
+                if let Some(noise) = &mut noise {
+                    noise.add(&mut reply);
+                }
                 if call.audio_out.send(reply).await.is_err() {
                     break;
                 }
