@@ -22,7 +22,7 @@ Non-goals:
 
 - Speed. The first target is 300 bit/s.
 - 56k. See "Why not 56k" below.
-- V.42bis compression, until V.42 has run against spandsp.
+- V.42bis compression, for now. It is the next milestone.
 
 ## What the channel gives, and what it must not do
 
@@ -473,6 +473,13 @@ dev shell, and the modem itself does not depend on it.
   answers with ANS, with ANS and phase reversals, and with V.8 ANSam and
   phase reversals, the tone a modern modem sends. A V.25 caller that waits for
   our answer tone and channel 2 calls us. Data crosses both ways each time.
+  spandsp's side is plain start-stop there, so our V.42 falls back.
+- Our V.42 against spandsp's, bit for bit with no modulation under them:
+  with the detection phase and straight into LAPM, as caller and as
+  answerer, 3000 octets each way. With one bit in 10007 flipped each way,
+  REJ and timer recovery still deliver all of it. spandsp's V.42 sends only
+  zeros until `v42_restart`, although its header declares a `v42_start`
+  that the library does not export.
 
 Those calls found a bug no test between two of our own modems could: the
 answering modem reports `CONNECT` up to a second before the caller does, and
@@ -928,8 +935,8 @@ Everything before it can be built and tested with two instances on one host.
     roles, and `pppd` runs over it in `checks.aarch64-linux.ppp-automode`.
 11. V.42, on by default with `+ES=3,0,2`. Done between two instances, with
     fallback to plain data in each role and `\N2` hanging up without it, and
-    with `pppd` over LAPM in `checks.aarch64-linux.ppp-v22bis`. Against
-    spandsp's V.42 still to do.
+    with `pppd` over LAPM in `checks.aarch64-linux.ppp-v22bis`, and against
+    spandsp's V.42 in both roles.
 12. V.42bis.
 13. A real modem behind the SPA2102 calling the answering side.
 

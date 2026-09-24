@@ -15,8 +15,9 @@ A V.21, V.22 and V.22bis modem that places real calls over SIP. The design is `d
   loopback, SIP through a registrar, WAV recording, and the speaker on the
   host sound output.
 - `softmodem`: the modem state machine that joins them, and the binary.
-- `softmodem-interop`: tests only, against spandsp's V.21, V.22, V.22bis and answer tones.
-  It links spandsp through pkg-config, which only the dev shell provides.
+- `softmodem-interop`: tests only, against spandsp's V.21, V.22, V.22bis,
+  V.8, V.42 and answer tones. It links spandsp through pkg-config, which only
+  the dev shell provides.
 
 ## Working here
 
@@ -48,8 +49,8 @@ A V.21, V.22 and V.22bis modem that places real calls over SIP. The design is `d
   file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
   licence needs its own annotation there and its text in `LICENSES/`.
 - spandsp is LGPL-2.1: call it through `softmodem-interop` only, never read
-  its source to shape our code. The ITU texts in `docs/specs/` are the
-  reference.
+  its source to shape our code. Its installed headers may be read to write
+  the binding. The ITU texts in `docs/specs/` are the reference.
 - The CUSE port is Linux only and needs root, so it has its own VM test,
   `checks.aarch64-linux.cuse`, which includes a nested QEMU guest under TCG
   and takes about 3 minutes.
