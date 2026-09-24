@@ -456,10 +456,8 @@ impl Lapm {
         if kind == Supervisory::Srej {
             return self.release();
         }
-        if !command && pf {
-            if !self.conditions.recovery {
-                return;
-            }
+        // Table 9 ignores an unsolicited F=1, but spandsp acknowledges with one.
+        if !command && pf && self.conditions.recovery {
             if !self.acknowledge(nr, now) {
                 return self.release();
             }
@@ -744,6 +742,18 @@ mod tests {
             pair.answerer.next_frame(pair.now),
             Some(vec![0x03, 0x03, 0xe0])
         );
+    }
+
+    #[test]
+    fn an_unsolicited_final_rr_still_acknowledges() {
+        let mut pair = Pair::connected();
+        pair.caller.send(b"one frame");
+        let frame = pair.caller.next_frame(pair.now).unwrap();
+        pair.answerer.receive(&frame, pair.now);
+        let rr_final = [0x03, 0x01, 1 << 1 | 1];
+        pair.caller.receive(&rr_final, pair.now);
+        assert!(pair.caller.sent.is_empty());
+        assert_eq!(pair.caller.timer, None);
     }
 
     #[test]
