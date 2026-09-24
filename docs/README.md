@@ -80,5 +80,5 @@ link, in `softmodem-link`, is V.42 or plain start-stop characters. See
 - [Interop](interop.md): real modems and spandsp.
 - [The ITU texts](specs.md): where to get them.
 - The recommendations: [V.14](v14.md), [V.21](v21.md), [V.22](v22.md),
-  [V.22bis](v22bis.md), [V.25](v25.md), [V.34](v34.md), [automode](automode.md),
+  [V.22bis](v22bis.md), [V.25](v25.md), [V.34](v34.md), [V.90](v90.md), [automode](automode.md),
   [V.8](v8.md), [V.8 bis](v8bis.md), [V.42](v42.md), [V.42bis](v42bis.md).

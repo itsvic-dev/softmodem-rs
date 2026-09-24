@@ -69,6 +69,11 @@ dials a softmodem over the UDP wire and carries the audio between them.
 - The socket carries 16-bit samples at 9600 Hz. slmodemd answers each block
   it reads with a block of the same length, so the softmodem's 20 ms frames
   set the clock, resampled between 8000 and 9600 samples/s.
+- Toward slmodemd the resampler passes up to 4000 Hz, as a line card's D/A
+  leaves some signal there. slmodemd's V.90 receiver recovers the PCM symbol
+  clock from it ("adjustHalfBaudBpfGain" in its log), and with the band cut
+  at 3900 Hz it drops to V.34 in phase 3. Toward the softmodem the band ends
+  at 3900 Hz, so that nothing folds into 8000 samples/s.
 - As released, `-e` takes no argument, so slmodemd never learns what to run.
   The package patches this.
 - It only dials, so it tests this modem's answering side.
@@ -79,6 +84,11 @@ dials a softmodem over the UDP wire and carries the audio between them.
   code. A JM with the digital bit takes it to V.90 phase 2: it sends INFO0a
   at 2400 Hz and waits for INFO0d at 1200 Hz, and hangs up after about 3 s
   without one. It asks for 300 to 56 000 bit/s down and 4800 to 33 600 up.
+- Against this modem's digital side it picks 3200 baud upstream and UINFO
+  78. Its Ja asks for a DIL of 141 segments, with SP and TP of 128 bits.
+  Its CPt asks for 30 667 bit/s on 8 Ucodes, Sr 1, a1 = 1 and a look-ahead
+  of 3, and its CP for 54 667 bit/s on 81 Ucodes. Upstream runs at
+  31 200 bit/s, the most that this modem's MP allows.
 - Its dial string keeps the T of `ATDT`.
 - `-d9` logs the Smart Link state machine: the V.8 and V.34 phases, the
   INFO and MP it hears, and the rate it picks. The check keeps it on, and
