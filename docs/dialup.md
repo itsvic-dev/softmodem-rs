@@ -306,9 +306,9 @@ follows, as described under V.22 below. Each end reports `CONNECT 1200`
 reports `CONNECT 2400` once it has sent scrambled ones at 2400 bit/s for
 200 ms and heard 32 of them, or `CONNECT 1200` when the far end is V.22.
 
-With automode, the answering modem sends ANSam in place of the answer tone
-and the calling modem listens for either tone, as described under Automode
-below. The line then leaves the answer tone to the pump.
+With automode, the answering modem sends the V.8 bis signal CRe 400 ms into
+the silence, and ANSam in place of the answer tone. The calling modem
+answers CRe and listens for either tone, as described under Automode below. The line then leaves the answer tone to the pump.
 
 #### DCD
 
@@ -401,6 +401,7 @@ times. The local copies:
 |---|---|
 | `CCITT-Blue-Book-Fascicle-VIII.1-1988.pdf` | V.1 to V.230 as of 1988, with V.21, V.22, V.22bis and V.42 |
 | `V.8-200011.pdf` | V.8 (11/2000), CM and JM, ANSam |
+| `V.8bis-200011-I.pdf` | V.8 bis (11/2000), revision 2 |
 | `V.14-199303-I.pdf` | V.14 (03/1993) |
 | `V.25-199610-I.pdf` | V.25 (10/1996) |
 | `V.32bis-199102-I.pdf` | V.32bis (02/1991), with the automode of its Annex A |
@@ -453,6 +454,11 @@ chipset still refuse, force it on the calling modem with a chipset-specific
 command (for example `AT+MS=V22B` or `AT+MS=V21` on Rockwell parts), and
 dial blind with `ATX3`.
 
+A V.90 or V.92 modem that answers may start with V.8 bis before ANSam, and
+V.8 bis lets it clear the call when nothing answers (§ 10.2.2). In automode
+this modem answers CRe as the calling modem, and sends CRe itself when it
+answers, so it meets such a modem on either side of the call.
+
 #### Against spandsp
 
 `softmodem-interop` checks the modem against spandsp, whose V.21 and answer
@@ -471,7 +477,9 @@ dev shell, and the modem itself does not depend on it.
   four answer tones apart.
 - Our automode negotiates V.8 with spandsp's as answerer and as caller,
   agrees on V.22bis, and then trains at 2400 bit/s with spandsp's V.22bis.
-  With a spandsp that offers only V.21, V.8 agrees on V.21.
+  With a spandsp that offers only V.21, V.8 agrees on V.21. spandsp has no
+  V.8 bis and does not answer CRe, so these calls also show the answering
+  modem going on to ANSam at 2 s.
 - Whole calls in automode: a V.25 caller that answers our USB1 as V.21, and
   an answerer that sends ANSam but speaks only V.21, both reach V.21. Each
   hears some of the other modulation first as noise, which is why those two
@@ -703,16 +711,61 @@ modem adds one step of its own: an answering modem that hears nothing during
 Ta switches to V.21 channel 2 mark, and a calling modem that hears a pure
 1650 Hz mark after the answer tone goes on as V.21.
 
+V.8 bis (11/2000) comes before V.8, and only the answering modem may start
+it at the answer. The figures:
+
+- A signal is a dual tone for 400 ms, 285 ms for CRe and MRe, then a single
+  tone for 100 ms that names it. The answering modem's pair is
+  1375 + 2002 Hz, the reply's 1529 + 2225 Hz. CRe ends in 400 Hz, CRd in
+  1900 Hz, ESr in 1650 Hz (§ 7.1, tables 1 and 2). CRe goes 12 to 15 dB
+  below continuous signals (§ 7.1.4); this modem sends it at -26 dBm0.
+- Messages go in V.21 at 300 bit/s: channel 1 from the answering modem,
+  channel 2 from the caller. Each is 100 ms of mark, two flags, an HDLC
+  frame with the 16-bit FCS, and a closing flag (§ 7.2). The mark after ESr
+  counts as the preamble, so the demodulator here turns carrier on after
+  20 ms rather than V.21's 400 ms.
+- The information field is the message type and revision 2 in one octet,
+  then parameter trees whose blocks end on bit 8 or bit 7 (§ 8.2.3). This
+  modem sends and reads the V.8 and "transmit ACK(1)" bits of the
+  identification field, and the data mode with V.22bis, V.22 and V.21 under
+  it (tables 5-1, 6-2a, 6-3c). It skips all other parameters.
+- The station that receives MS becomes the answering modem (§ 9.9). With
+  the V.8 bit, it sends ANSam and V.8 follows as above, CM and JM taking
+  priority over MS. With neither V.8 bit, it sends ANS and the modulation's
+  own start-up follows.
+- A station that has waited 5 s in a transaction gives up (§ 9.8), and an
+  invalid frame gets NAK(1).
+
+The answering modem starts with CRe, 400 ms after the answer (§ 10.2.2),
+and takes whichever transaction the caller answers with:
+
+- CRd: it sends CL, the caller sends MS, it sends ACK(1). This is
+  transaction 12.
+- ESr then CL, or ESr then CLR: it sends MS, or CL and MS, and the caller
+  sends ACK(1). The caller has then received MS, so it sends ANSam and this
+  modem goes on as the V.8 caller (transactions 2 and 3).
+
+The calling modem answers CRe or MRe with CRd, reads CL, and sends MS with
+the data mode and the V.8 bit as CL has it.
+
 The sequences, for this modem with automode on:
 
-1. Answering: silence, ANSam for up to 5 s while listening for CM. On CM,
-   V.8 as above, then the chosen modulation. On no CM, 75 ms of silence, then
-   USB1 for 3 s as Annex A. On no answer to that, V.21 channel 2 mark.
-2. Calling: on ANSam, V.8. On plain ANS, wait for USB1, which starts
-   V.22bis with its own fallback to V.22, or for channel 2 mark, which starts
-   V.21.
+1. Answering: 400 ms of silence, then CRe, and silence to 2 s. If the caller
+   answers CRe, V.8 bis as above. Then, or at 2 s if nothing answered, ANSam
+   for up to 5 s while listening for CM. On CM, V.8 as above, then the
+   chosen modulation. On no CM, 75 ms of silence, then USB1 for 3 s as
+   Annex A. On no answer to that, V.21 channel 2 mark.
+2. Calling: on CRe, V.8 bis. On ANSam, V.8. On plain ANS, wait for USB1,
+   which starts V.22bis with its own fallback to V.22, or for channel 2
+   mark, which starts V.21.
 
-spandsp's V.8 module is the reference for CM, JM and CJ.
+With a fixed modulation there is nothing to agree on, so neither V.8 bis nor
+V.8 runs. A caller without V.8 bis hears CRe as a short, quiet tone and
+ignores it, so it costs it nothing. Between two instances, V.8 bis puts ANSam about 0.4 s
+later.
+
+spandsp's V.8 module is the reference for CM, JM and CJ. spandsp has no
+V.8 bis, so V.8 bis is checked only between two instances of this modem.
 
 ## V.42
 
@@ -997,7 +1050,10 @@ Everything before it can be built and tested with two instances on one host.
     instances in each direction and in none, against spandsp's codec,
     negotiated with spandsp's V.42, and with `pppd` over it in
     `checks.aarch64-linux.ppp-v22bis`.
-13. A real modem behind the SPA2102 calling the answering side.
+13. V.8 bis in automode, before V.8. Done between two instances in
+    transaction 12, with the other transactions checked message by
+    message, and against spandsp, which does not answer CRe.
+14. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
 
