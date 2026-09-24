@@ -37,6 +37,23 @@ pub enum Command {
     ReadCarrier,
     /// `+MS=?`.
     ListCarriers,
+    /// `+ES=`, or `\N` for all three: how to try V.42 error control. A
+    /// subparameter left out keeps its value.
+    SetErrorControl {
+        orig_rqst: Option<u8>,
+        orig_fbk: Option<u8>,
+        ans_fbk: Option<u8>,
+    },
+    /// `+ES?`.
+    ReadErrorControl,
+    /// `+ES=?`.
+    ListErrorControl,
+    /// `+ER=`, whether to report the error control in use before CONNECT.
+    ReportErrorControl(bool),
+    /// `+ER?`.
+    ReadErrorReport,
+    /// `+ER=?`.
+    ListErrorReport,
     /// An extended or vendor command, accepted without effect.
     Ignored,
 }
@@ -150,6 +167,19 @@ impl Parser<'_> {
                 self.value(0)?;
                 Command::FactoryReset
             }
+            b'\\' if self.peek() == Some(b'N') => {
+                self.at += 1;
+                let (orig_rqst, orig_fbk, ans_fbk) = match self.value(3)? {
+                    0 | 1 => (1, 0, 1),
+                    2 => (3, 3, 5),
+                    _ => (3, 0, 2),
+                };
+                Command::SetErrorControl {
+                    orig_rqst: Some(orig_rqst),
+                    orig_fbk: Some(orig_fbk),
+                    ans_fbk: Some(ans_fbk),
+                }
+            }
             b'&' | b'\\' | b'%' => {
                 self.next()
                     .filter(u8::is_ascii_alphabetic)
@@ -157,13 +187,20 @@ impl Parser<'_> {
                 self.number()?;
                 Command::Ignored
             }
-            b'+' if self.text[self.at..].starts_with(b"MS") => {
-                self.at += 2;
-                self.modulation()?
-            }
             b'+' => {
-                self.skip_extended();
-                Command::Ignored
+                let start = self.at;
+                while self.peek().is_some_and(|b| b.is_ascii_alphanumeric()) {
+                    self.at += 1;
+                }
+                match &self.text[start..self.at] {
+                    b"MS" => self.modulation()?,
+                    b"ES" => self.error_control()?,
+                    b"ER" => self.error_report()?,
+                    _ => {
+                        self.skip_extended();
+                        Command::Ignored
+                    }
+                }
             }
             _ => return Err(ParseError),
         })
@@ -171,6 +208,67 @@ impl Parser<'_> {
 
     fn skip_extended(&mut self) {
         while self.next().is_some_and(|b| b != b';') {}
+    }
+
+    fn end_extended(&mut self, command: Command) -> Result<Command, ParseError> {
+        match self.next() {
+            None | Some(b';') => Ok(command),
+            Some(_) => Err(ParseError),
+        }
+    }
+
+    /// Up to `limits.len()` comma-separated values, each at most its limit.
+    fn subparameters<const N: usize>(
+        &mut self,
+        limits: [u8; N],
+    ) -> Result<[Option<u8>; N], ParseError> {
+        let mut values = [None; N];
+        for (i, (value, limit)) in values.iter_mut().zip(limits).enumerate() {
+            if i > 0 {
+                if self.peek() != Some(b',') {
+                    break;
+                }
+                self.at += 1;
+            }
+            *value = self.number()?;
+            if value.is_some_and(|v| v > limit) {
+                return Err(ParseError);
+            }
+        }
+        Ok(values)
+    }
+
+    fn error_control(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::ReadErrorControl,
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::ListErrorControl
+            }
+            (Some(b'='), _) => {
+                let [orig_rqst, orig_fbk, ans_fbk] = self.subparameters([3, 3, 5])?;
+                Command::SetErrorControl {
+                    orig_rqst,
+                    orig_fbk,
+                    ans_fbk,
+                }
+            }
+            _ => return Err(ParseError),
+        };
+        self.end_extended(command)
+    }
+
+    fn error_report(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::ReadErrorReport,
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::ListErrorReport
+            }
+            (Some(b'='), _) => Command::ReportErrorControl(self.value(1)? == 1),
+            _ => return Err(ParseError),
+        };
+        self.end_extended(command)
     }
 
     fn modulation(&mut self) -> Result<Command, ParseError> {
@@ -209,10 +307,7 @@ impl Parser<'_> {
             }
             _ => return Err(ParseError),
         };
-        match self.next() {
-            None | Some(b';') => Ok(command),
-            Some(_) => Err(ParseError),
-        }
+        self.end_extended(command)
     }
 
     fn register(&mut self) -> Result<Command, ParseError> {
@@ -323,14 +418,76 @@ mod tests {
     #[test]
     fn accepts_vendor_commands_without_effect() {
         assert_eq!(
-            parse(b"&K3&D2\\N0%C0+FCLASS=0;E1").unwrap(),
+            parse(b"&K3&D2\\Q3%C0+FCLASS=0;+ESR=1;E1").unwrap(),
             [
                 Command::Ignored,
                 Command::Ignored,
                 Command::Ignored,
                 Command::Ignored,
                 Command::Ignored,
+                Command::Ignored,
                 Command::Echo(true),
+            ]
+        );
+    }
+
+    fn error_control(orig_rqst: u8, orig_fbk: u8, ans_fbk: u8) -> Command {
+        Command::SetErrorControl {
+            orig_rqst: Some(orig_rqst),
+            orig_fbk: Some(orig_fbk),
+            ans_fbk: Some(ans_fbk),
+        }
+    }
+
+    #[test]
+    fn parses_error_control() {
+        assert_eq!(
+            parse(b"+ES=3,0,2;+es=2;+ES=,,4;+ES?;+ES=?").unwrap(),
+            [
+                error_control(3, 0, 2),
+                Command::SetErrorControl {
+                    orig_rqst: Some(2),
+                    orig_fbk: None,
+                    ans_fbk: None,
+                },
+                Command::SetErrorControl {
+                    orig_rqst: None,
+                    orig_fbk: None,
+                    ans_fbk: Some(4),
+                },
+                Command::ReadErrorControl,
+                Command::ListErrorControl,
+            ]
+        );
+        assert_eq!(
+            parse(b"+ER=1;+ER=0;+ER?;+ER=?").unwrap(),
+            [
+                Command::ReportErrorControl(true),
+                Command::ReportErrorControl(false),
+                Command::ReadErrorReport,
+                Command::ListErrorReport,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_error_control_it_cannot_run() {
+        assert_eq!(parse(b"+ES=4"), Err(ParseError));
+        assert_eq!(parse(b"+ES=3,4"), Err(ParseError));
+        assert_eq!(parse(b"+ES=3,0,6"), Err(ParseError));
+        assert_eq!(parse(b"+ER=2"), Err(ParseError));
+        assert_eq!(parse(b"\\N4"), Err(ParseError));
+    }
+
+    #[test]
+    fn backslash_n_sets_all_of_es() {
+        assert_eq!(
+            parse(b"\\N\\N1\\N2\\N3").unwrap(),
+            [
+                error_control(1, 0, 1),
+                error_control(1, 0, 1),
+                error_control(3, 3, 5),
+                error_control(3, 0, 2),
             ]
         );
     }

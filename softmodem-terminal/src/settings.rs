@@ -68,7 +68,62 @@ pub struct Settings {
     pub monitor: u8,
     pub dcd: Dcd,
     pub modulation: Modulation,
+    pub error_control: ErrorControl,
     pub registers: [u8; 256],
+}
+
+/// What `+ES` sets, how to try V.42, with V.250's subparameters, and what
+/// `+ER` sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorControl {
+    pub orig_rqst: u8,
+    pub orig_fbk: u8,
+    pub ans_fbk: u8,
+    /// Whether to report the error control in use before CONNECT.
+    pub report: bool,
+}
+
+impl Default for ErrorControl {
+    fn default() -> Self {
+        Self {
+            orig_rqst: 3,
+            orig_fbk: 0,
+            ans_fbk: 2,
+            report: false,
+        }
+    }
+}
+
+impl ErrorControl {
+    /// Whether an originating modem tries V.42.
+    #[must_use]
+    pub fn originator_tries(&self) -> bool {
+        self.orig_rqst >= 2
+    }
+
+    /// Whether an originating modem starts with the detection phase.
+    #[must_use]
+    pub fn originator_detects(&self) -> bool {
+        self.orig_rqst == 3
+    }
+
+    /// Whether an originating modem hangs up without V.42.
+    #[must_use]
+    pub fn originator_requires(&self) -> bool {
+        self.orig_fbk >= 2
+    }
+
+    /// Whether an answering modem tries V.42.
+    #[must_use]
+    pub fn answerer_tries(&self) -> bool {
+        self.ans_fbk >= 2
+    }
+
+    /// Whether an answering modem hangs up without V.42.
+    #[must_use]
+    pub fn answerer_requires(&self) -> bool {
+        self.ans_fbk >= 4
+    }
 }
 
 /// What `+MS` sets: the highest modulation to use, and whether automode may
@@ -148,6 +203,7 @@ impl Default for Settings {
             monitor: 1,
             dcd: Dcd::AlwaysOn,
             modulation: Modulation::default(),
+            error_control: ErrorControl::default(),
             registers,
         }
     }
@@ -173,6 +229,17 @@ impl Settings {
             Command::SetCarrier { carrier, automode } => {
                 self.modulation = Modulation { carrier, automode };
             }
+            Command::SetErrorControl {
+                orig_rqst,
+                orig_fbk,
+                ans_fbk,
+            } => {
+                let current = &mut self.error_control;
+                current.orig_rqst = orig_rqst.unwrap_or(current.orig_rqst);
+                current.orig_fbk = orig_fbk.unwrap_or(current.orig_fbk);
+                current.ans_fbk = ans_fbk.unwrap_or(current.ans_fbk);
+            }
+            Command::ReportErrorControl(on) => self.error_control.report = on,
             Command::SetRegister { register, value } => {
                 self.registers[usize::from(register)] = value;
             }
@@ -405,6 +472,32 @@ mod tests {
                 automode: true
             }
         );
+    }
+
+    #[test]
+    fn tries_v42_and_falls_back_by_default() {
+        let control = Settings::default().error_control;
+        assert!(control.originator_tries() && control.originator_detects());
+        assert!(control.answerer_tries());
+        assert!(!control.originator_requires() && !control.answerer_requires());
+    }
+
+    #[test]
+    fn es_changes_only_the_subparameters_given() {
+        let mut settings = Settings::default();
+        assert!(settings.apply(&Command::SetErrorControl {
+            orig_rqst: None,
+            orig_fbk: Some(3),
+            ans_fbk: None,
+        }));
+        assert_eq!(
+            settings.error_control,
+            ErrorControl {
+                orig_fbk: 3,
+                ..ErrorControl::default()
+            }
+        );
+        assert!(settings.error_control.originator_requires());
     }
 
     #[test]
