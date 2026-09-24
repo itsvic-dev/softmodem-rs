@@ -62,24 +62,33 @@
         }
       );
 
-      devShells = forSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages =
-            with pkgs;
-            [
-              cargo
-              rustc
-              clippy
-              rustfmt
-              rust-analyzer
-              crate2nix
-              # Only for softmodem-interop, which tests against spandsp.
-              pkg-config
-              spandsp3
-            ]
-            ++ lib.optional stdenv.hostPlatform.isLinux alsa-lib;
-        };
-      });
+      devShells = forSystems (
+        pkgs:
+        let
+          shell =
+            spandsp:
+            pkgs.mkShell {
+              packages =
+                with pkgs;
+                [
+                  cargo
+                  rustc
+                  clippy
+                  rustfmt
+                  rust-analyzer
+                  crate2nix
+                  # Only for softmodem-interop, which tests against spandsp.
+                  pkg-config
+                  spandsp
+                ]
+                ++ lib.optional stdenv.hostPlatform.isLinux alsa-lib;
+            };
+        in
+        {
+          default = shell pkgs.spandsp3;
+          spandsp-3_1 = shell (pkgs.callPackage ./nix/spandsp.nix { });
+        }
+      );
 
       formatter = forSystems (pkgs: pkgs.nixfmt);
     };
