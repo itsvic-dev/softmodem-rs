@@ -18,7 +18,9 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `softmodem`: the modem state machine that joins them, and the binary.
 - `softmodem-interop`: tests only, against spandsp's V.21, V.22, V.22bis,
   V.8, V.42, V.42bis and answer tones. It links spandsp through pkg-config, which only
-  the dev shell provides.
+  the dev shell provides. The default shell has spandsp 3.0.0, and
+  `nix develop .#spandsp-3_1` has 3.1.1 with V.34
+  (`nix/spandsp.nix`). Run the interop tests in both.
 
 ## Working here
 

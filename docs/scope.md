@@ -32,10 +32,10 @@ V.34 is the step after V.22bis: up to 33.6 kbit/s, and the upstream half of
 V.90. It needs trellis coding, shell mapping, precoding, line probing, and
 an echo canceller for the echo of its own signal from the far hybrid.
 
-There is no reference for it but the ITU text. spandsp's `--enable-v34`
-builds only fragments of a V.34 modem, and its packaged releases have none.
-Until a real modem is at hand, V.34 is checked only between two instances of
-this modem.
+spandsp 3.1.1 has a V.34 modem, but only part of one. Two instances of it
+exchange INFO0, send the line probing tones and start INFO1, then stop
+before data. So it can check the start of phase 2 and no further. Beyond
+that, the ITU text is the only reference until a real modem is at hand.
 
 ## 56k
 

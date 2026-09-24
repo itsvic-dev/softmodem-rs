@@ -27,6 +27,16 @@ tones are in many real products. It links spandsp, so it only builds in the
 dev shell, and the modem itself does not depend on it. spandsp is a black
 box: see "Rejected" in [scope](scope.md).
 
+There are two versions to test against, and one test binary can link only
+one of them:
+
+- The 3.0.0 snapshot from 2020 that nixpkgs ships, in the default dev shell.
+- 3.1.1, the first tagged release, in `nix develop .#spandsp-3_1`, built with
+  its V.34 modem. `cfg(spandsp_3_1)` selects the parts of the binding that
+  changed. Its XID leaves out the value of the HDLC optional functions but
+  still counts it in the group length, so a strict parser refuses the frame.
+  spandsp's own parser accepts it. The package patches this.
+
 What spandsp does that matters here:
 
 - Its V.22bis modem started at 1200 bit/s is the V.22 reference. Its answer
