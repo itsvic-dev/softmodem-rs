@@ -108,8 +108,10 @@ where
         self
     }
 
-    /// Serves the computer until its input ends or `stop` completes, and
-    /// hangs up cleanly either way.
+    /// Serves the computer until `stop` completes, or until its input ends
+    /// on a port that takes no other computer, and hangs up cleanly either
+    /// way. On one that does, the end of input hangs up and waits for the
+    /// next computer.
     ///
     /// # Errors
     ///
@@ -138,7 +140,12 @@ where
                     let n = read?;
                     if n == 0 {
                         self.put_down().await;
-                        return Ok(());
+                        if !self.port.takes_another() {
+                            return Ok(());
+                        }
+                        self.off_hook = false;
+                        self.editor = LineEditor::new();
+                        continue;
                     }
                     self.computer_sent(&buf[..n]).await?;
                 }

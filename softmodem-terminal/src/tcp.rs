@@ -52,6 +52,10 @@ impl SerialPort for TcpPort {
     fn set_carrier(&mut self, _: bool) -> io::Result<()> {
         Ok(())
     }
+
+    fn takes_another(&self) -> bool {
+        true
+    }
 }
 
 impl AsyncRead for TcpPort {

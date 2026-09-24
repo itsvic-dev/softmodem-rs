@@ -24,6 +24,13 @@ pub trait SerialPort: AsyncRead + AsyncWrite + Unpin {
         let _ = on;
         Ok(())
     }
+
+    /// Whether another computer can come after this one's input ends, as
+    /// on a TCP port. The modem hangs up when input ends, and stops unless
+    /// another can come.
+    fn takes_another(&self) -> bool {
+        false
+    }
 }
 
 /// A port with no control lines, such as stdin and stdout.
