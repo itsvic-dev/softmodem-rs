@@ -4,8 +4,9 @@ use common::{add_noise, mix, resample};
 use softmodem_dsp::pump::Role;
 use softmodem_dsp::tone::Tone;
 use softmodem_dsp::v34::info::{Deframer, Info, Info0, Info1c, Probe};
+use softmodem_dsp::v34::modulator::Modulator;
 use softmodem_dsp::v34::probing::{self, Analyser, L1_DBM0, L2_DBM0, Probing};
-use softmodem_dsp::v34::{GUARD_DBM0, GUARD_HZ, NOMINAL_DBM0, dpsk, tones};
+use softmodem_dsp::v34::{GUARD_DBM0, GUARD_HZ, NOMINAL_DBM0, SymbolRate, dpsk, tones};
 
 const FRAME: usize = 160;
 
@@ -255,6 +256,123 @@ fn measures_the_shape_of_the_line() {
             "pre-emphasis would suit another line: {tone:?}, not {expected:.2} dB"
         );
     }
+}
+
+fn modulated(symbol_rate: SymbolRate, pre_emphasis: u8) -> Vec<i16> {
+    let mut modulator = Modulator::new(symbol_rate, false, pre_emphasis, NOMINAL_DBM0);
+    let mut noise = common::Noise(0x5DEE_CE66_D1CE_4E5B);
+    let scale = std::f64::consts::FRAC_1_SQRT_2;
+    let mut next = || {
+        let re = if noise.uniform() > 0.0 { scale } else { -scale };
+        let im = if noise.uniform() > 0.0 { scale } else { -scale };
+        (re, im)
+    };
+    let mut out = vec![0; 24_000];
+    modulator.render(&mut out, &mut next);
+    out.split_off(800)
+}
+
+const BLOCK: usize = 256;
+
+fn spectrum(samples: &[i16]) -> Vec<f64> {
+    let window: Vec<f64> = (0..BLOCK)
+        .map(|n| {
+            let t = f64::from(u32::try_from(n).unwrap()) / f64::from(u32::try_from(BLOCK).unwrap());
+            0.5 - 0.5 * (std::f64::consts::TAU * t).cos()
+        })
+        .collect();
+    let mut bins = vec![0.0; BLOCK / 2];
+    for block in samples.as_chunks::<BLOCK>().0 {
+        for (k, bin) in bins.iter_mut().enumerate() {
+            let (mut re, mut im) = (0.0, 0.0);
+            for (n, (&x, w)) in block.iter().zip(&window).enumerate() {
+                let angle = std::f64::consts::TAU * f64::from(u32::try_from(k * n).unwrap())
+                    / f64::from(u32::try_from(BLOCK).unwrap());
+                re += f64::from(x) * w * angle.cos();
+                im -= f64::from(x) * w * angle.sin();
+            }
+            *bin += re * re + im * im;
+        }
+    }
+    bins
+}
+
+fn band_db(bins: &[f64], low_hz: f64, high_hz: f64) -> f64 {
+    let bin_hz = 8000.0 / f64::from(u32::try_from(BLOCK).unwrap());
+    let (sum, count) = bins
+        .iter()
+        .enumerate()
+        .filter(|&(k, _)| {
+            let hz = f64::from(u32::try_from(k).unwrap()) * bin_hz;
+            (low_hz..high_hz).contains(&hz)
+        })
+        .fold((0.0, 0.0), |(sum, count), (_, &power)| {
+            (sum + power, count + 1.0)
+        });
+    10.0 * (sum / count).log10()
+}
+
+#[test]
+fn sends_data_mode_at_its_level_through_any_pre_emphasis() {
+    let expected = softmodem_dsp::sine_peak(NOMINAL_DBM0).powi(2) / 2.0;
+    for pre_emphasis in [0, 5, 10] {
+        let samples = modulated(SymbolRate::S3200, pre_emphasis);
+        let mean = samples.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
+            / f64::from(u32::try_from(samples.len()).unwrap());
+        let db = 10.0 * (mean / expected).log10();
+        assert!(
+            db.abs() < 0.5,
+            "filter {pre_emphasis} would send {db:.2} dB off the nominal power"
+        );
+    }
+}
+
+#[test]
+fn keeps_data_mode_in_its_band() {
+    for symbol_rate in [SymbolRate::S2400, SymbolRate::S3200, SymbolRate::S3429] {
+        let bins = spectrum(&modulated(symbol_rate, 0));
+        let carrier = symbol_rate.carrier_hz(false);
+        let baud = symbol_rate.baud();
+        let edge = |offset: f64| carrier + offset * baud;
+        let slices: Vec<f64> = (-4..4)
+            .map(|n| {
+                let low = f64::from(n) * 0.1;
+                band_db(&bins, edge(low), edge(low + 0.1))
+            })
+            .collect();
+        let mean = slices.iter().sum::<f64>() / 8.0;
+        assert!(
+            slices.iter().all(|&db| (db - mean).abs() < 1.0),
+            "{symbol_rate:?} would not be flat across its band: {slices:.2?}"
+        );
+        let outside = band_db(&bins, edge(0.6).min(3990.0), 4000.0).max(band_db(
+            &bins,
+            0.0,
+            edge(-0.6).max(10.0),
+        ));
+        assert!(
+            mean - outside > 25.0,
+            "{symbol_rate:?} would leak {:.1} dB below the band",
+            mean - outside
+        );
+    }
+}
+
+#[test]
+fn tilts_the_band_as_the_far_end_asked() {
+    let flat = spectrum(&modulated(SymbolRate::S3000, 0));
+    let tilted = spectrum(&modulated(SymbolRate::S3000, 5));
+    let carrier = SymbolRate::S3000.carrier_hz(false);
+    let tilt = |bins: &[f64]| {
+        band_db(bins, carrier + 900.0, carrier + 1200.0)
+            - band_db(bins, carrier - 1200.0, carrier - 900.0)
+    };
+    let slope = tilt(&tilted) - tilt(&flat);
+    let wanted = 10.0 * 2100.0 / 3000.0;
+    assert!(
+        (slope - wanted).abs() < 1.5,
+        "filter 5 would tilt the band by {slope:.1} dB, not {wanted:.1} dB"
+    );
 }
 
 #[test]

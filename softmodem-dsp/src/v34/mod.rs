@@ -8,6 +8,7 @@ pub mod dpsk;
 pub mod encoder;
 pub mod framing;
 pub mod info;
+pub mod modulator;
 pub mod mp;
 pub mod probing;
 pub mod shell;
