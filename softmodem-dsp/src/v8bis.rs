@@ -1,10 +1,13 @@
-//! V.8 bis: the tone signals that start a transaction.
+//! V.8 bis: the tone signals that start a transaction, and the messages
+//! that carry it over V.21.
 
 use std::collections::VecDeque;
 
 use crate::correlator::Correlator;
+use crate::hdlc::{self, Deframer};
 use crate::sine_peak;
 use crate::tone::Tone;
+use crate::v8::Modes;
 
 // § 7.1.1, tables 1 and 2.
 const INITIATING_HZ: [f64; 2] = [1375.0, 2002.0];
@@ -253,11 +256,370 @@ impl SignalDetector {
     }
 }
 
+// § 7.2.4, 100 ms of mark at 300 bit/s, and § 7.2.5.
+const PREAMBLE_BITS: usize = 30;
+const OPENING_FLAGS: usize = 2;
+// § 7.2.9: fewer than three octets between the flags is an invalid frame.
+const MIN_CONTENT: usize = 1;
+
+// § 8.3.2, table 4.
+const REVISION: u8 = 2;
+
+// § 8.2.3: the delimiting bits of level 1 and level 2 blocks.
+const LAST_OF_LEVEL_1: u8 = 0x80;
+const LAST_OF_LEVEL_2: u8 = 0x40;
+
+// Table 5-1.
+const V8: u8 = 0x01;
+const SHORT_V8: u8 = 0x02;
+const TRANSMIT_ACK: u8 = 0x08;
+// Table 6-2a.
+const DATA: u8 = 0x01;
+// Tables 6-3a and 6-3c.
+const TRANSPARENT_DATA: u8 = 0x01;
+const V22BIS: u8 = 0x02;
+const V22: u8 = 0x04;
+const V21: u8 = 0x08;
+
+/// The message type of § 8.3.1, table 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Ms,
+    Cl,
+    Clr,
+    Ack1,
+    Ack2,
+    Nak1,
+    Nak2,
+    Nak3,
+    Nak4,
+}
+
+impl Kind {
+    fn code(self) -> u8 {
+        match self {
+            Self::Ms => 0x1,
+            Self::Cl => 0x2,
+            Self::Clr => 0x3,
+            Self::Ack1 => 0x4,
+            Self::Ack2 => 0x5,
+            Self::Nak1 => 0x8,
+            Self::Nak2 => 0x9,
+            Self::Nak3 => 0xA,
+            Self::Nak4 => 0xB,
+        }
+    }
+
+    fn from_code(code: u8) -> Option<Self> {
+        [
+            Self::Ms,
+            Self::Cl,
+            Self::Clr,
+            Self::Ack1,
+            Self::Ack2,
+            Self::Nak1,
+            Self::Nak2,
+            Self::Nak3,
+            Self::Nak4,
+        ]
+        .into_iter()
+        .find(|k| k.code() == code)
+    }
+
+    fn has_fields(self) -> bool {
+        matches!(self, Self::Ms | Self::Cl | Self::Clr)
+    }
+}
+
+/// A message, with only the parameters this modem uses. It reads and
+/// skips all others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Message {
+    pub kind: Kind,
+    /// A V.8 start-up after the transaction (§ 9.9.1).
+    pub v8: bool,
+    /// A shortened V.8 start-up (§ 9.9.2).
+    pub short_v8: bool,
+    /// In MS, that ACK(1) must answer it (§ 9.7).
+    pub transmit_ack: bool,
+    /// The data mode, with the modulations under it, if the message has it.
+    pub data: Option<Modes>,
+}
+
+impl Message {
+    #[must_use]
+    pub fn plain(kind: Kind) -> Self {
+        Self {
+            kind,
+            v8: false,
+            short_v8: false,
+            transmit_ack: false,
+            data: None,
+        }
+    }
+
+    /// The information field, from the identification field on.
+    #[must_use]
+    pub fn octets(&self) -> Vec<u8> {
+        let mut octets = vec![self.kind.code() | REVISION << 4];
+        if !self.kind.has_fields() {
+            return octets;
+        }
+        let npar1 = if self.v8 { V8 } else { 0 }
+            | if self.short_v8 { SHORT_V8 } else { 0 }
+            | if self.transmit_ack { TRANSMIT_ACK } else { 0 };
+        octets.extend([npar1 | LAST_OF_LEVEL_1, LAST_OF_LEVEL_1]);
+        octets.push(LAST_OF_LEVEL_1);
+        match self.data {
+            None => octets.push(LAST_OF_LEVEL_1),
+            Some(modes) => {
+                let modulations =
+                    if modes.v22bis { V22BIS | V22 } else { 0 } | if modes.v21 { V21 } else { 0 };
+                octets.extend([
+                    DATA | LAST_OF_LEVEL_1,
+                    TRANSPARENT_DATA,
+                    0,
+                    modulations | LAST_OF_LEVEL_2 | LAST_OF_LEVEL_1,
+                ]);
+            }
+        }
+        octets
+    }
+
+    /// Reads an information field. Returns `None` for a message type this
+    /// revision does not define.
+    #[must_use]
+    pub fn parse(octets: &[u8]) -> Option<Self> {
+        let (&first, rest) = octets.split_first()?;
+        let kind = Kind::from_code(first & 0x0F)?;
+        let mut message = Self::plain(kind);
+        if !kind.has_fields() {
+            return Some(message);
+        }
+        let mut at = 0;
+        let identification = Field::read(rest, &mut at);
+        let npar1 = identification.npar1.first().copied().unwrap_or(0);
+        message.v8 = npar1 & V8 != 0;
+        message.short_v8 = npar1 & SHORT_V8 != 0;
+        message.transmit_ack = npar1 & TRANSMIT_ACK != 0;
+        let standard = Field::read(rest, &mut at);
+        message.data = standard.data();
+        Some(message)
+    }
+
+    /// The whole message as V.21 bits: the preamble, flags, the frame with
+    /// its FCS, and a closing flag.
+    #[must_use]
+    pub fn bits(&self) -> VecDeque<bool> {
+        let mut bits = VecDeque::from(vec![true; PREAMBLE_BITS]);
+        for _ in 0..OPENING_FLAGS {
+            hdlc::push_flag(&mut bits);
+        }
+        hdlc::push_frame(&self.octets(), &mut bits);
+        bits
+    }
+}
+
+// The parameter tree of § 8.2.
+#[derive(Debug, Default)]
+struct Field {
+    npar1: Vec<u8>,
+    spar1: Vec<u8>,
+    par2: Vec<Vec<u8>>,
+}
+
+impl Field {
+    fn read(octets: &[u8], at: &mut usize) -> Self {
+        let npar1 = block(octets, at, LAST_OF_LEVEL_1);
+        let spar1 = block(octets, at, LAST_OF_LEVEL_1);
+        let set = spar1
+            .iter()
+            .map(|o| (o & !LAST_OF_LEVEL_1).count_ones())
+            .sum::<u32>();
+        let par2 = (0..set).map(|_| par2(octets, at)).collect();
+        Self { npar1, spar1, par2 }
+    }
+
+    fn data(&self) -> Option<Modes> {
+        if self.spar1.first().is_none_or(|o| o & DATA == 0) {
+            return None;
+        }
+        let modulations = self.par2.first()?.get(2).copied().unwrap_or(0);
+        Some(Modes {
+            v22bis: modulations & (V22BIS | V22) != 0,
+            v21: modulations & V21 != 0,
+        })
+    }
+}
+
+fn block(octets: &[u8], at: &mut usize, last: u8) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(&octet) = octets.get(*at) {
+        *at += 1;
+        out.push(octet);
+        if octet & last != 0 {
+            break;
+        }
+    }
+    out
+}
+
+// § 8.2.3: both delimiting bits on the last NPar(2) mean no SPar(2)s follow.
+fn par2(octets: &[u8], at: &mut usize) -> Vec<u8> {
+    let npar2 = block(octets, at, LAST_OF_LEVEL_2);
+    let both = LAST_OF_LEVEL_1 | LAST_OF_LEVEL_2;
+    if npar2.last().is_none_or(|o| o & both == both) {
+        return npar2;
+    }
+    let spar2 = block(octets, at, LAST_OF_LEVEL_2);
+    let set = spar2.iter().map(|o| (o & 0x3F).count_ones()).sum::<u32>();
+    for _ in 0..set {
+        block(octets, at, LAST_OF_LEVEL_2);
+    }
+    npar2
+}
+
+/// What the reader found in the bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Heard {
+    Message(Message),
+    /// A frame that § 7.2.9 calls invalid, such as one with a bad FCS.
+    Invalid,
+}
+
+/// Finds messages in a stream of V.21 bits.
+#[derive(Debug)]
+pub struct Reader {
+    deframer: Deframer,
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Reader {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            deframer: Deframer::new(MIN_CONTENT),
+        }
+    }
+
+    pub fn push(&mut self, bit: bool) -> Option<Heard> {
+        let bad = self.deframer.bad_frames();
+        match self.deframer.push(bit) {
+            Some(frame) => Message::parse(&frame).map(Heard::Message),
+            None if self.deframer.bad_frames() > bad => Some(Heard::Invalid),
+            None => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ansam::{AnswerTone, AnswerToneKind};
-    use crate::fsk::{Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0};
+    use crate::fsk::{Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
+
+    const BOTH: Modes = Modes {
+        v22bis: true,
+        v21: true,
+    };
+
+    fn cl() -> Message {
+        Message {
+            v8: true,
+            transmit_ack: true,
+            data: Some(BOTH),
+            ..Message::plain(Kind::Cl)
+        }
+    }
+
+    fn read(bits: impl IntoIterator<Item = bool>) -> Vec<Heard> {
+        let mut reader = Reader::new();
+        bits.into_iter().filter_map(|b| reader.push(b)).collect()
+    }
+
+    #[test]
+    fn encodes_a_cl_with_v8_and_the_data_modulations() {
+        assert_eq!(
+            cl().octets(),
+            [0x22, 0x89, 0x80, 0x80, 0x81, 0x01, 0x00, 0xCE]
+        );
+    }
+
+    #[test]
+    fn ack_and_nak_are_one_octet() {
+        assert_eq!(Message::plain(Kind::Ack1).octets(), [0x24]);
+        assert_eq!(Message::plain(Kind::Nak3).octets(), [0x2A]);
+    }
+
+    #[test]
+    fn messages_read_back_from_their_bits() {
+        let ms = Message {
+            v8: true,
+            data: Some(Modes {
+                v22bis: false,
+                v21: true,
+            }),
+            ..Message::plain(Kind::Ms)
+        };
+        for message in [cl(), ms, Message::plain(Kind::Ack1)] {
+            assert_eq!(read(message.bits()), [Heard::Message(message)]);
+        }
+    }
+
+    #[test]
+    fn a_corrupt_message_is_invalid() {
+        let mut bits = cl().bits();
+        bits[PREAMBLE_BITS + 8 * OPENING_FLAGS + 3] ^= true;
+        assert_eq!(read(bits), [Heard::Invalid]);
+    }
+
+    #[test]
+    fn skips_the_parameters_it_does_not_use() {
+        let octets = [
+            0x21, // MS, revision 2
+            0x81, // V.8
+            0x81, // network type
+            0xC4, // digital PSTN access
+            0xC0, // non-standard capabilities
+            0xA1, // data and analogue telephony
+            0x03, // transparent data, V.42
+            0x10, // V.34
+            0xC8, // V.21
+            0xC1, // voice
+        ];
+        let ms = Message::parse(&octets).unwrap();
+        assert!(ms.v8 && !ms.transmit_ack);
+        assert_eq!(
+            ms.data,
+            Some(Modes {
+                v22bis: false,
+                v21: true
+            })
+        );
+    }
+
+    #[test]
+    fn a_message_without_the_data_mode_has_none() {
+        let octets = [0x21, 0x81, 0x80, 0x80, 0xA0, 0xC1];
+        assert_eq!(Message::parse(&octets).unwrap().data, None);
+    }
+
+    #[test]
+    fn a_message_crosses_v21_after_its_preamble_alone() {
+        let mut modulator = Modulator::new(V21_ORIGINATE, V21_MAX_LEVEL_DBM0);
+        modulator.push_bits(cl().bits());
+        let mut samples = vec![0; 8000];
+        modulator.render(&mut samples);
+        let mut demodulator = Demodulator::with_carrier_on(V21_ORIGINATE, 160);
+        let mut bits = Vec::new();
+        demodulator.process(&samples, &mut bits);
+        assert_eq!(read(bits), [Heard::Message(cl())]);
+    }
 
     const LEVEL: f64 = V21_MAX_LEVEL_DBM0;
     // § 7.1.4: 12 to 15 dB below the level of continuous signals.
