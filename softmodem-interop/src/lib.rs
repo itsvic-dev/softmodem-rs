@@ -26,18 +26,29 @@ type PutMsg = unsafe extern "C" fn(*mut c_void, *const u8, c_int);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-struct V8Parms {
-    status: c_int,
-    modem_connect_tone: c_int,
-    send_ci: c_int,
-    v92: c_int,
+struct V8CmJm {
     call_function: c_int,
     modulations: std::ffi::c_uint,
     protocol: c_int,
     pstn_access: c_int,
+    #[cfg(not(spandsp_3_1))]
     pcm_modem_availability: c_int,
     nsf: c_int,
+    #[cfg(spandsp_3_1)]
+    pcm_modem_availability: c_int,
     t66: c_int,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct V8Parms {
+    status: c_int,
+    #[cfg(spandsp_3_1)]
+    gateway_mode: bool,
+    modem_connect_tone: c_int,
+    send_ci: c_int,
+    v92: c_int,
+    cm_jm: V8CmJm,
 }
 
 #[link(name = "spandsp")]
@@ -505,10 +516,13 @@ impl V8 {
                 AnswerTone::AnsamPr as c_int
             },
             v92: -1,
-            call_function: V8_CALL_V_SERIES,
-            modulations: if v22bis { V8_MOD_V22 } else { 0 } | if v21 { V8_MOD_V21 } else { 0 },
-            nsf: -1,
-            t66: -1,
+            cm_jm: V8CmJm {
+                call_function: V8_CALL_V_SERIES,
+                modulations: if v22bis { V8_MOD_V22 } else { 0 } | if v21 { V8_MOD_V21 } else { 0 },
+                nsf: -1,
+                t66: -1,
+                ..V8CmJm::default()
+            },
             ..V8Parms::default()
         };
         let slot = ptr::addr_of_mut!(*result).cast::<c_void>();
@@ -537,8 +551,8 @@ impl V8 {
     pub fn outcome(&self) -> Option<V8Outcome> {
         self.result.map(|parms| V8Outcome {
             agreed: parms.status == V8_STATUS_V8_CALL,
-            v22bis: parms.modulations & V8_MOD_V22 != 0,
-            v21: parms.modulations & V8_MOD_V21 != 0,
+            v22bis: parms.cm_jm.modulations & V8_MOD_V22 != 0,
+            v21: parms.cm_jm.modulations & V8_MOD_V21 != 0,
         })
     }
 }
