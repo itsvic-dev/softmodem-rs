@@ -8,6 +8,8 @@ use crate::v21::V21;
 use crate::v22::V22;
 use crate::v22bis::V22bis;
 use crate::v34::pump::V34;
+use crate::v90::analogue::Analogue;
+use crate::v90::digital::Digital;
 
 /// Which end of the link this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,18 +26,22 @@ pub enum Modulation {
     V22bis,
     /// V.34 duplex, whose phase 1 is V.8.
     V34,
+    /// V.90, whose phase 1 is V.8. The answer modem is the digital modem.
+    V90,
 }
 
 impl Modulation {
     /// The pump from the end of its start-up: the answer tone, or for V.34
-    /// the silence after CJ.
+    /// and V.90 the silence after CJ.
     #[must_use]
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
-        match self {
-            Self::V21 => Box::new(V21::new(role)),
-            Self::V22 => Box::new(V22::new(role)),
-            Self::V22bis => Box::new(V22bis::new(role)),
-            Self::V34 => Box::new(V34::new(role)),
+        match (self, role) {
+            (Self::V21, _) => Box::new(V21::new(role)),
+            (Self::V22, _) => Box::new(V22::new(role)),
+            (Self::V22bis, _) => Box::new(V22bis::new(role)),
+            (Self::V34, _) => Box::new(V34::new(role)),
+            (Self::V90, Role::Answer) => Box::new(Digital::new()),
+            (Self::V90, Role::Originate) => Box::new(Analogue::new()),
         }
     }
 }
@@ -53,7 +59,7 @@ impl Offer {
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
         if self.automode {
             crate::automode::pump(self.top, role)
-        } else if self.top == Modulation::V34 {
+        } else if matches!(self.top, Modulation::V34 | Modulation::V90) {
             crate::automode::only(self.top, role)
         } else {
             self.top.pump(role)

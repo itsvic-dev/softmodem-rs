@@ -58,7 +58,7 @@ fn started(offer: Offered, role: Role) -> Box<dyn DataPump> {
     }
 }
 
-// V.34 sends the 75 ms after CJ itself, as it listens for INFO0 during them.
+// V.34 and V.90 send the 75 ms after CJ themselves, as they listen for INFO0 during them.
 fn gap(modes: Modes) -> usize {
     if modes.v34 { 0 } else { GAP_SAMPLES }
 }
@@ -71,20 +71,27 @@ struct Offered {
 }
 
 impl Offered {
-    fn modes(self) -> Modes {
+    // V.8 § 6.3 asks for V.34 beside V.90.
+    fn modes(self, role: Role) -> Modes {
         let top = self.top;
         let family = matches!(top, Modulation::V22 | Modulation::V22bis);
+        let v90 = top == Modulation::V90;
+        let pcm = Pcm {
+            analogue: v90 && role == Role::Originate,
+            digital: v90 && role == Role::Answer,
+        };
+        let v34 = matches!(top, Modulation::V34 | Modulation::V90);
         if self.fallback {
             Modes {
-                v90: Pcm::NONE,
-                v34: top == Modulation::V34,
+                v90: pcm,
+                v34,
                 v22bis: top != Modulation::V21,
                 v21: true,
             }
         } else {
             Modes {
-                v90: Pcm::NONE,
-                v34: top == Modulation::V34,
+                v90: pcm,
+                v34,
                 v22bis: family,
                 v21: top == Modulation::V21,
             }
@@ -93,7 +100,7 @@ impl Offered {
 
     // The V.22 family's own start-up, for a far end without V.8.
     fn legacy(self) -> Modulation {
-        if self.top == Modulation::V34 {
+        if matches!(self.top, Modulation::V34 | Modulation::V90) {
             Modulation::V22bis
         } else {
             self.top
@@ -101,7 +108,9 @@ impl Offered {
     }
 
     fn chosen(self, common: Modes, role: Role) -> Box<dyn DataPump> {
-        if common.v34 {
+        if common.v90.any() {
+            Modulation::V90.pump(role)
+        } else if common.v34 {
             Modulation::V34.pump(role)
         } else if common.v22bis {
             self.legacy().pump(role)
@@ -248,7 +257,7 @@ impl Answer {
         };
         self.stage = match stage {
             AnswerStage::Silence if sent >= V8BIS_SILENCE_SAMPLES => {
-                AnswerStage::V8bis(Box::new(Answering::new(self.offer.modes())))
+                AnswerStage::V8bis(Box::new(Answering::new(self.offer.modes(Role::Answer))))
             }
             AnswerStage::V8bis(answering) => match answering.startup() {
                 Some(Startup::V8) => tone,
@@ -345,7 +354,7 @@ impl DataPump for Answer {
             AnswerStage::V8bis(answering) => answering.receive(input),
             AnswerStage::Silence | AnswerStage::Tone { .. } => {
                 if let Some(cm) = self.link.menu(input) {
-                    let modes = self.offer.modes().common(cm.modes);
+                    let modes = self.offer.modes(Role::Answer).common(cm.modes);
                     self.stage = AnswerStage::Jm {
                         menu: Menu {
                             data: cm.data,
@@ -480,7 +489,7 @@ impl Call {
         Self {
             offer,
             stage: CallStage::Listening { heard_ans: false },
-            responder: Responding::new(offer.modes()),
+            responder: Responding::new(offer.modes(Role::Originate)),
             detector: AnswerToneDetector::new(),
             sig_a: SigA::new(offer),
             link: MenuLink::new(Role::Originate),
@@ -496,7 +505,7 @@ impl Call {
     }
 
     fn cm(&self) -> Menu {
-        Menu::data(self.offer.modes())
+        Menu::data(self.offer.modes(Role::Originate))
     }
 }
 
@@ -618,7 +627,7 @@ impl DataPump for Call {
                 if joint.is_none()
                     && let Some(jm) = self.link.menu(input)
                 {
-                    *joint = Some(self.offer.modes().common(jm.modes));
+                    *joint = Some(self.offer.modes(Role::Originate).common(jm.modes));
                 }
             }
             CallStage::Chosen(pump) => pump.receive(input, bits),
@@ -820,7 +829,7 @@ mod tests {
                 top: Modulation::V22bis,
                 fallback: true,
             }
-            .modes(),
+            .modes(Role::Originate),
         );
         assert_eq!(repeats.push(menu), None);
         assert_eq!(repeats.push(menu), Some(menu));
