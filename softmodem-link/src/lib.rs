@@ -5,6 +5,7 @@ pub mod detect;
 pub mod frame;
 pub mod hdlc;
 pub mod lapm;
+pub mod v42bis;
 pub mod xid;
 
 use std::collections::VecDeque;
