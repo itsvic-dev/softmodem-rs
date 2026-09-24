@@ -3,7 +3,6 @@
 
 pub mod detect;
 pub mod frame;
-pub mod hdlc;
 pub mod lapm;
 pub mod v42bis;
 pub mod xid;
@@ -11,11 +10,11 @@ pub mod xid;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use softmodem_dsp::hdlc::{self, Deframer};
 use softmodem_dsp::pump::Role;
 use softmodem_dsp::uart::{self, Decoder};
 
 use crate::detect::{Adp, Heard};
-use crate::hdlc::Deframer;
 use crate::lapm::{DEFAULT_N401, Lapm};
 use crate::v42bis::Directions;
 
@@ -29,6 +28,8 @@ const OPENING_FLAGS: usize = 16;
 const FLAGS_HEARD: usize = 3;
 // V.42 runs where V.14 does, so not over V.21 at 300 bit/s.
 const LOWEST_RATE: u32 = 1200;
+// Address and one control octet, the shortest a frame can be (§ 8.1.3).
+const MIN_FRAME: usize = 2;
 
 /// How a call tries V.42, as V.250's `+ES` sets it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +132,7 @@ impl Link {
             t401: Duration::ZERO,
             decoder,
             heard: Heard::default(),
-            deframer: Deframer::new(),
+            deframer: Deframer::new(MIN_FRAME),
             tx: VecDeque::new(),
             held: Vec::new(),
             received: Vec::new(),

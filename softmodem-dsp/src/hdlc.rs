@@ -1,5 +1,5 @@
-//! HDLC framing as V.42 § 8.1 uses it: flags, zero-bit insertion, aborts and
-//! the 16-bit FCS.
+//! HDLC framing as V.42 § 8.1 and V.8 bis § 7.2 use it: flags, zero-bit
+//! insertion, aborts and the 16-bit FCS.
 
 use std::collections::VecDeque;
 
@@ -11,8 +11,6 @@ const FCS_POLY: u16 = 0x8408;
 // The remainder a receiver is left with over a frame and its FCS (§ 8.1.1.6.1).
 const FCS_GOOD: u16 = 0xf0b8;
 const FCS_LEN: usize = 2;
-// Address and one control octet, the shortest a frame can be (§ 8.1.3).
-const MIN_CONTENT: usize = 2;
 // Far longer than any frame LAPM sends; past this the frame is unbounded.
 const MAX_BITS: usize = 8 * 4200;
 
@@ -60,8 +58,9 @@ pub fn push_frame(frame: &[u8], out: &mut VecDeque<bool>) {
 }
 
 /// Finds frames in a bit stream and checks their FCS.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Deframer {
+    min_content: usize,
     bits: Vec<bool>,
     ones: u8,
     open: bool,
@@ -70,9 +69,18 @@ pub struct Deframer {
 }
 
 impl Deframer {
+    /// A deframer that drops frames of fewer than `min_content` octets
+    /// before the FCS.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(min_content: usize) -> Self {
+        Self {
+            min_content,
+            bits: Vec::new(),
+            ones: 0,
+            open: false,
+            flags_in_a_row: 0,
+            bad_frames: 0,
+        }
     }
 
     /// Takes one bit, and returns a frame when its closing flag ends it. The
@@ -134,7 +142,7 @@ impl Deframer {
             return None;
         }
         self.flags_in_a_row = 0;
-        let frame = checked(&bits);
+        let frame = checked(&bits, self.min_content);
         if frame.is_none() {
             self.bad_frames += 1;
         }
@@ -142,8 +150,8 @@ impl Deframer {
     }
 }
 
-fn checked(bits: &[bool]) -> Option<Vec<u8>> {
-    if !bits.len().is_multiple_of(8) || bits.len() / 8 < MIN_CONTENT + FCS_LEN {
+fn checked(bits: &[bool], min_content: usize) -> Option<Vec<u8>> {
+    if !bits.len().is_multiple_of(8) || bits.len() / 8 < min_content + FCS_LEN {
         return None;
     }
     let mut bytes: Vec<u8> = bits
@@ -162,7 +170,7 @@ mod tests {
     use super::*;
 
     fn deframe(bits: impl IntoIterator<Item = bool>) -> (Vec<Vec<u8>>, Deframer) {
-        let mut deframer = Deframer::new();
+        let mut deframer = Deframer::new(2);
         let frames = bits.into_iter().filter_map(|b| deframer.push(b)).collect();
         (frames, deframer)
     }
@@ -230,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_start_stop_tilde_is_not_a_run_of_flags() {
-        let bits = (0..8).flat_map(|_| softmodem_dsp::uart::frame(FLAG));
+        let bits = (0..8).flat_map(|_| crate::uart::frame(FLAG));
         let (_, deframer) = deframe(bits);
         assert!(deframer.flags_in_a_row() <= 1);
     }

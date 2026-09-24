@@ -5,6 +5,7 @@ pub mod automode;
 mod correlator;
 pub mod dpsk;
 pub mod fsk;
+pub mod hdlc;
 mod passband;
 pub mod pump;
 pub mod qam;
