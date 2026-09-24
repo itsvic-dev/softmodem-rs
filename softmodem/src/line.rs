@@ -8,6 +8,7 @@ use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_link::v42bis::Directions;
 use softmodem_link::{Link, Setup, Status};
 use softmodem_transport::{Call, FRAME_SAMPLES};
+use tracing::info;
 
 // V.25: silence, answer tone, a short gap, then the data pump.
 const ANSWER_SILENCE: usize = 16_000;
@@ -55,6 +56,7 @@ struct Handshake {
     sent: usize,
     heard_carrier: bool,
     connected: bool,
+    rate: u32,
 }
 
 impl Line {
@@ -160,6 +162,7 @@ impl Handshake {
             sent: 0,
             heard_carrier: false,
             connected: false,
+            rate: 0,
         }
     }
 
@@ -220,6 +223,12 @@ impl Handshake {
         let carrier = self.pump.carrier();
         let connected = self.pump.connected();
         let rate = self.pump.bit_rate();
+        if connected && self.connected && rate != self.rate {
+            info!(rate, "bit rate changed");
+        }
+        if connected {
+            self.rate = rate;
+        }
         // The far end may send before we report CONNECT; a real modem keeps it.
         if !bits.is_empty() || connected {
             let link = self.link();
