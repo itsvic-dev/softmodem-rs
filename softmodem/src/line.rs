@@ -81,6 +81,23 @@ impl Line {
         }
     }
 
+    /// Starts ending the call with the far end, and says whether the
+    /// modulation can, so that the modem waits for [`Line::cleared`].
+    pub(crate) fn clear_down(&mut self) -> bool {
+        let Some(handshake) = &mut self.handshake else {
+            return false;
+        };
+        if !handshake.pump.connected() {
+            return false;
+        }
+        handshake.pump.clear_down();
+        !handshake.pump.connected()
+    }
+
+    pub(crate) fn cleared(&self) -> bool {
+        self.handshake.as_ref().is_some_and(|h| h.pump.cleared())
+    }
+
     pub(crate) fn has_handshake(&self) -> bool {
         self.handshake.is_some()
     }

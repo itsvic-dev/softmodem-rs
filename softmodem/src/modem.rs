@@ -26,6 +26,8 @@ const RING_ON: Duration = Duration::from_secs(2);
 const COMMAND_READ: usize = 64;
 const DATA_READ: usize = 4;
 const DCD_DROP_DELAY: Duration = Duration::from_millis(200);
+// V.34's cleardown is S, S̄ and MP from each end, with whatever TRN the far end sends.
+const CLEARDOWN_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 enum Mode {
@@ -129,13 +131,13 @@ where
 
             tokio::select! {
                 () = &mut stop => {
-                    self.hang_up().await;
+                    self.put_down().await;
                     return Ok(());
                 }
                 read = self.port.read(&mut buf[..read_size]), if want_input => {
                     let n = read?;
                     if n == 0 {
-                        self.hang_up().await;
+                        self.put_down().await;
                         return Ok(());
                     }
                     self.computer_sent(&buf[..n]).await?;
@@ -202,11 +204,11 @@ where
                 Command::Dial(dial) => return self.dial(dial).await,
                 Command::Online { retrain } => return self.online(retrain).await,
                 Command::Reset => {
-                    self.hang_up().await;
+                    self.put_down().await;
                     self.settings = self.profile.clone();
                 }
                 Command::FactoryReset => {
-                    self.hang_up().await;
+                    self.put_down().await;
                     self.settings = Settings::default();
                 }
                 Command::OffHook(true) => {
@@ -216,7 +218,7 @@ where
                     }
                 }
                 Command::OffHook(false) => {
-                    self.hang_up().await;
+                    self.put_down().await;
                     self.off_hook = false;
                 }
                 Command::Identify(n) => {
@@ -506,6 +508,10 @@ where
                 return self.hang_up_with(ResultCode::NoCarrier).await;
             }
         }
+        if line.cleared() {
+            info!("far end cleared down");
+            return self.hang_up_with(ResultCode::NoCarrier).await;
+        }
         let has_handshake = line.has_handshake();
         let carrier = line.carrier();
         let now = Instant::now();
@@ -586,6 +592,41 @@ where
             self.write(&received.bytes).await?;
         }
         Ok(())
+    }
+
+    async fn clear_down(&mut self) {
+        let Some(line) = &mut self.line else {
+            return;
+        };
+        if !line.clear_down() {
+            return;
+        }
+        let deadline = Instant::now() + CLEARDOWN_WAIT;
+        let mut ticker = frame_clock();
+        while !line.cleared() {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let samples = line.transmit(Instant::now().into_std());
+                    if line.call.audio_out.try_send(samples).is_err() {
+                        break;
+                    }
+                }
+                samples = line.call.audio_in.recv() => {
+                    let Some(samples) = samples else {
+                        break;
+                    };
+                    line.receive(&samples, Instant::now().into_std());
+                }
+                () = sleep_until(deadline) => break,
+            }
+        }
+        info!(cleared = line.cleared(), "cleardown");
+    }
+
+    // A hang-up this end chose, while the far end may still be there to clear down with.
+    async fn put_down(&mut self) {
+        self.clear_down().await;
+        self.hang_up().await;
     }
 
     async fn hang_up(&mut self) {
