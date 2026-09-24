@@ -11,6 +11,8 @@ pub mod encoder;
 pub mod frames;
 pub mod info;
 pub mod jd;
+#[cfg(test)]
+mod tests;
 pub mod training;
 pub mod ucode;
 pub mod upstream;
