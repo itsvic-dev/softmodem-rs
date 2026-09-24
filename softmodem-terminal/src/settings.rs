@@ -11,6 +11,8 @@ pub enum ResultCode {
     Connect,
     Connect1200,
     Connect2400,
+    /// A connection above 2400 bit/s, which V.250 gives no digit of its own.
+    ConnectAt(u32),
     Ring,
     NoCarrier,
     Error,
@@ -25,6 +27,7 @@ impl ResultCode {
         match bit_rate {
             1200 => Self::Connect1200,
             2400 => Self::Connect2400,
+            rate if rate > 2400 => Self::ConnectAt(rate),
             _ => Self::Connect,
         }
     }
@@ -32,7 +35,7 @@ impl ResultCode {
     fn digit(self) -> u8 {
         match self {
             Self::Ok => 0,
-            Self::Connect => 1,
+            Self::Connect | Self::ConnectAt(_) => 1,
             Self::Ring => 2,
             Self::NoCarrier => 3,
             Self::Error => 4,
@@ -43,17 +46,18 @@ impl ResultCode {
         }
     }
 
-    fn words(self) -> &'static str {
+    fn words(self) -> String {
         match self {
-            Self::Ok => "OK",
-            Self::Connect => "CONNECT",
-            Self::Connect1200 => "CONNECT 1200",
-            Self::Connect2400 => "CONNECT 2400",
-            Self::Ring => "RING",
-            Self::NoCarrier => "NO CARRIER",
-            Self::Error => "ERROR",
-            Self::NoDialtone => "NO DIALTONE",
-            Self::Busy => "BUSY",
+            Self::Ok => "OK".into(),
+            Self::Connect => "CONNECT".into(),
+            Self::Connect1200 => "CONNECT 1200".into(),
+            Self::Connect2400 => "CONNECT 2400".into(),
+            Self::ConnectAt(rate) => format!("CONNECT {rate}"),
+            Self::Ring => "RING".into(),
+            Self::NoCarrier => "NO CARRIER".into(),
+            Self::Error => "ERROR".into(),
+            Self::NoDialtone => "NO DIALTONE".into(),
+            Self::Busy => "BUSY".into(),
         }
     }
 }
@@ -189,10 +193,11 @@ pub enum Carrier {
     V21,
     V22,
     V22bis,
+    V34,
 }
 
 impl Carrier {
-    pub const ALL: [Self; 3] = [Self::V21, Self::V22, Self::V22bis];
+    pub const ALL: [Self; 4] = [Self::V21, Self::V22, Self::V22bis, Self::V34];
 
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -200,6 +205,7 @@ impl Carrier {
             Self::V21 => "V21",
             Self::V22 => "V22",
             Self::V22bis => "V22B",
+            Self::V34 => "V34",
         }
     }
 }
@@ -381,7 +387,9 @@ impl Settings {
             return Vec::new();
         }
         let code = match code {
-            ResultCode::Connect1200 | ResultCode::Connect2400 if self.result_set == 0 => {
+            ResultCode::Connect1200 | ResultCode::Connect2400 | ResultCode::ConnectAt(_)
+                if self.result_set == 0 =>
+            {
                 ResultCode::Connect
             }
             ResultCode::Busy if self.result_set < 3 => ResultCode::NoCarrier,
@@ -389,7 +397,7 @@ impl Settings {
             code => code,
         };
         if self.verbose {
-            self.line(code.words())
+            self.line(&code.words())
         } else {
             let mut bytes = code.digit().to_string().into_bytes();
             bytes.push(self.terminator());
@@ -467,6 +475,10 @@ mod tests {
         let connect = ResultCode::connect(2400);
         assert_eq!(at(4, true).report(connect), b"\r\nCONNECT 2400\r\n");
         assert_eq!(at(4, false).report(connect), b"10\r");
+        assert_eq!(at(0, true).report(connect), b"\r\nCONNECT\r\n");
+        let connect = ResultCode::connect(33_600);
+        assert_eq!(at(4, true).report(connect), b"\r\nCONNECT 33600\r\n");
+        assert_eq!(at(4, false).report(connect), b"1\r");
         assert_eq!(at(0, true).report(connect), b"\r\nCONNECT\r\n");
     }
 

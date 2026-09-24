@@ -381,6 +381,7 @@ where
                 Carrier::V21 => Modulation::V21,
                 Carrier::V22 => Modulation::V22,
                 Carrier::V22bis => Modulation::V22bis,
+                Carrier::V34 => Modulation::V34,
             },
             automode: chosen.automode,
         };
@@ -657,7 +658,10 @@ fn identify(n: u8) -> Option<String> {
     match n {
         0 => Some("softmodem".into()),
         3 => Some(format!("softmodem {}", env!("CARGO_PKG_VERSION"))),
-        4 => Some("V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM, V.42bis".into()),
+        4 => Some(
+            "V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.34 33600 bit/s, V.42 LAPM, V.42bis"
+                .into(),
+        ),
         _ => None,
     }
 }

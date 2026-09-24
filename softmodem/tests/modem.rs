@@ -220,7 +220,7 @@ async fn identifies_itself() {
         .await;
     a.command("ATI4").await;
     a.expect_next(
-        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM, V.42bis\r\n\r\nOK\r\n",
+        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.34 33600 bit/s, V.42 LAPM, V.42bis\r\n\r\nOK\r\n",
     )
     .await;
 }
@@ -388,7 +388,7 @@ async fn reads_and_lists_the_modulation() {
     a.command("AT&FE0+MS?").await;
     a.expect_next(b"\r\n+MS: V22B,1\r\n\r\nOK\r\n").await;
     a.command("AT+MS=?").await;
-    a.expect_next(b"\r\n+MS: (V21,V22,V22B),(0,1)\r\n\r\nOK\r\n")
+    a.expect_next(b"\r\n+MS: (V21,V22,V22B,V34),(0,1)\r\n\r\nOK\r\n")
         .await;
     a.command("AT+MS=V22,2").await;
     a.expect_next(b"\r\nERROR\r\n").await;

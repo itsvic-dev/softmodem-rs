@@ -652,6 +652,13 @@ mod tests {
         );
         assert_eq!(parse(b"+MS?").unwrap(), [Command::ReadCarrier]);
         assert_eq!(parse(b"+MS=?").unwrap(), [Command::ListCarriers]);
+        assert_eq!(
+            parse(b"+MS=V34,0,2400,33600").unwrap(),
+            [Command::SetCarrier {
+                carrier: Carrier::V34,
+                automode: false
+            }]
+        );
     }
 
     #[test]

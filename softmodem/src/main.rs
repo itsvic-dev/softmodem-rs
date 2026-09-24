@@ -17,7 +17,7 @@ use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{info, warn};
 
-/// A V.21, V.22 and V.22bis modem that places real calls.
+/// A V.21, V.22, V.22bis and V.34 modem that places real calls.
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
