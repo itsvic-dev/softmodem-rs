@@ -22,7 +22,7 @@ Non-goals:
 
 - Speed. The first target is 300 bit/s.
 - 56k. See "Why not 56k" below.
-- V.42 error correction and V.42bis compression.
+- V.42bis compression, until V.42 has run against spandsp.
 
 ## What the channel gives, and what it must not do
 
@@ -126,7 +126,9 @@ and bit timing recovery.
 Each modulation is a data pump: its own handshake, modulator and demodulator
 behind one trait, in its own file, chosen for each call by `+MS`. The line
 around it holds only what all of them share: the V.25 answer sequence, the
-start-stop framing, and the bytes that arrive before `CONNECT`.
+link over the pump's bits, and the bytes that arrive before `CONNECT`. The
+link, in `softmodem-link`, is V.42 or plain start-stop characters. See
+"V.42" below.
 
 The V.22 modulator shapes each symbol with a square root raised cosine over
 seven symbols. The demodulator mixes the channel down to baseband, applies
@@ -186,6 +188,24 @@ command mode, on hook.
 | `Sn=v`, `Sn?` | Write, read an S-register. |
 | `+MS=<carrier>[,<automode>]` | The highest modulation for the next call, `V21`, `V22` or `V22B`, and whether automode may fall back from it. The default is `V22B` with automode. |
 | `+MS?`, `+MS=?` | Read the modulation, list those supported. |
+| `+ES=<orig_rqst>[,<orig_fbk>[,<ans_fbk>]]` | How to try V.42, as V.250 § 6.5.1. The default is `3,0,2`: try it with the detection phase, and fall back to plain data. |
+| `+ES?`, `+ES=?` | Read the error control, list the values supported. |
+| `+ER=0`, `+ER=1` | Report the error control in use before `CONNECT`, off, on. |
+| `\N0` to `\N3` | Set all of `+ES`: `\N0` and `\N1` no V.42 (`1,0,1`), `\N2` V.42 required (`3,3,5`), `\N3` V.42 if the far end has it (`3,0,2`). |
+
+`+ES` takes these values:
+
+- `<orig_rqst>`, when the modem dials: `0` or `1` no V.42, `2` V.42 without
+  the detection phase, `3` V.42 with it. `4`, the deleted alternative
+  protocol, gives `ERROR`.
+- `<orig_fbk>`, when the modem dials: `0` or `1` fall back to plain data,
+  `2` or `3` hang up without V.42.
+- `<ans_fbk>`, when the modem answers: `0` or `1` no V.42, `2` or `3` V.42
+  if the far end has it, `4` or `5` hang up without V.42.
+
+V.250 tells direct and buffered operation apart. On a pseudoterminal there is
+no DTE rate to match, so they are the same here. A subparameter left out
+keeps its value.
 
 `+MS` takes the V.250 form `+MS=<carrier>[,<automode>[,<rates>...]]`. The
 rates are accepted and ignored. As V.250 § 6.4.2 has it, `+MS=<carrier>` on
@@ -236,6 +256,11 @@ At 300 bit/s Hayes reports plain `CONNECT`. Under `X0`, `CONNECT 1200` and
 `CONNECT 2400` are plain `CONNECT` too. Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
 The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
 framed by CR LF, with `V0` it is the number and CR, both using `S3` and `S4`.
+
+Under `+ER=1`, `+ER: LAPM` or `+ER: NONE` comes on its own line before
+`CONNECT`, in words under `V0` too, as V.250 § 6.5.5 has it. `CONNECT`
+itself does not change with V.42, so chat scripts that wait for
+`CONNECT 2400` still work.
 
 #### S-registers
 
@@ -668,6 +693,58 @@ The sequences, for this modem with automode on:
 
 spandsp's V.8 module is the reference for CM, JM and CJ.
 
+## V.42
+
+Checked against V.42 (03/2002). That edition deletes Annex A, the MNP-like
+alternative procedure, so LAPM is the only protocol. It keeps the detection
+phase. V.42 runs where V.14 does, over V.22 and V.22bis. V.21 at 300 bit/s
+stays plain.
+
+What it gives: no start and stop bits, so up to about 20% more throughput at
+the same rate, and a link that retransmits what line errors damage instead of
+passing them to PPP. `CONNECT` waits until the link is up or has fallen back.
+
+Detection phase (§ 7.2.1), once the pump is connected:
+
+1. The originator sends the ODP: DC1 with even parity, ten ones, DC1 with odd
+   parity, ten ones, for T400 = 750 ms or until it hears two adjacent ADPs.
+2. The answerer sends mark and listens for four DC1s of alternating parity.
+   It waits 1.5 s, not 750 ms, as it connects before the originator's carrier
+   detect is on. § 9.1.1 lets an implementation change T400.
+3. On the ODP, the answerer sends the ADP, `E`, ten ones, `C`, ten ones, at
+   least ten times and until it hears flags (Appendix III.1).
+4. On `EC`, the originator sends 16 flags, then XID, then SABME. On `E` and
+   NUL, or nothing within T400, it falls back.
+5. An answerer that hears three flags in a row, or a good frame, goes
+   straight to LAPM. This is how it meets an originator with `+ES=2`.
+6. An answerer that hears neither in time falls back. What it heard while it
+   waited goes to the computer, as Appendix I.3 b) allows.
+
+LAPM (§ 8), as this modem runs it:
+
+- DLCI 0, modulo 128, the 16-bit FCS. XID offers N401 = 128 octets and
+  k = 15 frames each way, and asks for no optional procedure. As responder,
+  it takes the originator's values, up to 2048 octets and 127 frames, and
+  agrees to no optional procedure. So SREJ, TEST and the 32-bit FCS are never
+  in use. A SREJ or an undefined frame ends the call (§ 8.5.5).
+- REJ on an N(S) sequence error, and polling with RR on T401 expiry. N400 is
+  10. T401 is 1 s plus the time of two longest frames at the line rate, about
+  2.1 s at 2400 bit/s, which covers the far end sending a whole frame first
+  (Appendix IV).
+- DISC, FRMR, an unsolicited DM, N400 failed polls, or an SABME after data
+  end the call with `NO CARRIER`. An SABME before any data is a lost UA, and
+  gets a UA again (§ 8.4.9.1).
+- A BRK gets its BRKACK. The break does not reach the computer, as a
+  pseudoterminal cannot show one.
+- Stream mode (Appendix II d): an I frame takes what is queued when the last
+  frame ends. In data mode the modem reads from the computer until two
+  frames' worth wait, so frames are full during a transfer.
+
+Not done: T403, own-receiver busy, suspending the timers during a retrain,
+and DISC on hang-up. A pseudoterminal always takes what the modem writes, so
+the receiver is never busy. The call's own end tells the far modem of a
+hang-up. A retrain takes less than N400 times T401.
+
 ## Three things that decide whether it works
 
 1. **Bit timing recovery.** Track the bit centre and correct on transitions.
@@ -849,8 +926,12 @@ Everything before it can be built and tested with two instances on one host.
     default. Done: two instances meet at the best rate both have in every
     pairing with a fixed modulation, V.8 works against spandsp in both
     roles, and `pppd` runs over it in `checks.aarch64-linux.ppp-automode`.
-11. V.42 and V.42bis.
-12. A real modem behind the SPA2102 calling the answering side.
+11. V.42, on by default with `+ES=3,0,2`. Done between two instances, with
+    fallback to plain data in each role and `\N2` hanging up without it, and
+    with `pppd` over LAPM in `checks.aarch64-linux.ppp-v22bis`. Against
+    spandsp's V.42 still to do.
+12. V.42bis.
+13. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
 
@@ -877,9 +958,10 @@ Recorded so these are not re-investigated.
 
 ## Known cost
 
-Without V.42 and V.42bis the link is raw async. PPP drops frames that fail
-FCS and TCP retransmits, which is correct but wasteful, and on compressible
-text it gives up the factor of two or three that V.42bis would have provided.
+Without V.42bis the link gives up the factor of two or three on compressible
+text that compression would have provided. Against a far end without V.42,
+the link is raw async: PPP drops frames that fail FCS and TCP retransmits,
+which is correct but wasteful.
 
 ## Open questions
 
