@@ -1,6 +1,6 @@
-//! What the V.22 family shares on the line: 600 baud symbols shaped by a
-//! square root raised cosine on one carrier, and the receiver front end that
-//! mixes them down, filters them, detects carrier and recovers symbol timing.
+//! Symbols shaped by a square root raised cosine on one carrier, as the V.22
+//! family and V.34 send them, and the receiver front end that mixes them
+//! down, filters them, detects carrier and recovers symbol timing.
 
 use std::collections::VecDeque;
 use std::f64::consts::{PI, SQRT_2, TAU};
@@ -8,11 +8,22 @@ use std::f64::consts::{PI, SQRT_2, TAU};
 use crate::{SAMPLE_RATE, sine_peak, to_sample};
 
 pub(crate) const BAUD: f64 = 600.0;
-// V.22 and V.22bis § 2.4.
-const ROLL_OFF: f64 = 0.75;
 
-// Symbols each side of the one being sent that still shape the output.
-pub(crate) const SPAN: usize = 3;
+/// The shape of each symbol: a square root raised cosine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Pulse {
+    pub(crate) baud: f64,
+    pub(crate) roll_off: f64,
+    /// Symbols each side of the one being sent that still shape the output.
+    pub(crate) span: usize,
+}
+
+/// V.22 and V.22bis § 2.4.
+pub(crate) const V22_PULSE: Pulse = Pulse {
+    baud: BAUD,
+    roll_off: 0.75,
+    span: 3,
+};
 
 // V.22 and V.22bis § 3.3.
 const CARRIER_ON_DBM0: f64 = -43.0;
@@ -28,8 +39,8 @@ fn lerp(a: Complex, b: Complex, t: f64) -> Complex {
 }
 
 // `t` in symbols; the energy of the pulse is one symbol.
-fn root_raised_cosine(t: f64) -> f64 {
-    let b = ROLL_OFF;
+fn root_raised_cosine(t: f64, roll_off: f64) -> f64 {
+    let b = roll_off;
     if t.abs() < 1e-9 {
         return 1.0 - b + 4.0 * b / PI;
     }
@@ -45,6 +56,7 @@ fn root_raised_cosine(t: f64) -> f64 {
 /// power of a sine at the level it is given.
 #[derive(Debug)]
 pub(crate) struct Transmitter {
+    pulse: Pulse,
     carrier_step: f64,
     carrier_phase: f64,
     symbol_step: f64,
@@ -54,13 +66,19 @@ pub(crate) struct Transmitter {
 }
 
 impl Transmitter {
+    /// With the V.22 pulse.
     pub(crate) fn new(carrier_hz: f64, level_dbm0: f64) -> Self {
+        Self::with_pulse(carrier_hz, level_dbm0, V22_PULSE)
+    }
+
+    pub(crate) fn with_pulse(carrier_hz: f64, level_dbm0: f64, pulse: Pulse) -> Self {
         Self {
+            pulse,
             carrier_step: carrier_hz / SAMPLE_RATE,
             carrier_phase: 0.0,
-            symbol_step: BAUD / SAMPLE_RATE,
+            symbol_step: pulse.baud / SAMPLE_RATE,
             amplitude: sine_peak(level_dbm0),
-            symbols: VecDeque::from(vec![(0.0, 0.0); 2 * SPAN + 1]),
+            symbols: VecDeque::from(vec![(0.0, 0.0); 2 * pulse.span + 1]),
             elapsed: 0.0,
         }
     }
@@ -74,13 +92,18 @@ impl Transmitter {
                 self.symbols.push_back(next_symbol());
             }
 
-            #[expect(clippy::cast_precision_loss, reason = "the window is 7 symbols")]
+            let Pulse { span, roll_off, .. } = self.pulse;
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "the window is a few dozen symbols"
+            )]
             let (re, im) =
                 self.symbols
                     .iter()
                     .enumerate()
                     .fold((0.0, 0.0), |(re, im), (i, &(a, b))| {
-                        let g = root_raised_cosine(self.elapsed + SPAN as f64 - i as f64);
+                        let t = self.elapsed + span as f64 - i as f64;
+                        let g = root_raised_cosine(t, roll_off);
                         (re + a * g, im + b * g)
                     });
             let angle = TAU * self.carrier_phase;
@@ -129,15 +152,20 @@ impl Receiver {
     /// A receiver whose carrier detect goes off after `carrier_off_samples`
     /// below the threshold.
     pub(crate) fn new(carrier_hz: f64, carrier_off_samples: u32) -> Self {
-        let samples_per_symbol = SAMPLE_RATE / BAUD;
+        Self::with_pulse(carrier_hz, carrier_off_samples, V22_PULSE)
+    }
+
+    /// Whose matched filter and symbol clock follow `pulse`.
+    pub(crate) fn with_pulse(carrier_hz: f64, carrier_off_samples: u32, pulse: Pulse) -> Self {
+        let samples_per_symbol = SAMPLE_RATE / pulse.baud;
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_precision_loss,
-            reason = "the filter is a few dozen taps"
+            reason = "the filter is a few hundred taps"
         )]
-        let half = (SPAN as f64 * samples_per_symbol).round() as i32;
+        let half = (pulse.span as f64 * samples_per_symbol).round() as i32;
         let taps: Vec<f64> = (-half..=half)
-            .map(|n| root_raised_cosine(f64::from(n) / samples_per_symbol))
+            .map(|n| root_raised_cosine(f64::from(n) / samples_per_symbol, pulse.roll_off))
             .collect();
         let gain: f64 = taps.iter().sum();
         let taps: Vec<f64> = taps.into_iter().map(|g| g / gain).collect();
@@ -148,7 +176,7 @@ impl Receiver {
             taps,
             powers: VecDeque::from(vec![0.0; LEVEL_WINDOW]),
             power_sum: 0.0,
-            symbol_step: BAUD / SAMPLE_RATE,
+            symbol_step: pulse.baud / SAMPLE_RATE,
             symbol_phase: 0.0,
             previous: (0.0, 0.0),
             middle: (0.0, 0.0),
@@ -251,15 +279,20 @@ mod tests {
     #[test]
     fn the_pulse_has_the_energy_of_one_symbol() {
         let step = 1e-3;
-        let energy: f64 = (-8000..=8000)
-            .map(|i| root_raised_cosine(f64::from(i) * step).powi(2) * step)
-            .sum();
-        assert!((energy - 1.0).abs() < 1e-3);
+        for roll_off in [V22_PULSE.roll_off, 0.1] {
+            let energy: f64 = (-40_000..=40_000)
+                .map(|i| root_raised_cosine(f64::from(i) * step, roll_off).powi(2) * step)
+                .sum();
+            assert!((energy - 1.0).abs() < 1e-3, "{roll_off}");
+        }
     }
 
     #[test]
     fn the_pulse_is_continuous_where_the_formula_divides_by_zero() {
-        let t = 1.0 / (4.0 * ROLL_OFF);
-        assert!((root_raised_cosine(t + 1e-6) - root_raised_cosine(t)).abs() < 1e-4);
+        for roll_off in [V22_PULSE.roll_off, 0.1] {
+            let t = 1.0 / (4.0 * roll_off);
+            let step = root_raised_cosine(t + 1e-6, roll_off) - root_raised_cosine(t, roll_off);
+            assert!(step.abs() < 1e-4);
+        }
     }
 }

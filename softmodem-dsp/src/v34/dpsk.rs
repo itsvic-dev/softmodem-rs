@@ -3,7 +3,9 @@
 use std::collections::VecDeque;
 
 use super::{carrier_hz, info_level_dbm0};
-use crate::passband::{Complex, Receiver, SPAN, Transmitter};
+use crate::passband::{Complex, Receiver, Transmitter, V22_PULSE};
+
+const SPAN: usize = V22_PULSE.span;
 use crate::pump::Role;
 
 // V.22 table 3, as the carriers and the pulse are V.22's.
