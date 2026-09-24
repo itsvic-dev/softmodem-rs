@@ -15,6 +15,7 @@ pub mod uart;
 mod v21;
 mod v22;
 mod v22bis;
+pub mod v34;
 pub mod v8;
 pub mod v8bis;
 
