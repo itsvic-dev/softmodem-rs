@@ -13,9 +13,27 @@ use crate::passband::Complex;
 
 // Steps of the pulse table per sample.
 const PHASES: usize = 256;
-const TRAINING_TIMING_GAIN: f64 = 0.01;
-// Gardner's self-noise on a large constellation limits the SNR.
-const DATA_TIMING_GAIN: f64 = 0.0005;
+/// How quickly the front end follows the far symbol clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tracking {
+    /// On S, which carries strong timing, from any starting phase.
+    Acquire,
+    /// On PP and TRN.
+    Train,
+    /// In data mode, where Gardner's self-noise on a large constellation
+    /// would limit the SNR, and only clock drift is left to follow.
+    Data,
+}
+
+impl Tracking {
+    fn gain(self) -> f64 {
+        match self {
+            Self::Acquire => 0.05,
+            Self::Train => 0.01,
+            Self::Data => 0.0005,
+        }
+    }
+}
 const EQUALIZER_TAPS: usize = 48;
 const CENTER: usize = EQUALIZER_TAPS / 2 + 1;
 // A margin for strobes that fall behind the newest sample.
@@ -124,14 +142,14 @@ impl FrontEnd {
             next: (half_width + SLACK) as f64,
             middle: None,
             last: (0.0, 0.0),
-            timing_gain: TRAINING_TIMING_GAIN,
+            timing_gain: Tracking::Acquire.gain(),
         }
     }
 
-    /// From now on follows the far clock only slowly, as data mode needs:
-    /// Gardner timing recovery jitters on a large constellation.
-    pub fn track_slowly(&mut self) {
-        self.timing_gain = DATA_TIMING_GAIN;
+    /// From now on follows the far clock as `tracking` asks. It starts with
+    /// `Tracking::Acquire`.
+    pub fn track(&mut self, tracking: Tracking) {
+        self.timing_gain = tracking.gain();
     }
 
     /// The symbols whose samples `input` completes.
