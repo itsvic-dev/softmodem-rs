@@ -4,11 +4,17 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 
+for module in /modules/*.ko; do
+    [ -e "$module" ] && insmod "$module"
+done
+
+tty=$(ls /sys/bus/pci/drivers/serial/*/tty)
+port=/dev/$tty
+
 status() {
-    echo "guest $1: $(grep 16550A /proc/tty/driver/serial)"
+    echo "guest $1: $(grep "^${tty#ttyS}:" /proc/tty/driver/serial)"
 }
 
-port=/dev/ttyS$(grep 16550A /proc/tty/driver/serial | cut -d : -f 1)
 stty -F "$port" 115200 raw -echo clocal
 exec 3<>"$port"
 

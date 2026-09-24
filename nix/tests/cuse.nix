@@ -19,6 +19,28 @@ let
   };
 
   guestKernel = pkgs.linuxPackages.kernel;
+  guestMachine =
+    {
+      aarch64-linux = {
+        qemu = "qemu-system-aarch64 -M virt -cpu cortex-a57 -accel tcg,thread=multi";
+        image = "Image";
+        console = "ttyAMA0";
+        modules = [ ];
+      };
+      x86_64-linux = {
+        qemu = "qemu-system-x86_64 -M microvm,pcie=on -cpu max -accel kvm -accel tcg";
+        image = "bzImage";
+        console = "ttyS0";
+        modules = [ "kernel/drivers/tty/serial/8250/8250_pci.ko.xz" ];
+      };
+    }
+    .${pkgs.stdenv.hostPlatform.system};
+  guestModules = pkgs.runCommand "guest-modules" { nativeBuildInputs = [ pkgs.xz ]; } ''
+    mkdir $out
+    for module in ${toString guestMachine.modules}; do
+      xz -dc ${guestKernel.modules}/lib/modules/${guestKernel.modDirVersion}/$module > $out/$(basename $module .xz)
+    done
+  '';
   guestInitrd = pkgs.makeInitrd {
     contents = [
       {
@@ -29,15 +51,19 @@ let
         object = "${pkgs.pkgsStatic.busybox}/bin";
         symlink = "/bin";
       }
+      {
+        object = guestModules;
+        symlink = "/modules";
+      }
     ];
   };
   # The console goes to a file: on the test driver's terminal, QEMU is stopped by SIGTTOU.
   guest = pkgs.writeShellScript "run-guest" ''
-    ${pkgs.qemu_test}/bin/qemu-system-aarch64 -M virt -cpu cortex-a57 \
-      -accel tcg,thread=multi -smp 2 -m 256 -display none -monitor none -no-reboot \
+    ${pkgs.qemu_test}/bin/${guestMachine.qemu} \
+      -smp 2 -m 256 -display none -monitor none -no-reboot \
       -serial file:/tmp/guest-console.log \
-      -kernel ${guestKernel}/Image -initrd ${guestInitrd}/initrd \
-      -append "console=ttyAMA0 panic=-1 quiet" \
+      -kernel ${guestKernel}/${guestMachine.image} -initrd ${guestInitrd}/initrd \
+      -append "console=${guestMachine.console} panic=-1 quiet" \
       -chardev serial,id=modem,path=/dev/ttySM0 -device pci-serial,chardev=modem \
       < /dev/null
     status=$?
