@@ -87,3 +87,33 @@ fn an_analogue_and_a_digital_modem_carry_data_at_56000_bit_s() {
 fn learns_the_levels_behind_a_digital_pad() {
     assert_eq!(connect_over(padded(10f64.powf(-3.0 / 20.0))), 56_000);
 }
+
+#[test]
+fn connects_whatever_the_delay_each_way() {
+    let mut failed = Vec::new();
+    for (up_delay, down_delay) in [(1, 0), (0, 37), (160, 161), (555, 3), (1600, 1600)] {
+        let mut analogue = Analogue::new();
+        let mut digital = Digital::new();
+        let mut lines = [
+            std::collections::VecDeque::from(vec![0; up_delay]),
+            std::collections::VecDeque::from(vec![0; down_delay]),
+        ];
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let mut frames = 0;
+        while !(analogue.connected() && digital.connected()) && frames < 2000 {
+            analogue.transmit(&mut up);
+            digital.transmit(&mut down);
+            lines[0].extend(up.map(alaw));
+            lines[1].extend(down.map(alaw));
+            let heard: Vec<i16> = lines[0].drain(..FRAME).collect();
+            digital.receive(&heard, &mut Vec::new());
+            let heard: Vec<i16> = lines[1].drain(..FRAME).collect();
+            analogue.receive(&heard, &mut Vec::new());
+            frames += 1;
+        }
+        if !(analogue.connected() && digital.connected() && analogue.bit_rate() == 56_000) {
+            failed.push((up_delay, down_delay));
+        }
+    }
+    assert!(failed.is_empty(), "no 56 000 bit/s over lines delayed, up and down, by {failed:?} samples");
+}

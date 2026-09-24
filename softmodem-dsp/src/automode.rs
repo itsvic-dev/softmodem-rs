@@ -694,6 +694,25 @@ mod tests {
     }
 
     #[test]
+    fn two_v90_ends_agree_on_v90_through_v8() {
+        let mut caller = pump(Modulation::V90, Role::Originate);
+        let mut answerer = pump(Modulation::V90, Role::Answer);
+        let frames = connect(caller.as_mut(), answerer.as_mut());
+        assert_eq!((caller.bit_rate(), answerer.bit_rate()), (56_000, 56_000));
+        assert!(frames * 20 < 15_000, "V.8 and V.90 took {} ms", frames * 20);
+    }
+
+    #[test]
+    fn a_v90_end_meets_a_v34_end_at_v34() {
+        for (caller, answerer) in [(Modulation::V90, Modulation::V34), (Modulation::V34, Modulation::V90)] {
+            let mut caller = pump(caller, Role::Originate);
+            let mut answerer = pump(answerer, Role::Answer);
+            connect(caller.as_mut(), answerer.as_mut());
+            assert_eq!((caller.bit_rate(), answerer.bit_rate()), (33_600, 33_600));
+        }
+    }
+
+    #[test]
     fn two_v34_ends_connect_whatever_the_delay_each_way() {
         let mut failed = Vec::new();
         for up_delay in [0, 1, 160, 320, 555] {
