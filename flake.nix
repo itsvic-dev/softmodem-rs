@@ -65,19 +65,27 @@
             guestPkgs = nixpkgs.legacyPackages.x86_64-linux;
             peer =
               label: ours: theirs:
-              pkgs.testers.runNixOSTest (
-                import ./nix/tests/slmodemd.nix {
-                  inherit
-                    guestPkgs
-                    label
-                    ours
-                    theirs
-                    ;
-                  softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
-                  bridge = (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
-                  slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
-                }
-              );
+              let
+                run = pkgs.testers.runNixOSTest (
+                  import ./nix/tests/slmodemd.nix {
+                    inherit
+                      guestPkgs
+                      label
+                      ours
+                      theirs
+                      ;
+                    softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
+                    bridge = (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
+                    slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
+                  }
+                );
+              in
+              # The run always succeeds, to keep a failed call's recording in `passthru.run`.
+              pkgs.runCommand "softmodem-slmodemd-${label}-passed" { passthru = { inherit run; }; } ''
+                cat ${run}/status
+                grep -qx ok ${run}/status
+                ln -s ${run} $out
+              '';
           in
           {
             slmodemd-v22bis = peer "V22B" "+MS=V22B,0" "+MS=122,0";

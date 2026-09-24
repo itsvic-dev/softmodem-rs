@@ -50,13 +50,16 @@ in
     machine.wait_until_succeeds("test -L ${port}")
     machine.wait_until_succeeds("test -L /dev/ttySL0")
 
-    try:
-        with subtest("slmodemd calls the softmodem"):
-            print(machine.succeed("python3 ${./slmodemd.py} /dev/ttySL0 ${port} '${theirs}'", timeout=600))
-    finally:
-        print(machine.execute("journalctl -u slmodemd -u softmodem --no-pager | tail -n 80")[1])
-        machine.systemctl("stop slmodemd.service softmodem.service")
-        machine.execute("cd /var/lib/softmodem && ls *-answer-rx.wav && sox -M *-answer-rx.wav *-answer-tx.wav ${wav}")
-        machine.copy_from_machine("/var/lib/softmodem", "dumps")
+    import os
+
+    # The call's result goes in $out/status, so that a failed call still keeps its recording.
+    status, output = machine.execute("python3 ${./slmodemd.py} /dev/ttySL0 ${port} '${theirs}' 2>&1", timeout=600)
+    print(output)
+    machine.systemctl("stop slmodemd.service softmodem.service")
+    machine.succeed("journalctl -u slmodemd -u softmodem --no-pager > /var/lib/softmodem/journal.txt")
+    machine.execute("cd /var/lib/softmodem && sox -M *-answer-rx.wav *-answer-tx.wav ${wav}")
+    machine.copy_from_machine("/var/lib/softmodem", "dumps")
+    with open(os.path.join(os.environ["out"], "status"), "w") as file:
+        file.write("ok\n" if status == 0 else output)
   '';
 }
