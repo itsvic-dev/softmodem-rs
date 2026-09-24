@@ -3,6 +3,7 @@
 
 pub mod analogue;
 pub mod cp;
+pub mod design;
 pub mod digital;
 pub mod dil;
 pub mod encoder;
