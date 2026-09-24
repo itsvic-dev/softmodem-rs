@@ -1,10 +1,11 @@
 # softmodem
 
-**Status:** draft, nothing built yet. This records a design and the reasoning
-behind it, including the options that were rejected, so that the rejected ones
-do not have to be investigated twice.
+These documents record the design and the reasoning behind it, including the
+options that were rejected, so that the rejected ones do not have to be
+investigated twice. They say how the modem works, not how far the work has
+got: the code, the tests and the git history hold that.
 
-This document covers the `softmodem` program only. The network side (Asterisk
+They cover the `softmodem` program only. The network side (Asterisk
 endpoint, dial plan, PPP address pool, the ATA and the retro client) lives in
 `vic-nix-config` and is out of scope here, apart from the interfaces this
 program has to meet.
@@ -20,7 +21,7 @@ would have dialled the internet.
 
 Non-goals:
 
-- Speed. The first target is 300 bit/s.
+- Speed. See the ladder in [scope](scope.md).
 - 56k. See "Why not 56k" in [scope](scope.md).
 
 ## Architecture
@@ -60,64 +61,12 @@ link, in `softmodem-link`, is V.42 or plain start-stop characters. See
    has its own crystal and the ATA's ADC has another, so their bit rates
    differ by some parts per million. Without tracking, the link works for a
    while and then dies, which is an unpleasant thing to debug after the fact.
-   Build it from the start and test it with a resampled input.
+   Test it with a resampled input.
 2. **No playout clock.** See "Receive path" in [the channel](channel.md).
 3. **Test the DSP without SIP.** Modulate to demodulate in process, then
    through a file, then with injected loss, gain error, noise and a timing
-   offset. Only then attach RTP. A modem that can only be tested by placing a
-   phone call will not get finished.
-
-## Milestones
-
-The last milestone is far away and needs hardware that is not available yet.
-Everything before it can be built and tested with two instances on one host.
-
-1. V.21 DSP in isolation, unit tested with loss, noise, gain error and clock
-   offset.
-2. Transport interface, the wire and WAV dumps. Two instances, raw bytes
-   across.
-3. `pppd` on both ptys over the wire, an address, a ping across.
-4. AT command interpreter on the serial port. The computer controls the
-   modem with the basic Hayes command set, as with a real modem: `ATD` makes
-   the modem place a call through its transport, `RING` and `ATA` answer
-   one, `+++` and `ATO` leave and return to data mode. The answering side
-   sends the V.25 answer tone. Until SIP exists, the transport is the wire.
-5. SIP transport, two instances through the PBX. Done: data both ways,
-   hang-up and busy, with PPP over it still to try.
-6. Bell 103. Put off, as it is of little use in Europe.
-7. A speaker: call audio on the host sound output, under `L` and `M`. Done.
-8. V.22, selected with `AT+MS`. Done: between two instances, against
-   spandsp, and with `pppd` in `checks.aarch64-linux.ppp-v22`.
-9. V.22bis, selected with `AT+MS=V22B`, with its fallback to V.22 and its
-   answer to a retrain. Done: between two instances, against spandsp in
-   both roles and in fallback, and with `pppd` in
-   `checks.aarch64-linux.ppp-v22bis`. It starts retrains, steps down to
-   1200 bit/s when a retrain does not hold, and retrains on `ATO1`.
-10. Automode: V.8, and V.32bis Annex A with a V.21 step of our own, on by
-    default. Done: two instances meet at the best rate both have in every
-    pairing with a fixed modulation, V.8 works against spandsp in both
-    roles, and `pppd` runs over it in `checks.aarch64-linux.ppp-automode`.
-11. V.42, on by default with `+ES=3,0,2`. Done between two instances, with
-    fallback to plain data in each role and `\N2` hanging up without it, and
-    with `pppd` over LAPM in `checks.aarch64-linux.ppp-v22bis`, and against
-    spandsp's V.42 in both roles.
-12. V.42bis, on by default with `+DS=3,0,2048,32`. Done between two
-    instances in each direction and in none, against spandsp's codec,
-    negotiated with spandsp's V.42, and with `pppd` over it in
-    `checks.aarch64-linux.ppp-v22bis`.
-13. V.8 bis in automode, before V.8. Done between two instances in
-    transaction 12, with the other transactions checked message by
-    message, and against spandsp, which does not answer CRe.
-14. A real modem behind the SPA2102 calling the answering side.
-
-## Open questions
-
-- Receive path: is "no playout clock" safe, or does something between the
-  two ends retime the stream?
-- Which chipset is in the generic 56k modem, and does it reach V.21 from
-  automode?
-- Should the answering side authenticate SIP at all, beyond PPP's own PAP or
-  CHAP?
+   offset. A modem that can only be tested by placing a phone call will not
+   get finished.
 
 ## Documents
 

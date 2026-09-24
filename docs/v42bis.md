@@ -34,7 +34,5 @@ The codec (§§ 6 to 9):
   transmitter is the condition § 5.7 names for C-FLUSH.
 - A decoder error (§ 5.8) ends the call.
 
-On a 2400 bit/s call between two instances, 21,890 octets of repetitive
-text take 91 s as plain start-stop data, 77 s over LAPM, and 10 s with
-V.42bis. Data that is already compressed gains nothing, and the encoder
-stays in transparent mode for it.
+Data that is already compressed gains nothing, and the encoder stays in
+transparent mode for it.

@@ -18,6 +18,7 @@ times. The local copies:
 | File | Edition |
 |---|---|
 | `CCITT-Blue-Book-Fascicle-VIII.1-1988.pdf` | V.1 to V.230 as of 1988, with V.21, V.22, V.22bis and V.42 |
+| `V.21-1988.pdf` | V.21 (11/88), from the second link above |
 | `V.8-200011.pdf` | V.8 (11/2000), CM and JM, ANSam |
 | `V.8bis-200011-I.pdf` | V.8 bis (11/2000), revision 2 |
 | `V.14-199303-I.pdf` | V.14 (03/1993) |

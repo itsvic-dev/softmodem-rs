@@ -16,6 +16,10 @@ connect    "chat -v -t 60 '' ATZ OK ATDT0300 CONNECT '\c'"
 disconnect "chat -v '' '\d\d+++\d\d\c' OK ATH0 OK"
 ```
 
+The caller's modem runs with `--init 'AT&C1'`, so that the end of a call
+hangs up its port and `pppd` starts the next call from a clean state. See
+"DCD" in [terminal](terminal.md).
+
 A pty has no DCD, DTR or RTS/CTS, so `pppd` cannot see carrier and cannot hang
 up by dropping DTR. The options that follow from that:
 
@@ -30,8 +34,7 @@ up by dropping DTR. The options that follow from that:
 - `lcp-restart 15` and `ipcp-restart 15`. One LCP frame takes about a second
   each way, so a round trip is close to the 3 s default. With the default,
   each end retransmits before the answer arrives, the stale requests queue up,
-  and one that arrives after LCP opens restarts the negotiation. This was seen
-  in the VM test, not predicted.
+  and one that arrives after LCP opens restarts the negotiation.
 - `noipv6` and `noccp`, since each extra control protocol adds a second or
   more of negotiation.
 
@@ -42,11 +45,4 @@ practice means one TCP retransmit timeout per lost frame. Measure before
 enabling it.
 
 At 300 bit/s, 30 bytes per second, LCP and IPCP exchange a few hundred bytes
-in total. On a clean wire the VM test (`checks.<linux>.ppp`) measures:
-
-- 6.6 s from `ATDT` to `CONNECT`, which is mostly the V.25 answer sequence.
-- 10 s from `CONNECT` to an address on the first call.
-- The same on every later call, now that `&C1` hangs up the port. Before
-  that, the ISP's `pppd` never saw a call end, stayed in the old session, and
-  the next call took about 25 s to renegotiate from there.
-- About 6 s round trip for a 64 byte ping.
+in total.

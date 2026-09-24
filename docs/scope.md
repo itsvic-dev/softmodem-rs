@@ -6,10 +6,11 @@ Modulations, in order of how hard they are to implement:
 
 | Standard | Rate | Nature | Verdict |
 |---|---|---|---|
-| V.21, Bell 103 | 300 bit/s | FSK, full duplex | first target |
-| V.23 | 1200/75 | FSK, asymmetric | possible, see below |
-| V.22 | 1200 bit/s | DPSK, full duplex | the real second step |
-| V.22bis | 2400 bit/s | QAM, adaptive equaliser | a different project |
+| V.21 | 300 bit/s | FSK, full duplex | yes |
+| Bell 103 | 300 bit/s | FSK, full duplex | no, see [V.21](v21.md) |
+| V.23 | 1200/75 | FSK, asymmetric | no, see below |
+| V.22 | 1200 bit/s | DPSK, full duplex | yes |
+| V.22bis | 2400 bit/s | QAM, adaptive equaliser | yes |
 | V.32bis | 14.4k | QAM, echo cancellation | no |
 | V.34 | 33.6k | QAM, line probing | no |
 | V.90 | 56k down | PCM codepoints | see below |
@@ -21,8 +22,8 @@ modem stops being a weekend and starts being a season.
 
 V.23 is FSK and so is cheap, but the 75 bit/s back channel makes PPP painful,
 and many modems outside Europe do not implement it. V.22 is harder but is
-supported by nearly every modem ever built, so it is the more useful second
-step.
+supported by nearly every modem ever built, so it is the more useful step
+above V.21.
 
 ## Why not 56k
 

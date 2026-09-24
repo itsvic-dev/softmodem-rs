@@ -8,11 +8,11 @@ implementations.
 **Wire.** RTP packets sent with `ezk-rtp` over UDP to a fixed peer, with no
 signalling. Dial and answer are a minimal exchange on the same socket. This is
 what two instances use during development. It is UDP and not TCP on purpose:
-TCP hides loss and reordering, and then the receive path goes untested until
-SIP arrives. The wire can inject loss, reordering and delay.
+TCP hides loss and reordering, and then the receive path goes untested
+without SIP. The wire can inject loss, reordering and delay.
 
-**SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. Since the
-media path is shared, this step adds only signalling.
+**SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. As the
+media path is shared, SIP adds only signalling.
 
 - It registers one user with digest auth, over TCP to port 5060, and keeps
   the registration alive. The Contact carries `;transport=tcp` and the
@@ -28,17 +28,15 @@ media path is shared, this step adds only signalling.
 - Either end's hang-up ends the other: a BYE stops the RTP session, and the
   modem hanging up sends a BYE.
 
-Against the Intraweb PBX, one modem dialling another's extension connects in
-7.4 s from `ATDT`, most of which is the answer sequence.
-`softmodem/tests/pbx.rs` holds the live tests, ignored unless asked for.
+Open question: should the answering side authenticate SIP at all, beyond
+PPP's own PAP or CHAP?
 
 ## SIP and RTP
 
-The `ezk` crate family covers this in pure Rust: `ezk-sip-ua` (0.9.1, April
-2026) with `ezk-rtp` (0.2.1, July 2026), plus the SIP types, SDP and auth
-crates alongside them. `rvoip` (0.3.10) is a newer alternative with far less
-use, and `rsip` is parse-only and stale since 2022. A-law is a lookup table,
-so there is no codec dependency.
+The `ezk` crate family covers this in pure Rust: `ezk-sip-ua` with `ezk-rtp`,
+plus the SIP types, SDP and auth crates alongside them. `rvoip` is a newer
+alternative with far less use, and `rsip` is parse-only and stale since
+2022. A-law is a lookup table, so there is no codec dependency.
 
 ## WAV dumps
 

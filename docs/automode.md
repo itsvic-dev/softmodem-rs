@@ -32,5 +32,5 @@ The sequences, for this modem with automode on:
 
 With a fixed modulation there is nothing to agree on, so neither V.8 bis nor
 V.8 runs. A caller without V.8 bis hears CRe as a short, quiet tone and
-ignores it, so it costs it nothing. Between two instances, V.8 bis puts ANSam about 0.4 s
-later.
+ignores it, so it costs it nothing. Between two instances, V.8 bis puts
+ANSam about 0.4 s later.

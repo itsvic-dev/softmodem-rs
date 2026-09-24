@@ -32,8 +32,8 @@ above.
 The transmitter still has to pace itself, 160 samples every 20 ms on the host
 clock, because the PBX and any ATA downstream do play out in real time.
 
-This is the proposed approach, not yet a decision. It needs checking that
-nothing on the PBX side retimes the stream.
+This holds only if nothing between the two ends retimes the stream. That is
+an open question.
 
 One lost 20 ms packet is 160 samples, which is six bit times at 300 bit/s.
 That can corrupt two 8N1 characters, and the async framing can take a few

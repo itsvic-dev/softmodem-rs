@@ -39,5 +39,4 @@ and takes whichever transaction the caller answers with:
 The calling modem answers CRe or MRe with CRd once the signal has ended,
 reads CL, and sends MS with the data mode and the V.8 bit as CL has it.
 
-spandsp has no V.8 bis, so V.8 bis is checked only between two instances of
-this modem.
+spandsp has no V.8 bis, so the ITU text is its only reference.

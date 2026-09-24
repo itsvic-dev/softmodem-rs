@@ -110,8 +110,8 @@ are configuration, not code.
 | 10 | `CONNECT 2400` | `X1` |
 
 At 300 bit/s Hayes reports plain `CONNECT`. Under `X0`, `CONNECT 1200` and
-`CONNECT 2400` are plain `CONNECT` too. Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
-The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
+`CONNECT 2400` are plain `CONNECT` too. Below the level that has them,
+`BUSY` and `NO DIALTONE` become `NO CARRIER`. The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
 framed by CR LF, with `V0` it is the number and CR, both using `S3` and `S4`.
 
 Under `+DR=1`, `+DR: V42B`, `+DR: V42B RD`, `+DR: V42B TD` or `+DR: NONE`
@@ -172,10 +172,7 @@ What emulators see, as of 86Box's `char` layer and QEMU's 16550:
 character device answered from user space, on Linux only. It answers the
 termios ioctls, including `TCGETS2`, `TIOCMGET` with DCD, RI, DSR and CTS,
 and `TIOCMSET`, `TIOCMBIS` and `TIOCMBIC`, which store DTR and RTS. RI is on
-for 2 s of each 6 s ring. `checks.<linux>.cuse` reads the lines directly,
-then boots a QEMU guest with `-chardev serial,path=/dev/ttySM0 -device
-pci-serial`, which dials, and whose own driver reports `CD` only while the
-call is up.
+for 2 s of each 6 s ring.
 
 It needs the `cuse` module and access to `/dev/cuse`, and the node it
 creates is root's, mode 0600, unless a udev rule says otherwise. `pppd`
