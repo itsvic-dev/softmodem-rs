@@ -179,11 +179,27 @@ creates is root's, mode 0600, unless a udev rule says otherwise. `pppd`
 cannot use it, since it is not a kernel tty and so takes no line
 discipline.
 
+`--tcp ADDR` listens on `ADDR` and serves one connection at a time. A
+second waits in the listen queue until the first closes. The end of a
+connection is DTR dropping: the modem hangs up, goes back to command mode
+and waits for the next one, with its settings kept. While none is open,
+the modem's output is lost, and an incoming call still rings and, with
+`S0` set, is answered. Writes are sent at once, with Nagle's algorithm off.
+
+TCP has no control lines, and so QEMU's 16550 and its `usb-serial` keep
+the reset value of their modem status, DCD, DSR and CTS on, as a modem at
+`&C0` shows. `-chardev serial` on a pseudoterminal reads all of them as
+off instead, since QEMU ignores the failed `TIOCMGET`. Windows' modem driver
+turns hardware flow control on by default, and a guest with it on does not
+send while CTS is off, so a Windows guest needs a TCP or pipe backend. The `&C1` in Windows' init
+string does nothing on a TCP port.
+
 Which port for what:
 
 | Computer | Port |
 |---|---|
 | QEMU, on Linux | `--cuse`, with `-chardev serial` |
+| QEMU or UTM, elsewhere | `--tcp`, with a TCP client backend, telnet off |
 | 86Box, on Linux | `--cuse`, with the host serial backend |
 | 86Box, elsewhere | `--pty`, with the pipe backend, reconnect on |
 | `pppd` on the host | `--pty` |

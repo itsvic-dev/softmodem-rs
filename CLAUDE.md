@@ -8,9 +8,9 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `softmodem-link`: V.42 over a pump's bits: the detection phase, HDLC
   framing, LAPM, V.42bis, and the plain V.14 fallback. No IO, and time comes
   in as an argument.
-- `softmodem-terminal`: what the computer sees. The pseudoterminal, the AT
-  command parser, settings and S-registers, the line editor and the `+++`
-  escape. No IO outside `pty`.
+- `softmodem-terminal`: what the computer sees. The pseudoterminal, the CUSE
+  and TCP ports, the AT command parser, settings and S-registers, the line
+  editor and the `+++` escape. No IO outside `pty`, `cuse` and `tcp`.
 - `softmodem-transport`: carries audio frames for a call, and rings, answers
   and refuses calls. A-law, the reorder window, the UDP wire, an in-memory
   loopback, SIP through a registrar, WAV recording, and the speaker on the
@@ -34,12 +34,12 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `nix develop --command crate2nix generate --output nix/Cargo.nix`.
 - Modem tests use the loopback transport on paused tokio time
   (`start_paused`), so the answer sequence and ring timers cost nothing. Only
-  `softmodem/tests/pty.rs` runs in real time.
+  `softmodem/tests/pty.rs` and `softmodem/tests/tcp.rs` run in real time.
 - Two modems on one host, recording every call:
   `softmodem wire --local 127.0.0.1:5300 --pty /tmp/isp --init ATS0=1 --dump dumps`
   and `softmodem wire --local 127.0.0.1:5301 --peer 127.0.0.1:5300 --pty /tmp/caller --dump dumps`,
-  then a terminal program on `/tmp/caller` and `ATDT0300`. Without `--pty` the
-  serial port is stdin and stdout.
+  then a terminal program on `/tmp/caller` and `ATDT0300`. Without `--pty`,
+  `--cuse` or `--tcp` the serial port is stdin and stdout.
 - `creds.txt` is ignored and holds live accounts for `pbx.vic.iw`. Never read
   or print it. Load it into the environment and pass variable names:
   `set -a; . ./creds.txt; set +a`, then
