@@ -73,6 +73,29 @@ fn clean_line_round_trips_both_channels() {
 }
 
 #[test]
+fn a_short_carrier_detect_hears_a_burst_after_100_ms_of_mark() {
+    let mut modulator = Modulator::new(V21_ORIGINATE, LEVEL);
+    let mut samples = vec![0; 800];
+    modulator.push_bits(std::iter::repeat_n(true, 30).chain(frame(0x5a)));
+    let mut burst = vec![0; 1200];
+    modulator.render(&mut burst);
+    samples.extend(burst);
+    samples.extend([0; 800]);
+
+    let heard = |mut demodulator: Demodulator| {
+        let mut bits = Vec::new();
+        demodulator.process(&samples, &mut bits);
+        let mut decoder = Decoder::new();
+        bits.into_iter().find_map(|b| decoder.push(b))
+    };
+    assert_eq!(
+        heard(Demodulator::with_carrier_on(V21_ORIGINATE, 160)),
+        Some(0x5a)
+    );
+    assert_eq!(heard(Demodulator::new(V21_ORIGINATE)), None);
+}
+
+#[test]
 fn survives_noise_at_12_db() {
     let received = link(V21_ORIGINATE, |s| common::add_noise(s, LEVEL, 12.0));
     assert_eq!(received.bytes, payload());

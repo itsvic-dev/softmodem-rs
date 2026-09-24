@@ -112,11 +112,19 @@ pub struct Demodulator {
     carrier_count: u32,
     carrier_on: f64,
     carrier_off: f64,
+    on_samples: u32,
 }
 
 impl Demodulator {
     #[must_use]
     pub fn new(channel: Channel) -> Self {
+        Self::with_carrier_on(channel, CARRIER_ON_SAMPLES)
+    }
+
+    /// A demodulator that turns carrier on after `on_samples` of it, for
+    /// messages with a preamble shorter than V.21's carrier detect.
+    #[must_use]
+    pub fn with_carrier_on(channel: Channel, on_samples: u32) -> Self {
         let window = channel.samples_per_bit().round();
         Self {
             mark: Correlator::new(channel.mark_hz, window),
@@ -128,6 +136,7 @@ impl Demodulator {
             carrier_count: 0,
             carrier_on: sine_peak(CARRIER_ON_DBM0),
             carrier_off: sine_peak(CARRIER_OFF_DBM0),
+            on_samples,
         }
     }
 
@@ -183,7 +192,7 @@ impl Demodulator {
         let needed = if self.carrier {
             CARRIER_OFF_SAMPLES
         } else {
-            CARRIER_ON_SAMPLES
+            self.on_samples
         };
         if self.carrier_count >= needed {
             self.carrier = !self.carrier;
