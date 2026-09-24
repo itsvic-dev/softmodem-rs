@@ -30,6 +30,9 @@ const TRN_HEARD: usize = 1536;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
+// What this end's receiver asks the far transmitter for, in MP.
+const TRELLIS: Trellis = Trellis::States16;
+const EXPANDED: bool = false;
 const CARRIER_DBM0: f64 = -43.0;
 
 fn polynomial(role: Role) -> Polynomial {
@@ -491,7 +494,7 @@ impl Sink {
 
     fn start_data(&mut self, framing: Framing) {
         self.scale = Encoder::new(framing, Settings::default()).energy().sqrt();
-        self.decoder = Some(Decoder::new(framing, Trellis::States16));
+        self.decoder = Some(Decoder::new(framing, TRELLIS));
         self.skip_bits = framing.p * framing.b - (framing.p - framing.r);
     }
 
@@ -584,6 +587,8 @@ impl V34 {
             max_call_to_answer: call_to_answer,
             max_answer_to_call: answer_to_call,
             rates: rates::mask(transmit.symbol_rate, 14),
+            trellis: TRELLIS,
+            expanded_shaping: EXPANDED,
             ..Mp::default()
         };
         self.source = Some(Source::new(self.role, silence, mp));
@@ -614,7 +619,7 @@ impl V34 {
         let bit_rate = u32::from(rate) * 2400;
         let (Some(transmit), Some(receive)) = (
             Framing::new(outcome.transmit.symbol_rate, bit_rate, far.expanded_shaping),
-            Framing::new(outcome.receive.symbol_rate, bit_rate, false),
+            Framing::new(outcome.receive.symbol_rate, bit_rate, EXPANDED),
         ) else {
             return;
         };
