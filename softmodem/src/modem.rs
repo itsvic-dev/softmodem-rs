@@ -391,6 +391,7 @@ where
                 Carrier::V22 => Modulation::V22,
                 Carrier::V22bis => Modulation::V22bis,
                 Carrier::V34 => Modulation::V34,
+                Carrier::V90 => Modulation::V90,
             },
             automode: chosen.automode,
         };

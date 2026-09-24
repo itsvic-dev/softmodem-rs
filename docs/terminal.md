@@ -39,7 +39,7 @@ command mode, on hook.
 | `X0` to `X4` | Which result codes are used, see below. |
 | `Z` | Hang up and reset to the stored profile. |
 | `Sn=v`, `Sn?` | Write, read an S-register. |
-| `+MS=<carrier>[,<automode>]` | The highest modulation for the next call, `V21`, `V22`, `V22B` or `V34`, and whether automode may fall back from it. The default is `V34` with automode. |
+| `+MS=<carrier>[,<automode>]` | The highest modulation for the next call, `V21`, `V22`, `V22B`, `V34` or `V90`, and whether automode may fall back from it. The default is `V34` with automode. With `V90` the caller is the analogue modem and the answerer the digital modem. |
 | `+MS?`, `+MS=?` | Read the modulation, list those supported. |
 | `+ES=<orig_rqst>[,<orig_fbk>[,<ans_fbk>]]` | How to try V.42, as V.250 § 6.5.1. The default is `3,0,2`: try it with the detection phase, and fall back to plain data. |
 | `+ES?`, `+ES=?` | Read the error control, list the values supported. |

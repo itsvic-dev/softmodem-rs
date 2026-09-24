@@ -388,7 +388,7 @@ async fn reads_and_lists_the_modulation() {
     a.command("AT&FE0+MS?").await;
     a.expect_next(b"\r\n+MS: V34,1\r\n\r\nOK\r\n").await;
     a.command("AT+MS=?").await;
-    a.expect_next(b"\r\n+MS: (V21,V22,V22B,V34),(0,1)\r\n\r\nOK\r\n")
+    a.expect_next(b"\r\n+MS: (V21,V22,V22B,V34,V90),(0,1)\r\n\r\nOK\r\n")
         .await;
     a.command("AT+MS=V22,2").await;
     a.expect_next(b"\r\nERROR\r\n").await;

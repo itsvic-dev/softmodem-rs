@@ -194,10 +194,11 @@ pub enum Carrier {
     V22,
     V22bis,
     V34,
+    V90,
 }
 
 impl Carrier {
-    pub const ALL: [Self; 4] = [Self::V21, Self::V22, Self::V22bis, Self::V34];
+    pub const ALL: [Self; 5] = [Self::V21, Self::V22, Self::V22bis, Self::V34, Self::V90];
 
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -206,6 +207,7 @@ impl Carrier {
             Self::V22 => "V22",
             Self::V22bis => "V22B",
             Self::V34 => "V34",
+            Self::V90 => "V90",
         }
     }
 }
