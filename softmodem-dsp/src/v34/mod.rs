@@ -15,6 +15,7 @@ pub mod probing;
 pub mod receiver;
 pub mod shell;
 pub mod tones;
+pub mod training;
 pub mod trellis;
 
 /// The nominal transmit power, the mean that V.2 allows.
