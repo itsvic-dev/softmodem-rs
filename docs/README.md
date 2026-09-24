@@ -22,7 +22,8 @@ would have dialled the internet.
 Non-goals:
 
 - Speed. See the ladder in [scope](scope.md).
-- 56k. See "Why not 56k" in [scope](scope.md).
+- 56k both ways. This modem can be the digital side of V.90 only. See "56k"
+  in [scope](scope.md).
 
 ## Architecture
 
@@ -70,7 +71,7 @@ link, in `softmodem-link`, is V.42 or plain start-stop characters. See
 
 ## Documents
 
-- [Scope](scope.md): the speed ladder, why not 56k, and what was rejected.
+- [Scope](scope.md): the speed ladder, V.34 and 56k, and what was rejected.
 - [The channel](channel.md): what the audio path must give, and the receive
   path.
 - [Terminal](terminal.md): the serial port, AT commands, result codes,
