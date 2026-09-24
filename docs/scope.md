@@ -48,8 +48,10 @@ the ones V.90 defines.
 
 V.90 has a digital modem, which sits on the digital network and sends PCM
 codewords down, and an analogue modem, which receives them through at most
-one D/A conversion and sends V.34 up. This modem is either one. The digital
-modem needs V.34 to receive, and the analogue modem needs it to send.
+one D/A conversion and sends V.34 up. This modem is either one: the call
+modem is the analogue modem and the answer modem the digital modem, as a
+caller and an ISP are. The digital modem needs V.34 to receive, and the
+analogue modem needs it to send.
 
 PCM needs the octets to arrive unchanged. The digital modem puts codewords on
 the wire as the linear values they decode to, which `alaw::encode` turns back
