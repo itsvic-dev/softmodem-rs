@@ -1,5 +1,8 @@
 //! Parses the text of an AT command line, after the `AT`.
 
+use std::ops::RangeInclusive;
+use std::str::FromStr;
+
 use crate::settings::Carrier;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +57,24 @@ pub enum Command {
     ReadErrorReport,
     /// `+ER=?`.
     ListErrorReport,
+    /// `+DS=`, or `%C` for the direction: how to ask for V.42 bis. A
+    /// subparameter left out keeps its value.
+    SetCompression {
+        direction: Option<u8>,
+        required: Option<bool>,
+        max_dict: Option<u16>,
+        max_string: Option<u8>,
+    },
+    /// `+DS?`.
+    ReadCompression,
+    /// `+DS=?`.
+    ListCompression,
+    /// `+DR=`, whether to report the compression in use before CONNECT.
+    ReportCompression(bool),
+    /// `+DR?`.
+    ReadCompressionReport,
+    /// `+DR=?`.
+    ListCompressionReport,
     /// An extended or vendor command, accepted without effect.
     Ignored,
 }
@@ -108,7 +129,7 @@ impl Parser<'_> {
         self.text.get(self.at).copied()
     }
 
-    fn number(&mut self) -> Result<Option<u8>, ParseError> {
+    fn number<T: FromStr>(&mut self) -> Result<Option<T>, ParseError> {
         let start = self.at;
         while self.peek().is_some_and(|b| b.is_ascii_digit()) {
             self.at += 1;
@@ -155,7 +176,7 @@ impl Parser<'_> {
             }
             b'S' => self.register()?,
             b'B' | b'C' | b'N' | b'P' | b'T' | b'W' | b'Y' => {
-                self.number()?;
+                self.number::<u8>()?;
                 Command::Ignored
             }
             b'&' if self.peek() == Some(b'C') => {
@@ -180,11 +201,20 @@ impl Parser<'_> {
                     ans_fbk: Some(ans_fbk),
                 }
             }
+            b'%' if self.peek() == Some(b'C') => {
+                self.at += 1;
+                Command::SetCompression {
+                    direction: Some(if self.value(3)? == 0 { 0 } else { 3 }),
+                    required: None,
+                    max_dict: None,
+                    max_string: None,
+                }
+            }
             b'&' | b'\\' | b'%' => {
                 self.next()
                     .filter(u8::is_ascii_alphabetic)
                     .ok_or(ParseError)?;
-                self.number()?;
+                self.number::<u8>()?;
                 Command::Ignored
             }
             b'+' => {
@@ -196,6 +226,8 @@ impl Parser<'_> {
                     b"MS" => self.modulation()?,
                     b"ES" => self.error_control()?,
                     b"ER" => self.error_report()?,
+                    b"DS" => self.compression()?,
+                    b"DR" => self.compression_report()?,
                     _ => {
                         self.skip_extended();
                         Command::Ignored
@@ -217,13 +249,13 @@ impl Parser<'_> {
         }
     }
 
-    /// Up to `limits.len()` comma-separated values, each at most its limit.
+    /// Up to `N` comma-separated values, each in its range.
     fn subparameters<const N: usize>(
         &mut self,
-        limits: [u8; N],
-    ) -> Result<[Option<u8>; N], ParseError> {
+        ranges: [RangeInclusive<u16>; N],
+    ) -> Result<[Option<u16>; N], ParseError> {
         let mut values = [None; N];
-        for (i, (value, limit)) in values.iter_mut().zip(limits).enumerate() {
+        for (i, (value, range)) in values.iter_mut().zip(ranges).enumerate() {
             if i > 0 {
                 if self.peek() != Some(b',') {
                     break;
@@ -231,7 +263,7 @@ impl Parser<'_> {
                 self.at += 1;
             }
             *value = self.number()?;
-            if value.is_some_and(|v| v > limit) {
+            if value.is_some_and(|v| !range.contains(&v)) {
                 return Err(ParseError);
             }
         }
@@ -246,13 +278,49 @@ impl Parser<'_> {
                 Command::ListErrorControl
             }
             (Some(b'='), _) => {
-                let [orig_rqst, orig_fbk, ans_fbk] = self.subparameters([3, 3, 5])?;
+                let [orig_rqst, orig_fbk, ans_fbk] =
+                    self.subparameters([0..=3, 0..=3, 0..=5])?.map(small);
                 Command::SetErrorControl {
                     orig_rqst,
                     orig_fbk,
                     ans_fbk,
                 }
             }
+            _ => return Err(ParseError),
+        };
+        self.end_extended(command)
+    }
+
+    fn compression(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::ReadCompression,
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::ListCompression
+            }
+            (Some(b'='), _) => {
+                let [direction, negotiation, max_dict, max_string] =
+                    self.subparameters([0..=3, 0..=1, 512..=u16::MAX, 6..=250])?;
+                Command::SetCompression {
+                    direction: small(direction),
+                    required: negotiation.map(|n| n == 1),
+                    max_dict,
+                    max_string: small(max_string),
+                }
+            }
+            _ => return Err(ParseError),
+        };
+        self.end_extended(command)
+    }
+
+    fn compression_report(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::ReadCompressionReport,
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::ListCompressionReport
+            }
+            (Some(b'='), _) => Command::ReportCompression(self.value(1)? == 1),
             _ => return Err(ParseError),
         };
         self.end_extended(command)
@@ -342,6 +410,10 @@ impl Parser<'_> {
     }
 }
 
+fn small(value: Option<u16>) -> Option<u8> {
+    value.and_then(|v| u8::try_from(v).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,7 +490,7 @@ mod tests {
     #[test]
     fn accepts_vendor_commands_without_effect() {
         assert_eq!(
-            parse(b"&K3&D2\\Q3%C0+FCLASS=0;+ESR=1;E1").unwrap(),
+            parse(b"&K3&D2\\Q3%E2+FCLASS=0;+ESR=1;E1").unwrap(),
             [
                 Command::Ignored,
                 Command::Ignored,
@@ -477,6 +549,55 @@ mod tests {
         assert_eq!(parse(b"+ES=3,0,6"), Err(ParseError));
         assert_eq!(parse(b"+ER=2"), Err(ParseError));
         assert_eq!(parse(b"\\N4"), Err(ParseError));
+    }
+
+    fn compression(direction: Option<u8>) -> Command {
+        Command::SetCompression {
+            direction,
+            required: None,
+            max_dict: None,
+            max_string: None,
+        }
+    }
+
+    #[test]
+    fn parses_data_compression() {
+        assert_eq!(
+            parse(b"+DS=3,1,4096,250;+DS=0;+DS?;+DS=?;+DR=1;+DR?;+DR=?").unwrap(),
+            [
+                Command::SetCompression {
+                    direction: Some(3),
+                    required: Some(true),
+                    max_dict: Some(4096),
+                    max_string: Some(250),
+                },
+                compression(Some(0)),
+                Command::ReadCompression,
+                Command::ListCompression,
+                Command::ReportCompression(true),
+                Command::ReadCompressionReport,
+                Command::ListCompressionReport,
+            ]
+        );
+        assert_eq!(
+            parse(b"%C0%C1%C3").unwrap(),
+            [
+                compression(Some(0)),
+                compression(Some(3)),
+                compression(Some(3))
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_compression_outside_v250() {
+        assert_eq!(parse(b"+DS=4"), Err(ParseError));
+        assert_eq!(parse(b"+DS=3,2"), Err(ParseError));
+        assert_eq!(parse(b"+DS=3,0,511"), Err(ParseError));
+        assert_eq!(parse(b"+DS=3,0,2048,5"), Err(ParseError));
+        assert_eq!(parse(b"+DS=3,0,2048,251"), Err(ParseError));
+        assert_eq!(parse(b"+DS=3,0,65536"), Err(ParseError));
+        assert_eq!(parse(b"%C4"), Err(ParseError));
     }
 
     #[test]

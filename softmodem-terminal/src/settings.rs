@@ -69,6 +69,7 @@ pub struct Settings {
     pub dcd: Dcd,
     pub modulation: Modulation,
     pub error_control: ErrorControl,
+    pub compression: Compression,
     pub registers: [u8; 256],
 }
 
@@ -81,6 +82,45 @@ pub struct ErrorControl {
     pub ans_fbk: u8,
     /// Whether to report the error control in use before CONNECT.
     pub report: bool,
+}
+
+/// What `+DS` sets, how to ask for V.42 bis, and what `+DR` sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Compression {
+    /// 0 none, 1 transmit only, 2 receive only, 3 both, from the DTE's side.
+    pub direction: u8,
+    /// Whether to hang up unless the far end agrees to `direction`.
+    pub required: bool,
+    /// The most codewords to agree to, V.42 bis P1.
+    pub max_dict: u16,
+    /// The longest string to agree to, V.42 bis P2.
+    pub max_string: u8,
+    /// Whether to report the compression in use before CONNECT.
+    pub report: bool,
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self {
+            direction: 3,
+            required: false,
+            max_dict: 2048,
+            max_string: 32,
+            report: false,
+        }
+    }
+}
+
+impl Compression {
+    #[must_use]
+    pub fn transmit(&self) -> bool {
+        self.direction & 1 != 0
+    }
+
+    #[must_use]
+    pub fn receive(&self) -> bool {
+        self.direction & 2 != 0
+    }
 }
 
 impl Default for ErrorControl {
@@ -204,6 +244,7 @@ impl Default for Settings {
             dcd: Dcd::AlwaysOn,
             modulation: Modulation::default(),
             error_control: ErrorControl::default(),
+            compression: Compression::default(),
             registers,
         }
     }
@@ -240,6 +281,19 @@ impl Settings {
                 current.ans_fbk = ans_fbk.unwrap_or(current.ans_fbk);
             }
             Command::ReportErrorControl(on) => self.error_control.report = on,
+            Command::SetCompression {
+                direction,
+                required,
+                max_dict,
+                max_string,
+            } => {
+                let current = &mut self.compression;
+                current.direction = direction.unwrap_or(current.direction);
+                current.required = required.unwrap_or(current.required);
+                current.max_dict = max_dict.unwrap_or(current.max_dict);
+                current.max_string = max_string.unwrap_or(current.max_string);
+            }
+            Command::ReportCompression(on) => self.compression.report = on,
             Command::SetRegister { register, value } => {
                 self.registers[usize::from(register)] = value;
             }
@@ -480,6 +534,28 @@ mod tests {
         assert!(control.originator_tries() && control.originator_detects());
         assert!(control.answerer_tries());
         assert!(!control.originator_requires() && !control.answerer_requires());
+    }
+
+    #[test]
+    fn offers_v42bis_both_ways_by_default_and_ds_changes_what_it_is_given() {
+        let mut settings = Settings::default();
+        let compression = settings.compression;
+        assert!(compression.transmit() && compression.receive() && !compression.required);
+        assert!(settings.apply(&Command::SetCompression {
+            direction: Some(2),
+            required: None,
+            max_dict: Some(4096),
+            max_string: None,
+        }));
+        assert_eq!(
+            settings.compression,
+            Compression {
+                direction: 2,
+                max_dict: 4096,
+                ..Compression::default()
+            }
+        );
+        assert!(!settings.compression.transmit() && settings.compression.receive());
     }
 
     #[test]
