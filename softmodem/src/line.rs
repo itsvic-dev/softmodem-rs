@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use softmodem_dsp::pump::{DataPump, Offer, Role};
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
+use softmodem_link::v42bis::Directions;
 use softmodem_link::{Link, Setup, Status};
 use softmodem_transport::{Call, FRAME_SAMPLES};
 
@@ -30,6 +31,8 @@ pub(crate) struct Received {
     /// The call is connected now, with LAPM if `reliable`.
     pub(crate) connected: bool,
     pub(crate) reliable: bool,
+    /// V.42 bis on the connection, in this end's directions.
+    pub(crate) compression: Option<Directions>,
 }
 
 #[derive(Debug)]
@@ -240,6 +243,7 @@ impl Handshake {
             self.connected = true;
             received.connected = true;
             received.reliable = status == Status::Reliable;
+            received.compression = link.compression();
         }
         received.bytes = link.take_received();
         received

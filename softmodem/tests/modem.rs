@@ -220,7 +220,7 @@ async fn identifies_itself() {
         .await;
     a.command("ATI4").await;
     a.expect_next(
-        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM\r\n\r\nOK\r\n",
+        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM, V.42bis\r\n\r\nOK\r\n",
     )
     .await;
 }
@@ -293,6 +293,87 @@ async fn v21_stays_plain() {
     a.command("ATDT0300").await;
     a.expect("\r\n+ER: NONE\r\n\r\nCONNECT\r\n").await;
     b.expect("\r\n+ER: NONE\r\n\r\nCONNECT\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn reads_and_lists_the_compression() {
+    let (mut a, _b) = two_modems("ATE0%C0", "");
+    a.command("AT+DS?;+DR?").await;
+    a.expect_next(b"\r\n+DS: 0,0,2048,32\r\n\r\n+DR: 0\r\n\r\nOK\r\n")
+        .await;
+    a.command("AT+DS=3,1,4096;+DR=1;+DS?;+DR?").await;
+    a.expect_next(b"\r\n+DS: 3,1,4096,32\r\n\r\n+DR: 1\r\n\r\nOK\r\n")
+        .await;
+    a.command("AT+DS=?;+DR=?").await;
+    a.expect_next(b"\r\n+DS: (0-3),(0,1),(512-65535),(6-250)\r\n\r\n+DR: (0,1)\r\n\r\nOK\r\n")
+        .await;
+}
+
+fn compressible(lines: usize) -> String {
+    (0..lines)
+        .map(|n| format!("line {n} of the text the caller sends to the answerer\r\n"))
+        .collect::<Vec<_>>()
+        .concat()
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_modems_compress_with_v42bis_both_ways() {
+    let (mut a, mut b) = two_modems("ATE0+ER=1;+DR=1", "ATE0S0=1+ER=1;+DR=1");
+    a.command("ATDT0300").await;
+    a.expect("\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\nCONNECT 2400\r\n")
+        .await;
+    b.expect("\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\nCONNECT 2400\r\n")
+        .await;
+    let text = compressible(200);
+    tokio::join!(a.send(text.as_bytes()), b.expect(&text));
+    tokio::join!(b.send(text.as_bytes()), a.expect(&text));
+}
+
+#[tokio::test(start_paused = true)]
+async fn reports_compression_in_one_direction_or_none() {
+    let (mut a, mut b) = two_modems("ATE0+DR=1;+DS=2", "ATE0S0=1+DR=1");
+    a.command("ATDT0300").await;
+    a.expect("\r\n+DR: V42B RD\r\n\r\nCONNECT 2400\r\n").await;
+    b.expect("\r\n+DR: V42B TD\r\n\r\nCONNECT 2400\r\n").await;
+    b.send(b"compressed only this way").await;
+    a.expect("compressed only this way").await;
+    a.send(b"and plain this way").await;
+    b.expect("and plain this way").await;
+
+    let (mut a, mut b) = two_modems("ATE0+DR=1", "ATE0S0=1+DR=1;%C0");
+    a.command("ATDT0300").await;
+    a.expect("\r\n+DR: NONE\r\n\r\nCONNECT 2400\r\n").await;
+    b.expect("\r\n+DR: NONE\r\n\r\nCONNECT 2400\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn hangs_up_when_v42bis_is_required_and_the_far_end_has_none() {
+    let (mut a, _b) = two_modems("ATE0+DS=3,1", "ATE0S0=1%C0");
+    a.command("ATDT0300").await;
+    a.expect_next(b"\r\nNO CARRIER\r\n").await;
+}
+
+async fn transfer_time(caller: &str, answerer: &str, text: &str) -> Duration {
+    let (mut a, mut b) = two_modems(caller, answerer);
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 2400\r\n").await;
+    b.expect("CONNECT 2400\r\n").await;
+    let start = tokio::time::Instant::now();
+    tokio::join!(a.send(text.as_bytes()), b.expect(text));
+    start.elapsed()
+}
+
+#[tokio::test(start_paused = true)]
+async fn v42bis_carries_text_faster_than_the_line_rate() {
+    let text = compressible(400);
+    let compressed = transfer_time("ATE0", "ATE0S0=1", &text).await;
+    let plain = transfer_time("ATE0%C0", "ATE0S0=1%C0", &text).await;
+    let line_rate = Duration::from_millis(u64::try_from(text.len()).unwrap() * 10_000 / 2400);
+    assert!(
+        compressed * 2 < plain && compressed < line_rate,
+        "{} octets: {compressed:?} with V.42bis, {plain:?} without, {line_rate:?} at 2400 bit/s async",
+        text.len()
+    );
 }
 
 #[tokio::test(start_paused = true)]

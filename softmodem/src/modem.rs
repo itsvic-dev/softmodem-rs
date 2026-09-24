@@ -5,7 +5,8 @@ use std::pin::pin;
 use std::time::Duration;
 
 use softmodem_dsp::pump::{Modulation, Offer, Role};
-use softmodem_link::Setup;
+use softmodem_link::v42bis::{Directions, Parameters};
+use softmodem_link::{CompressionSetup, Setup};
 use softmodem_terminal::command::{self, Command, Dial};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
@@ -261,6 +262,28 @@ where
                 Command::ListErrorReport => {
                     self.write(&self.settings.line("+ER: (0,1)")).await?;
                 }
+                Command::ReadCompression => {
+                    let asked = self.settings.compression;
+                    let text = format!(
+                        "+DS: {},{},{},{}",
+                        asked.direction,
+                        u8::from(asked.required),
+                        asked.max_dict,
+                        asked.max_string
+                    );
+                    self.write(&self.settings.line(&text)).await?;
+                }
+                Command::ListCompression => {
+                    let text = "+DS: (0-3),(0,1),(512-65535),(6-250)";
+                    self.write(&self.settings.line(text)).await?;
+                }
+                Command::ReadCompressionReport => {
+                    let text = format!("+DR: {}", u8::from(self.settings.compression.report));
+                    self.write(&self.settings.line(&text)).await?;
+                }
+                Command::ListCompressionReport => {
+                    self.write(&self.settings.line("+DR: (0,1)")).await?;
+                }
                 other => {
                     self.settings.apply(&other);
                 }
@@ -362,18 +385,30 @@ where
             automode: chosen.automode,
         };
         let control = self.settings.error_control;
+        let asked = self.settings.compression;
+        let compression = (asked.direction != 0).then_some(CompressionSetup {
+            offer: Directions {
+                transmit: asked.transmit(),
+                receive: asked.receive(),
+                parameters: Parameters {
+                    codewords: asked.max_dict,
+                    max_string: asked.max_string,
+                },
+            },
+            required: asked.required,
+        });
         let setups = Setups {
             originate: Setup {
                 lapm: control.originator_tries(),
                 detection: control.originator_detects(),
                 required: control.originator_requires(),
-                compression: None,
+                compression,
             },
             answer: Setup {
                 lapm: control.answerer_tries(),
                 detection: true,
                 required: control.answerer_requires(),
-                compression: None,
+                compression,
             },
         };
         self.line = Some(Line::new(call, offer, setups, role));
@@ -524,13 +559,23 @@ where
         if received.connected && matches!(self.mode, Mode::Handshake { .. }) {
             let bit_rate = line.bit_rate().unwrap_or_default();
             let protocol = if received.reliable { "LAPM" } else { "NONE" };
-            info!("CONNECT {bit_rate}, error control {protocol}");
+            let compression = match received.compression.map(|c| (c.transmit, c.receive)) {
+                Some((true, true)) => "V42B",
+                Some((false, true)) => "V42B RD",
+                Some((true, false)) => "V42B TD",
+                _ => "NONE",
+            };
+            info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}");
             self.mode = Mode::Data {
                 escape: EscapeDetector::new(Instant::now().into_std()),
             };
             self.carrier_lost_at = None;
             if self.settings.error_control.report && !self.settings.quiet {
                 let text = format!("+ER: {protocol}");
+                self.write(&self.settings.line(&text)).await?;
+            }
+            if self.settings.compression.report && !self.settings.quiet {
+                let text = format!("+DR: {compression}");
                 self.write(&self.settings.line(&text)).await?;
             }
             self.report(ResultCode::connect(bit_rate)).await?;
@@ -612,7 +657,7 @@ fn identify(n: u8) -> Option<String> {
     match n {
         0 => Some("softmodem".into()),
         3 => Some(format!("softmodem {}", env!("CARGO_PKG_VERSION"))),
-        4 => Some("V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM".into()),
+        4 => Some("V.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.42 LAPM, V.42bis".into()),
         _ => None,
     }
 }
