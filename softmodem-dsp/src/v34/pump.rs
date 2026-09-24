@@ -32,7 +32,22 @@ const RETRAIN_TONE: usize = 400;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
-const J_BITS: usize = 16;
+const J_BITS: u32 = 16;
+const J_4_CODE: u32 = code(J_4);
+const J_16_CODE: u32 = code(J_16);
+const J_PRIME_CODE: u32 = code(J_PRIME);
+
+// A 16-bit sequence of table 19, its first bit highest.
+const fn code(pattern: &str) -> u32 {
+    let bits = pattern.as_bytes();
+    let mut value = 0;
+    let mut n = 0;
+    while n < bits.len() {
+        value = value << 1 | (bits[n] == b'1') as u32;
+        n += 1;
+    }
+    value
+}
 // What this end's receiver asks the far transmitter for, in MP.
 const TRELLIS: Trellis = Trellis::States16;
 const EXPANDED: bool = false;
@@ -362,7 +377,7 @@ struct Sink {
     known_symbols: Vec<Complex>,
     descrambler: Descrambler,
     quadrant: u8,
-    window: VecDeque<bool>,
+    window: u32,
     deframer: mp::Deframer,
     trn_heard: usize,
     trn_error: f64,
@@ -389,7 +404,7 @@ impl Sink {
             known_symbols: Vec::new(),
             descrambler: Descrambler::with(polynomial(far)),
             quadrant: 0,
-            window: VecDeque::new(),
+            window: 0,
             deframer: mp::Deframer::default(),
             trn_heard: TRN_HEARD,
             trn_error: 0.0,
@@ -535,17 +550,12 @@ impl Sink {
     fn sequences(&mut self, z: Complex, index: usize, far: &mut Far) {
         self.equalizer.adapt(Self::corner(Self::quarter(z)));
         for bit in self.sequence_bits(z) {
-            self.window.push_back(bit);
-            if self.window.len() > 2 * J_BITS {
-                self.window.pop_front();
-            }
+            self.window = self.window << 1 | u32::from(bit);
             // J repeats, and J′ follows one: a single 16-bit match can come from errors in a long TRN.
-            let bits: Vec<bool> = self.window.iter().copied().collect();
-            let (earlier, last) = bits.split_at(bits.len().saturating_sub(J_BITS));
-            let is = |bits: &[bool], pattern: &str| bits == training::pattern(pattern).as_slice();
+            let (earlier, last) = (self.window >> J_BITS, self.window & 0xFFFF);
             if self.phase == 3 {
-                for (j, points) in [(J_4, Points::Four), (J_16, Points::Sixteen)] {
-                    if is(earlier, j) && is(last, j) {
+                for (j, points) in [(J_4_CODE, Points::Four), (J_16_CODE, Points::Sixteen)] {
+                    if earlier == j && last == j {
                         far.j = Some(points);
                     }
                 }
@@ -554,8 +564,8 @@ impl Sink {
                 }
             } else if self.far_role == Role::Originate
                 && !far.trn
-                && is(last, J_PRIME)
-                && (is(earlier, J_4) || is(earlier, J_16))
+                && last == J_PRIME_CODE
+                && (earlier == J_4_CODE || earlier == J_16_CODE)
             {
                 self.listen = Listen::Trn { from: index + 1 };
             }
