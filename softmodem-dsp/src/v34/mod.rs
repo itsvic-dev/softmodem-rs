@@ -11,6 +11,7 @@ pub mod mp;
 pub mod probing;
 pub mod shell;
 pub mod tones;
+pub mod trellis;
 
 /// The nominal transmit power, the mean that V.2 allows.
 pub const NOMINAL_DBM0: f64 = -13.0;
