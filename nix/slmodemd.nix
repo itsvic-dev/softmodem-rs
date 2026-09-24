@@ -18,6 +18,13 @@ stdenv.mkDerivation {
 
   sourceRoot = "source/slmodemd";
 
+  # -e takes no argument as released, so slmodemd never learns what to run.
+  postPatch = ''
+    substituteInPlace modem_cmdline.c --replace-fail \
+      'transmits audio over the socket (required)"}' \
+      'transmits audio over the socket (required)",MANDATORY,STRING,NULL}'
+  '';
+
   makeFlags = [ "CC=${stdenv.cc.targetPrefix}cc" ];
   buildFlags = [ "slmodemd" ];
 
