@@ -35,7 +35,7 @@ pub struct Setup {
     /// with LAPM's flags.
     pub detection: bool,
     /// Whether to end the call, rather than fall back to plain characters,
-    /// when the far end has no V.42.
+    /// when there is no V.42, even if it was not tried.
     pub required: bool,
 }
 
@@ -290,7 +290,7 @@ impl Link {
     }
 
     fn fall_back(&mut self) -> Phase {
-        if self.setup.lapm && self.setup.required {
+        if self.setup.required {
             return Phase::Released;
         }
         self.received.append(&mut self.held);
@@ -424,5 +424,17 @@ mod tests {
         let mut call = Call::new(required, Setup::NORMAL);
         call.run(Duration::from_secs(1));
         assert_eq!(call.caller.status(), Status::Released);
+    }
+
+    #[test]
+    fn ends_the_call_at_once_when_v42_is_required_and_cannot_be_tried() {
+        let setup = Setup {
+            lapm: false,
+            required: true,
+            ..V42
+        };
+        let mut link = Link::new(Role::Answer, setup, Decoder::v14());
+        link.start(RATE, Instant::now());
+        assert_eq!(link.status(), Status::Released);
     }
 }
