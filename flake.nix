@@ -67,10 +67,14 @@
               label: ours: theirs:
               pkgs.testers.runNixOSTest (
                 import ./nix/tests/slmodemd.nix {
-                  inherit guestPkgs label ours theirs;
+                  inherit
+                    guestPkgs
+                    label
+                    ours
+                    theirs
+                    ;
                   softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
-                  bridge =
-                    (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
+                  bridge = (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
                   slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
                 }
               );
