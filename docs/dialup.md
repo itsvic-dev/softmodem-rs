@@ -22,7 +22,6 @@ Non-goals:
 
 - Speed. The first target is 300 bit/s.
 - 56k. See "Why not 56k" below.
-- V.42bis compression, for now. It is the next milestone.
 
 ## What the channel gives, and what it must not do
 
@@ -192,6 +191,10 @@ command mode, on hook.
 | `+ES?`, `+ES=?` | Read the error control, list the values supported. |
 | `+ER=0`, `+ER=1` | Report the error control in use before `CONNECT`, off, on. |
 | `\N0` to `\N3` | Set all of `+ES`: `\N0` and `\N1` no V.42 (`1,0,1`), `\N2` V.42 required (`3,3,5`), `\N3` V.42 if the far end has it (`3,0,2`). |
+| `+DS=<direction>[,<required>[,<max_dict>[,<max_string>]]]` | How to ask for V.42bis, as V.250 § 6.6.1. `<direction>` is `0` none, `1` transmit only, `2` receive only, `3` both. `<required>` `1` hangs up unless the far end agrees to all of it. The default is `3,0,2048,32`. |
+| `+DS?`, `+DS=?` | Read the compression, list the values supported. |
+| `+DR=0`, `+DR=1` | Report the compression in use before `CONNECT`, off, on. |
+| `%C0` to `%C3` | `%C0` no V.42bis (`+DS=0`), `%C1` to `%C3` both directions (`+DS=3`). |
 
 `+ES` takes these values:
 
@@ -256,6 +259,10 @@ At 300 bit/s Hayes reports plain `CONNECT`. Under `X0`, `CONNECT 1200` and
 `CONNECT 2400` are plain `CONNECT` too. Below the level that has them, `BUSY` and `NO DIALTONE` become `NO CARRIER`.
 The default is `X4`. `NO DIALTONE` never happens. With `V1` each code is
 framed by CR LF, with `V0` it is the number and CR, both using `S3` and `S4`.
+
+Under `+DR=1`, `+DR: V42B`, `+DR: V42B RD`, `+DR: V42B TD` or `+DR: NONE`
+follows, as V.250 § 6.6.3 has it: both directions, receive only, transmit
+only, or none.
 
 Under `+ER=1`, `+ER: LAPM` or `+ER: NONE` comes on its own line before
 `CONNECT`, in words under `V0` too, as V.250 § 6.5.5 has it. `CONNECT`
@@ -480,6 +487,13 @@ dev shell, and the modem itself does not depend on it.
   REJ and timer recovery still deliver all of it. spandsp's V.42 sends only
   zeros until `v42_restart`, although its header declares a `v42_start`
   that the library does not export.
+- Our V.42bis codec against spandsp's: each decodes what the other encodes,
+  with 512, 2048 and 4096 codewords, and with spandsp's encoder dynamic,
+  always compressed and never compressed, over text, noise and runs.
+- V.42bis negotiated with spandsp's V.42, and its codec run on the direction
+  agreed. spandsp proposes and accepts compression only from caller to
+  answerer, with 512 codewords and strings of 6, and this modem agrees to
+  that in both roles.
 
 Those calls found a bug no test between two of our own modems could: the
 answering modem reports `CONNECT` up to a second before the caller does, and
@@ -747,10 +761,52 @@ LAPM (§ 8), as this modem runs it:
   frame ends. In data mode the modem reads from the computer until two
   frames' worth wait, so frames are full during a transfer.
 
+- An RR, RNR or REJ response with the F bit set that comes outside timer
+  recovery still acknowledges up to its N(R). Table 9 says to ignore it, but
+  spandsp acknowledges every I frame that way, and ignoring it left this
+  modem polling on each T401.
+
 Not done: T403, own-receiver busy, suspending the timers during a retrain,
 and DISC on hang-up. A pseudoterminal always takes what the modem writes, so
 the receiver is never busy. The call's own end tells the far modem of a
 hang-up. A retrain takes less than N400 times T401.
+
+## V.42bis
+
+Checked against V.42 bis (01/1990), with its Annex A and V.42 Table 11b for
+the XID encoding. It runs over LAPM only, never over plain data.
+
+Negotiation (§ 5.1, Annex A), in the XID that precedes SABME:
+
+- The caller proposes P0, P1 and P2 from `+DS`: by default both directions,
+  2048 codewords and strings of 32. Appendix II calls 2048 a good choice.
+  V.250 recommends 6 for the string, but 32 does better on repetitive data.
+- The answerer replies with the directions both want and the lower of each
+  value. A P1 below 512 or a P2 outside 6 to 250 is a procedural error and
+  ends the call.
+- P0 counts directions from the caller: bit 0 is caller to answerer. Each
+  end turns that into its own transmit and receive.
+- With `+DS=...,1`, a call whose agreement falls short of `<direction>`
+  ends with `NO CARRIER`.
+
+The codec (§§ 6 to 9):
+
+- The dictionary is 256 trees, codewords 3 to 258 for the characters and 259
+  on for strings, with the leaf recovery of § 6.5. Codewords go least
+  significant bit first, from 9 bits up to N1 with STEPUP.
+- The encoder starts transparent. Every 512 characters it checks what the
+  window cost: it enters compressed mode if codewords would have saved a
+  quarter, and goes back to transparent mode if they saved nothing (§ 7.8).
+  It never sends RESET.
+- When LAPM has nothing left to send, the encoder is flushed (§ 7.9), so a
+  typed character or the end of a PPP frame goes out at once. An idle
+  transmitter is the condition § 5.7 names for C-FLUSH.
+- A decoder error (§ 5.8) ends the call.
+
+On a 2400 bit/s call between two instances, 21,890 octets of repetitive
+text take 91 s as plain start-stop data, 77 s over LAPM, and 10 s with
+V.42bis. Data that is already compressed gains nothing, and the encoder
+stays in transparent mode for it.
 
 ## Three things that decide whether it works
 
@@ -937,7 +993,10 @@ Everything before it can be built and tested with two instances on one host.
     fallback to plain data in each role and `\N2` hanging up without it, and
     with `pppd` over LAPM in `checks.aarch64-linux.ppp-v22bis`, and against
     spandsp's V.42 in both roles.
-12. V.42bis.
+12. V.42bis, on by default with `+DS=3,0,2048,32`. Done between two
+    instances in each direction and in none, against spandsp's codec,
+    negotiated with spandsp's V.42, and with `pppd` over it in
+    `checks.aarch64-linux.ppp-v22bis`.
 13. A real modem behind the SPA2102 calling the answering side.
 
 ## Rejected, and why
@@ -965,10 +1024,10 @@ Recorded so these are not re-investigated.
 
 ## Known cost
 
-Without V.42bis the link gives up the factor of two or three on compressible
-text that compression would have provided. Against a far end without V.42,
-the link is raw async: PPP drops frames that fail FCS and TCP retransmits,
-which is correct but wasteful.
+Against a far end without V.42, the link is raw async: PPP drops frames that
+fail FCS and TCP retransmits, which is correct but wasteful. Against one
+without V.42bis, or one like spandsp that compresses in one direction only,
+text gives up the factor of two or three that compression provides.
 
 ## Open questions
 

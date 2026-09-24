@@ -1,12 +1,13 @@
 # softmodem
 
-A V.21, V.22 and V.22bis modem that places real calls over SIP. The design is `docs/dialup.md`.
+A V.21, V.22 and V.22bis modem with V.42 and V.42bis that places real calls
+over SIP. The design is `docs/dialup.md`.
 
 - `softmodem-dsp`: modulators, demodulators and tones over linear 8 kHz
   samples. No IO, no async, no dependencies on the other crates.
 - `softmodem-link`: V.42 over a pump's bits: the detection phase, HDLC
-  framing, LAPM, and the plain V.14 fallback. No IO, and time comes in as an
-  argument.
+  framing, LAPM, V.42bis, and the plain V.14 fallback. No IO, and time comes
+  in as an argument.
 - `softmodem-terminal`: what the computer sees. The pseudoterminal, the AT
   command parser, settings and S-registers, the line editor and the `+++`
   escape. No IO outside `pty`.
@@ -16,7 +17,7 @@ A V.21, V.22 and V.22bis modem that places real calls over SIP. The design is `d
   host sound output.
 - `softmodem`: the modem state machine that joins them, and the binary.
 - `softmodem-interop`: tests only, against spandsp's V.21, V.22, V.22bis,
-  V.8, V.42 and answer tones. It links spandsp through pkg-config, which only
+  V.8, V.42, V.42bis and answer tones. It links spandsp through pkg-config, which only
   the dev shell provides.
 
 ## Working here
