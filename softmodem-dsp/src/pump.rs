@@ -7,6 +7,7 @@ use crate::uart::Decoder;
 use crate::v21::V21;
 use crate::v22::V22;
 use crate::v22bis::V22bis;
+use crate::v34::pump::V34;
 
 /// Which end of the link this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,15 +22,20 @@ pub enum Modulation {
     V21,
     V22,
     V22bis,
+    /// V.34 duplex, whose phase 1 is V.8.
+    V34,
 }
 
 impl Modulation {
+    /// The pump from the end of its start-up: the answer tone, or for V.34
+    /// the silence after CJ.
     #[must_use]
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
         match self {
             Self::V21 => Box::new(V21::new(role)),
             Self::V22 => Box::new(V22::new(role)),
             Self::V22bis => Box::new(V22bis::new(role)),
+            Self::V34 => Box::new(V34::new(role)),
         }
     }
 }
@@ -47,6 +53,8 @@ impl Offer {
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
         if self.automode {
             crate::automode::pump(self.top, role)
+        } else if self.top == Modulation::V34 {
+            crate::automode::only(self.top, role)
         } else {
             self.top.pump(role)
         }

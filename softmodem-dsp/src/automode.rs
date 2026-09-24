@@ -29,24 +29,83 @@ const V21_MARK_HZ: f64 = 1650.0;
 /// `top`, and then carries the call on it.
 #[must_use]
 pub fn pump(top: Modulation, role: Role) -> Box<dyn DataPump> {
+    started(
+        Offered {
+            top,
+            fallback: true,
+        },
+        role,
+    )
+}
+
+/// V.8 that offers `top` alone, for a modulation such as V.34 whose phase 1
+/// is V.8.
+#[must_use]
+pub fn only(top: Modulation, role: Role) -> Box<dyn DataPump> {
+    started(
+        Offered {
+            top,
+            fallback: false,
+        },
+        role,
+    )
+}
+
+fn started(offer: Offered, role: Role) -> Box<dyn DataPump> {
     match role {
-        Role::Answer => Box::new(Answer::new(top)),
-        Role::Originate => Box::new(Call::new(top)),
+        Role::Answer => Box::new(Answer::new(offer)),
+        Role::Originate => Box::new(Call::new(offer)),
     }
 }
 
-fn offered(top: Modulation) -> Modes {
-    Modes {
-        v22bis: top != Modulation::V21,
-        v21: true,
-    }
+// V.34 sends the 75 ms after CJ itself, as it listens for INFO0 during them.
+fn gap(modes: Modes) -> usize {
+    if modes.v34 { 0 } else { GAP_SAMPLES }
 }
 
-fn chosen(top: Modulation, common: Modes, role: Role) -> Box<dyn DataPump> {
-    if common.v22bis {
-        top.pump(role)
-    } else {
-        Modulation::V21.pump(role)
+/// The top modulation, and whether the ones below it may be offered too.
+#[derive(Debug, Clone, Copy)]
+struct Offered {
+    top: Modulation,
+    fallback: bool,
+}
+
+impl Offered {
+    fn modes(self) -> Modes {
+        let top = self.top;
+        let family = matches!(top, Modulation::V22 | Modulation::V22bis);
+        if self.fallback {
+            Modes {
+                v34: top == Modulation::V34,
+                v22bis: top != Modulation::V21,
+                v21: true,
+            }
+        } else {
+            Modes {
+                v34: top == Modulation::V34,
+                v22bis: family,
+                v21: top == Modulation::V21,
+            }
+        }
+    }
+
+    // The V.22 family's own start-up, for a far end without V.8.
+    fn legacy(self) -> Modulation {
+        if self.top == Modulation::V34 {
+            Modulation::V22bis
+        } else {
+            self.top
+        }
+    }
+
+    fn chosen(self, common: Modes, role: Role) -> Box<dyn DataPump> {
+        if common.v34 {
+            Modulation::V34.pump(role)
+        } else if common.v22bis {
+            self.legacy().pump(role)
+        } else {
+            Modulation::V21.pump(role)
+        }
     }
 }
 
@@ -161,7 +220,7 @@ enum AnswerStage {
 // Answers with CRe, then ANSam and V.8, or with USB1 then V.21 mark for a far end without V.8.
 #[derive(Debug)]
 struct Answer {
-    top: Modulation,
+    offer: Offered,
     stage: AnswerStage,
     tone: AnswerTone,
     link: MenuLink,
@@ -169,9 +228,9 @@ struct Answer {
 }
 
 impl Answer {
-    fn new(top: Modulation) -> Self {
+    fn new(offer: Offered) -> Self {
         Self {
-            top,
+            offer,
             stage: AnswerStage::Silence,
             tone: AnswerTone::new(AnswerToneKind::Ansam, true, ANSWER_TONE_DBM0),
             link: MenuLink::new(Role::Answer),
@@ -187,7 +246,7 @@ impl Answer {
         };
         self.stage = match stage {
             AnswerStage::Silence if sent >= V8BIS_SILENCE_SAMPLES => {
-                AnswerStage::V8bis(Box::new(Answering::new(offered(self.top))))
+                AnswerStage::V8bis(Box::new(Answering::new(self.offer.modes())))
             }
             AnswerStage::V8bis(answering) => match answering.startup() {
                 Some(Startup::V8) => tone,
@@ -195,7 +254,7 @@ impl Answer {
                     self.tone = AnswerTone::new(AnswerToneKind::Ans, true, ANSWER_TONE_DBM0);
                     tone
                 }
-                Some(Startup::Caller) => AnswerStage::Chosen(Box::new(Call::new(self.top))),
+                Some(Startup::Caller) => AnswerStage::Chosen(Box::new(Call::new(self.offer))),
                 None if !answering.engaged() && sent >= SILENCE_SAMPLES => tone,
                 None => AnswerStage::V8bis(answering),
             },
@@ -205,11 +264,11 @@ impl Answer {
             },
             AnswerStage::Gap { until, next } if sent >= until => match next {
                 Some(pump) => AnswerStage::Chosen(pump),
-                None if self.top == Modulation::V21 => {
+                None if self.offer.top == Modulation::V21 => {
                     AnswerStage::Chosen(Modulation::V21.pump(Role::Answer))
                 }
                 None => AnswerStage::Trying {
-                    pump: self.top.pump(Role::Answer),
+                    pump: self.offer.legacy().pump(Role::Answer),
                     until: sent + TA_SAMPLES,
                 },
             },
@@ -274,7 +333,7 @@ impl DataPump for Answer {
             AnswerStage::V8bis(answering) => answering.receive(input),
             AnswerStage::Silence | AnswerStage::Tone { .. } => {
                 if let Some(cm) = self.link.menu(input) {
-                    let modes = offered(self.top).common(cm.modes);
+                    let modes = self.offer.modes().common(cm.modes);
                     self.stage = AnswerStage::Jm {
                         menu: Menu {
                             data: cm.data,
@@ -295,8 +354,8 @@ impl DataPump for Answer {
                 let cj = self.link.hear(input).contains(&Heard::Cj);
                 if cj || !self.link.demodulator.carrier() {
                     self.stage = AnswerStage::Gap {
-                        until: self.sent + GAP_SAMPLES,
-                        next: Some(chosen(self.top, modes, Role::Answer)),
+                        until: self.sent + gap(modes),
+                        next: Some(self.offer.chosen(modes, Role::Answer)),
                     };
                 }
             }
@@ -359,9 +418,9 @@ struct SigA {
 }
 
 impl SigA {
-    fn new(top: Modulation) -> Self {
+    fn new(offer: Offered) -> Self {
         Self {
-            candidate: (top != Modulation::V21).then(|| top.pump(Role::Originate)),
+            candidate: (offer.top != Modulation::V21).then(|| offer.legacy().pump(Role::Originate)),
             mark: ToneDetector::new(V21_MARK_HZ),
             marked: 0,
         }
@@ -395,7 +454,7 @@ impl SigA {
 // Answers CRe, calls with V.8 after ANSam, or follows USB1 or V.21 mark after plain ANS.
 #[derive(Debug)]
 struct Call {
-    top: Modulation,
+    offer: Offered,
     stage: CallStage,
     responder: Responding,
     detector: AnswerToneDetector,
@@ -405,13 +464,13 @@ struct Call {
 }
 
 impl Call {
-    fn new(top: Modulation) -> Self {
+    fn new(offer: Offered) -> Self {
         Self {
-            top,
+            offer,
             stage: CallStage::Listening { heard_ans: false },
-            responder: Responding::new(offered(top)),
+            responder: Responding::new(offer.modes()),
             detector: AnswerToneDetector::new(),
-            sig_a: SigA::new(top),
+            sig_a: SigA::new(offer),
             link: MenuLink::new(Role::Originate),
             sent: 0,
         }
@@ -425,7 +484,7 @@ impl Call {
     }
 
     fn cm(&self) -> Menu {
-        Menu::data(offered(self.top))
+        Menu::data(self.offer.modes())
     }
 }
 
@@ -494,8 +553,8 @@ impl DataPump for Call {
                 self.link.modulator.render(out);
                 if self.link.modulator.pending() == 0 {
                     self.stage = CallStage::Gap {
-                        until: sent + out.len() + GAP_SAMPLES,
-                        next: chosen(self.top, modes, Role::Originate),
+                        until: sent + out.len() + gap(modes),
+                        next: self.offer.chosen(modes, Role::Originate),
                     };
                 }
             }
@@ -537,7 +596,7 @@ impl DataPump for Call {
                 if joint.is_none()
                     && let Some(jm) = self.link.menu(input)
                 {
-                    *joint = Some(offered(self.top).common(jm.modes));
+                    *joint = Some(self.offer.modes().common(jm.modes));
                 }
             }
             CallStage::Chosen(pump) => pump.receive(input, bits),
@@ -593,6 +652,31 @@ mod tests {
     }
 
     #[test]
+    fn two_v34_ends_agree_on_v34_through_v8() {
+        let mut caller = pump(Modulation::V34, Role::Originate);
+        let mut answerer = pump(Modulation::V34, Role::Answer);
+        let frames = connect(caller.as_mut(), answerer.as_mut());
+        assert_eq!((caller.bit_rate(), answerer.bit_rate()), (33_600, 33_600));
+        assert!(frames * 20 < 15_000, "V.8 and V.34 took {} ms", frames * 20);
+    }
+
+    #[test]
+    fn a_v34_caller_meets_a_v22bis_answerer_at_2400() {
+        let mut caller = pump(Modulation::V34, Role::Originate);
+        let mut answerer = pump(Modulation::V22bis, Role::Answer);
+        connect(caller.as_mut(), answerer.as_mut());
+        assert_eq!((caller.bit_rate(), answerer.bit_rate()), (2400, 2400));
+    }
+
+    #[test]
+    fn a_fixed_v34_still_runs_v8_first() {
+        let mut caller = only(Modulation::V34, Role::Originate);
+        let mut answerer = only(Modulation::V34, Role::Answer);
+        connect(caller.as_mut(), answerer.as_mut());
+        assert_eq!((caller.bit_rate(), answerer.bit_rate()), (33_600, 33_600));
+    }
+
+    #[test]
     fn a_caller_that_ignores_cre_hears_ansam_at_2_s() {
         let mut answerer = pump(Modulation::V22bis, Role::Answer);
         let mut line = vec![0; 20_000];
@@ -630,7 +714,13 @@ mod tests {
     #[test]
     fn a_menu_counts_on_its_second_arrival() {
         let mut repeats = Repeats::default();
-        let menu = Menu::data(offered(Modulation::V22bis));
+        let menu = Menu::data(
+            Offered {
+                top: Modulation::V22bis,
+                fallback: true,
+            }
+            .modes(),
+        );
         assert_eq!(repeats.push(menu), None);
         assert_eq!(repeats.push(menu), Some(menu));
     }

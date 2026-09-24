@@ -9,6 +9,8 @@ use super::{GUARD_DBM0, GUARD_HZ, dpsk, rates, tones};
 use crate::pump::Role;
 use crate::tone::Tone;
 
+// § 11.1: 75 ms of silence after CJ.
+const CJ_SILENCE: usize = 600;
 // § 11.2.1: a reversal answers one 40 ms after it arrives.
 const ANSWER_DELAY: usize = 320;
 // § 11.2.1: each tone goes on 10 ms after its reversal.
@@ -165,7 +167,8 @@ pub struct Phase2 {
 }
 
 impl Phase2 {
-    /// Starting at the end of the 75 ms of silence after CJ.
+    /// Starting at the end of CJ, with the 75 ms of silence that § 11.2.1
+    /// listens through.
     #[must_use]
     pub fn new(role: Role) -> Self {
         let far = match role {
@@ -177,8 +180,8 @@ impl Phase2 {
         Self {
             role,
             step: Step::SendInfo0,
-            tx: Tx::Info,
-            tx_until: None,
+            tx: Tx::Silence,
+            tx_until: Some(CJ_SILENCE),
             sent: 0,
             heard: 0,
             tone_from: 0,
@@ -244,6 +247,7 @@ impl Phase2 {
 
     fn segment_ended(&mut self) {
         let (tx, until) = match (self.step, self.tx) {
+            (Step::SendInfo0, Tx::Silence) => (Tx::Info, None),
             (Step::Probe | Step::ProbeFar, Tx::Tone) => (Tx::L1, Some(self.sent + L1_SAMPLES)),
             (Step::Probe | Step::ProbeFar, Tx::L1) => {
                 (Tx::L2, Some(self.sent + L2_MOST + self.round_trip))

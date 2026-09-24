@@ -10,6 +10,7 @@ const SYNC: [bool; 10] = [
 // Tables 2 to 4, with bit i of each byte being b_i.
 const CALL_FUNCTION_DATA: u8 = 0xC1;
 const MODULATION_TAG: u8 = 0x05;
+const V34_BIT: u8 = 0x40;
 const CALL_FUNCTION_TAG: u8 = 0x01;
 const EXTENSION: u8 = 0x10;
 const EXTENSION_MASK: u8 = 0x38;
@@ -19,6 +20,8 @@ const V21_BIT: u8 = 0x80;
 /// The modulations a menu offers, of those this modem has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modes {
+    /// V.34 duplex, item 2 of table 4.
+    pub v34: bool,
     /// V.22bis or V.22, item 4 of table 4.
     pub v22bis: bool,
     /// V.21, item 12 of table 4.
@@ -29,6 +32,7 @@ impl Modes {
     #[must_use]
     pub fn common(self, other: Self) -> Self {
         Self {
+            v34: self.v34 && other.v34,
             v22bis: self.v22bis && other.v22bis,
             v21: self.v21 && other.v21,
         }
@@ -50,9 +54,10 @@ impl Menu {
 
     fn octets(self) -> [u8; 4] {
         let call = if self.data { CALL_FUNCTION_DATA } else { 0x01 };
+        let modn0 = MODULATION_TAG | if self.modes.v34 { V34_BIT } else { 0 };
         let modn1 = EXTENSION | if self.modes.v22bis { V22BIS_BIT } else { 0 };
         let modn2 = EXTENSION | if self.modes.v21 { V21_BIT } else { 0 };
-        [call, MODULATION_TAG, modn1, modn2]
+        [call, modn0, modn1, modn2]
     }
 
     /// One sequence of the menu, to be sent over and over.
@@ -86,6 +91,9 @@ impl Menu {
                 }
             } else if octet & EXTENSION == 0 {
                 in_modulation = octet & 0x0F == MODULATION_TAG;
+                if in_modulation {
+                    modes.v34 = octet & V34_BIT != 0;
+                }
                 extension = 0;
             }
         }
@@ -220,6 +228,7 @@ mod tests {
     }
 
     const BOTH: Modes = Modes {
+        v34: false,
         v22bis: true,
         v21: true,
     };
@@ -227,6 +236,15 @@ mod tests {
     #[test]
     fn encodes_the_octets_of_tables_3_and_4() {
         assert_eq!(Menu::data(BOTH).octets(), [0xC1, 0x05, 0x12, 0x90]);
+        let v34 = Modes { v34: true, ..BOTH };
+        assert_eq!(Menu::data(v34).octets(), [0xC1, 0x45, 0x12, 0x90]);
+    }
+
+    #[test]
+    fn reads_back_v34() {
+        let menu = Menu::data(Modes { v34: true, ..BOTH });
+        let heard = read(menu.sequence().repeat(2).into_iter().chain([true; 10]));
+        assert_eq!(heard, [Heard::Menu(menu); 2]);
     }
 
     #[test]
@@ -239,6 +257,7 @@ mod tests {
     #[test]
     fn reads_back_repeated_menus() {
         let menu = Menu::data(Modes {
+            v34: false,
             v22bis: false,
             v21: true,
         });
@@ -267,6 +286,7 @@ mod tests {
     fn keeps_only_the_modes_in_common() {
         let ours = BOTH;
         let theirs = Modes {
+            v34: false,
             v22bis: false,
             v21: true,
         };

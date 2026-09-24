@@ -451,6 +451,7 @@ impl Field {
         }
         let modulations = self.par2.first()?.get(2).copied().unwrap_or(0);
         Some(Modes {
+            v34: false,
             v22bis: modulations & (V22BIS | V22) != 0,
             v21: modulations & V21 != 0,
         })
@@ -840,10 +841,12 @@ mod tests {
     use crate::ansam::{AnswerTone, AnswerToneKind};
 
     const BOTH: Modes = Modes {
+        v34: false,
         v22bis: true,
         v21: true,
     };
     const V21_ONLY: Modes = Modes {
+        v34: false,
         v22bis: false,
         v21: true,
     };
@@ -968,10 +971,7 @@ mod tests {
     fn messages_read_back_from_their_bits() {
         let ms = Message {
             v8: true,
-            data: Some(Modes {
-                v22bis: false,
-                v21: true,
-            }),
+            data: Some(V21_ONLY),
             ..Message::plain(Kind::Ms)
         };
         for message in [cl(), ms, Message::plain(Kind::Ack1)] {
@@ -1002,13 +1002,7 @@ mod tests {
         ];
         let ms = Message::parse(&octets).unwrap();
         assert!(ms.v8 && !ms.transmit_ack);
-        assert_eq!(
-            ms.data,
-            Some(Modes {
-                v22bis: false,
-                v21: true
-            })
-        );
+        assert_eq!(ms.data, Some(V21_ONLY));
     }
 
     #[test]
