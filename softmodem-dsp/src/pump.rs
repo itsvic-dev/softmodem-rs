@@ -84,6 +84,15 @@ pub trait DataPump: Debug + Send {
     /// Asks the far end to train again, for a modulation that can.
     fn retrain(&mut self) {}
 
+    /// Starts ending the call with the far end, for a modulation that can.
+    /// [`DataPump::cleared`] then says when it has.
+    fn clear_down(&mut self) {}
+
+    /// Whether the two ends have agreed to end the call, from either side.
+    fn cleared(&self) -> bool {
+        false
+    }
+
     /// Queues bits to send. The line idles on mark when none are queued.
     fn push_bits(&mut self, bits: &[bool]);
 

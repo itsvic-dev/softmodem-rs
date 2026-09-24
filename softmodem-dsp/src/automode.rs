@@ -312,6 +312,16 @@ impl DataPump for Answer {
         }
     }
 
+    fn clear_down(&mut self) {
+        if let AnswerStage::Chosen(pump) = &mut self.stage {
+            pump.clear_down();
+        }
+    }
+
+    fn cleared(&self) -> bool {
+        self.pump().is_some_and(DataPump::cleared)
+    }
+
     fn pending(&self) -> usize {
         self.pump().map_or(0, DataPump::pending)
     }
@@ -511,6 +521,16 @@ impl DataPump for Call {
         if let CallStage::Chosen(pump) = &mut self.stage {
             pump.retrain();
         }
+    }
+
+    fn clear_down(&mut self) {
+        if let CallStage::Chosen(pump) = &mut self.stage {
+            pump.clear_down();
+        }
+    }
+
+    fn cleared(&self) -> bool {
+        self.pump().is_some_and(DataPump::cleared)
     }
 
     fn pending(&self) -> usize {

@@ -92,6 +92,8 @@ enum Send {
     J,
     Mp,
     Data,
+    /// Silence once a cleardown has ended the call.
+    Cleared,
 }
 
 /// The symbols this end sends from phase 3 on, of unit mean power.
@@ -112,6 +114,8 @@ struct Source {
     b1_frames: usize,
     b1_sent: bool,
     renegotiations: u32,
+    /// This end started a cleardown, so its MP asks for 0 bit/s both ways.
+    clearing: bool,
 }
 
 impl Source {
@@ -139,6 +143,7 @@ impl Source {
             b1_frames: 0,
             b1_sent: false,
             renegotiations: 0,
+            clearing: false,
         }
     }
 
@@ -163,6 +168,7 @@ impl Source {
             Send::J => self.j(far),
             Send::Mp => self.mp(far),
             Send::Data => self.data(),
+            Send::Cleared => self.queue.push_back((0.0, 0.0)),
         }
     }
 
@@ -249,18 +255,38 @@ impl Source {
     }
 
     fn mp(&mut self, far: &Far) {
+        let far_clears = far
+            .mp
+            .is_some_and(|mp| mp.max_call_to_answer == 0 && mp.max_answer_to_call == 0);
         if self.acked && far.ack {
+            // § 11.7: MP′ both ways ends a cleardown, with no E.
+            if self.clearing || far_clears {
+                self.send = Send::Cleared;
+                self.queue.push_back((0.0, 0.0));
+                return;
+            }
             let e = self.training.sequence(&[true; mp::E_ONES], self.points);
             self.queue.extend(e);
             self.send = Send::Data;
             return;
         }
         let mut mp = self.own_mp(far);
+        if self.clearing {
+            mp.max_call_to_answer = 0;
+            mp.max_answer_to_call = 0;
+        }
         mp.acknowledge = far.mp.is_some();
         self.acked |= mp.acknowledge;
         let frame = mp.frame();
         self.queue
             .extend(self.training.sequence(&frame, self.points));
+    }
+
+    // § 11.7.1.1: S and S̄, then MP asking for 0 bit/s, with no TRN.
+    fn clear_down(&mut self) {
+        self.renegotiate();
+        self.clearing = true;
+        self.send = Send::Mp;
     }
 
     // § 11.6: S, S̄ and TRN, then MP, E and B1 as in phase 4, all on 4 points.
@@ -925,8 +951,28 @@ impl DataPump for V34 {
         }
     }
 
+    fn clear_down(&mut self) {
+        let Some(source) = &mut self.source else {
+            return;
+        };
+        if source.send != Send::Data {
+            return;
+        }
+        source.clear_down();
+        self.far.trn = false;
+        self.far.trained = None;
+        self.far.mp = None;
+        self.far.ack = false;
+    }
+
+    fn cleared(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.send == Send::Cleared)
+    }
+
     fn carrier(&self) -> bool {
-        self.online && self.carrier
+        self.online && self.carrier && !self.cleared()
     }
 
     fn connected(&self) -> bool {
@@ -1136,6 +1182,31 @@ mod tests {
             exchange_over(caller, answerer, 1, line);
             caller.connected() && answerer.connected() && holds(caller.bit_rate())
         })
+    }
+
+    #[test]
+    fn clears_down_from_either_end() {
+        for initiator in [Role::Originate, Role::Answer] {
+            let (mut caller, mut answerer) = connected_pair();
+            match initiator {
+                Role::Originate => caller.clear_down(),
+                Role::Answer => answerer.clear_down(),
+            }
+            let cleared = (0..200).find(|_| {
+                exchange(&mut caller, &mut answerer, 1);
+                caller.cleared() && answerer.cleared()
+            });
+            assert!(
+                cleared.is_some(),
+                "a cleardown started by the {initiator:?} end would leave the call up: caller {:?}, answerer {:?}",
+                caller.source.as_ref().map(|s| s.send),
+                answerer.source.as_ref().map(|s| s.send),
+            );
+            assert!(
+                !caller.carrier() && !answerer.carrier(),
+                "DCD would stay on after a cleardown"
+            );
+        }
     }
 
     #[test]
