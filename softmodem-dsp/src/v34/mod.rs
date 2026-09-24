@@ -8,6 +8,7 @@ pub mod dpsk;
 pub mod info;
 pub mod mp;
 pub mod shell;
+pub mod tones;
 
 /// The nominal transmit power, the mean that V.2 allows.
 pub const NOMINAL_DBM0: f64 = -13.0;

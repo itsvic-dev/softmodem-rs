@@ -4,7 +4,7 @@ use common::{add_noise, mix, resample};
 use softmodem_dsp::pump::Role;
 use softmodem_dsp::tone::Tone;
 use softmodem_dsp::v34::info::{Deframer, Info, Info0, Info1c, Probe};
-use softmodem_dsp::v34::{GUARD_DBM0, GUARD_HZ, NOMINAL_DBM0, dpsk};
+use softmodem_dsp::v34::{GUARD_DBM0, GUARD_HZ, NOMINAL_DBM0, dpsk, tones};
 
 const FRAME: usize = 160;
 
@@ -95,4 +95,96 @@ fn hears_info1c_through_noise_and_a_clock_offset() {
 fn does_not_hear_the_other_carrier() {
     let line = send(Role::Answer, &[info0().frame()]);
     assert!(receive::<Info0>(Role::Originate, &line).is_empty());
+}
+
+fn tone(role: Role, samples: usize, reversals: &[usize]) -> Vec<i16> {
+    let mut sender = tones::Sender::new(role);
+    let mut out = Vec::new();
+    let mut at = 0;
+    for &reversal in reversals {
+        let mut chunk = vec![0; reversal - at];
+        sender.render(&mut chunk);
+        out.extend(chunk);
+        sender.reverse_after(0);
+        at = reversal;
+    }
+    let mut rest = vec![0; samples - at];
+    sender.render(&mut rest);
+    out.extend(rest);
+    if role == Role::Answer {
+        let mut guard = vec![0; out.len()];
+        Tone::new(GUARD_HZ, GUARD_DBM0).render(&mut guard);
+        out = mix(&out, &guard);
+    }
+    out
+}
+
+fn reversals(role: Role, samples: &[i16]) -> Vec<f64> {
+    let mut detector = tones::Detector::new(role);
+    samples
+        .chunks(FRAME)
+        .flat_map(|chunk| detector.process(chunk))
+        .collect()
+}
+
+fn within_a_sample(heard: &[f64], sent: &[usize]) -> bool {
+    heard.len() == sent.len()
+        && heard
+            .iter()
+            .zip(sent)
+            .all(|(&heard, &sent)| (heard - f64::from(u32::try_from(sent).unwrap())).abs() < 1.0)
+}
+
+#[test]
+fn times_each_reversal_of_tones_a_and_b_to_within_a_sample() {
+    for role in [Role::Answer, Role::Originate] {
+        let sent = [1003, 1500, 4321];
+        let heard = reversals(role, &tone(role, 6000, &sent));
+        assert!(
+            within_a_sample(&heard, &sent),
+            "the round trip delay from the {role:?} tone would be off: {heard:?}"
+        );
+    }
+}
+
+#[test]
+fn times_reversals_through_noise_and_the_echo_of_its_own_tone() {
+    let sent = [2000, 5000];
+    let far = add_noise(tone(Role::Answer, 8000, &sent), NOMINAL_DBM0, 25.0);
+    let echo: Vec<i16> = tone(Role::Originate, 8000, &[3000])
+        .into_iter()
+        .map(|s| s / 4)
+        .collect();
+    let heard = reversals(Role::Answer, &mix(&far, &echo));
+    assert!(
+        within_a_sample(&heard, &sent),
+        "an echo would upset the round trip delay: {heard:?}"
+    );
+}
+
+#[test]
+fn a_tone_that_stops_is_not_a_reversal() {
+    let mut line = tone(Role::Originate, 3000, &[]);
+    line.extend([0; 2000]);
+    assert!(reversals(Role::Originate, &line).is_empty());
+}
+
+#[test]
+fn hears_only_the_tone_it_listens_for() {
+    let mut detector = tones::Detector::new(Role::Answer);
+    detector.process(&tone(Role::Answer, 1000, &[]));
+    assert!(detector.present());
+    let mut detector = tones::Detector::new(Role::Originate);
+    detector.process(&tone(Role::Answer, 1000, &[]));
+    assert!(!detector.present());
+}
+
+#[test]
+fn stays_present_through_a_reversal() {
+    let mut detector = tones::Detector::new(Role::Originate);
+    let line = tone(Role::Originate, 2000, &[1000]);
+    for (n, chunk) in line.chunks(10).enumerate() {
+        detector.process(chunk);
+        assert!(n < 10 || detector.present(), "lost at {n}");
+    }
 }
