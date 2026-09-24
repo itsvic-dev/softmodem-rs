@@ -6,7 +6,9 @@ use std::f64::consts::PI;
 
 const PROTOTYPE_RATE: f64 = 48_000.0;
 // The V.34 band at 3429 baud reaches 3845 Hz, and 8000 samples/s folds at 4000 Hz.
-const CUTOFF_HZ: f64 = 3900.0;
+const DOWN_CUTOFF_HZ: f64 = 3900.0;
+// 4000 Hz passes, as a line card's D/A leaves it: slmodemd recovers V.90's symbol clock from it.
+const UP_CUTOFF_HZ: f64 = 4000.0;
 const PROTOTYPE_TAPS: usize = 1200;
 const KAISER_BETA: f64 = 8.0;
 
@@ -31,17 +33,28 @@ pub struct Resampler {
 }
 
 impl Resampler {
-    /// `up` times the input rate must be 48 000 samples/s.
+    /// From the softmodem's 8000 samples/s to slmodemd's 9600.
     #[must_use]
+    pub fn up() -> Self {
+        Self::new(6, 5, UP_CUTOFF_HZ)
+    }
+
+    /// From slmodemd's 9600 samples/s to the softmodem's 8000.
+    #[must_use]
+    pub fn down() -> Self {
+        Self::new(5, 6, DOWN_CUTOFF_HZ)
+    }
+
+    // `up` times the input rate must be 48 000 samples/s.
     #[expect(
         clippy::cast_precision_loss,
         reason = "the prototype has a few thousand taps"
     )]
-    pub fn new(up: usize, down: usize) -> Self {
+    fn new(up: usize, down: usize, cutoff: f64) -> Self {
         let taps = PROTOTYPE_TAPS / up;
         let length = up * taps;
         let centre = (length - 1) as f64 / 2.0;
-        let fraction = 2.0 * CUTOFF_HZ / PROTOTYPE_RATE;
+        let fraction = 2.0 * cutoff / PROTOTYPE_RATE;
         let prototype: Vec<f64> = (0..length)
             .map(|k| {
                 let t = k as f64 - centre;
@@ -118,8 +131,8 @@ mod tests {
     #[test]
     fn keeps_the_modem_band_through_both_directions() {
         for hz in [300.0, 1200.0, 1959.0, 3700.0] {
-            let mut up = Resampler::new(6, 5);
-            let mut down = Resampler::new(5, 6);
+            let mut up = Resampler::up();
+            let mut down = Resampler::down();
             let mut high = Vec::new();
             up.process(&tone(hz, 8000.0, 16_000, 10_000.0), &mut high);
             assert_eq!(high.len(), 19_200, "9600 samples/s would drift from 8000");
@@ -136,13 +149,26 @@ mod tests {
 
     #[test]
     fn keeps_what_would_fold_out_of_8000_samples_per_second() {
-        let mut down = Resampler::new(5, 6);
+        let mut down = Resampler::down();
         let mut low = Vec::new();
         down.process(&tone(4400.0, 9600.0, 19_200, 10_000.0), &mut low);
         let folded = amplitude(&low, 8000.0 - 4400.0, 8000.0);
         assert!(
             folded < 10.0,
             "4400 Hz from slmodemd would fold onto 3600 Hz at {folded:.1} of 10000"
+        );
+    }
+
+    #[test]
+    fn passes_4000_hz_to_slmodemd() {
+        let mut up = Resampler::up();
+        let alternating: Vec<i16> = (0..16_000).map(|n| if n % 2 == 0 { 10_000 } else { -10_000 }).collect();
+        let mut high = Vec::new();
+        up.process(&alternating, &mut high);
+        let level = amplitude(&high, 4000.0, 9600.0);
+        assert!(
+            level > 3_000.0,
+            "slmodemd would find V.90's symbol clock at {level:.0} of 10000"
         );
     }
 }

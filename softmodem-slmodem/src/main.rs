@@ -56,8 +56,8 @@ async fn run(number: &str, fd: i32, peer: SocketAddr) -> anyhow::Result<()> {
     let mut call = wire.dial(number).await.context("dialling")?;
     info!("answered");
 
-    let mut up = Resampler::new(6, 5);
-    let mut down = Resampler::new(5, 6);
+    let mut up = Resampler::up();
+    let mut down = Resampler::down();
     let mut heard: VecDeque<i16> = VecDeque::new();
     let mut odd_byte: Option<u8> = None;
     let mut buf = [0u8; 4096];
