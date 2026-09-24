@@ -1,1 +1,1 @@
-doc-valid-idents = ["..", "INFO0a", "INFO0d", "INFO1a", "INFO1c", "INFO1d", "TRN1d", "TRN2d", "B1d", "UINFO"]
+doc-valid-idents = ["..", "INFO0a", "INFO0d", "INFO1a", "INFO1c", "INFO1d", "TRN1d", "TRN2d", "B1d", "UINFO", "CPt", "CPs", "Sd", "Ri", "Rd", "Rt", "Ed", "Jd", "Ja"]
