@@ -82,6 +82,10 @@ dials a softmodem over the UDP wire and carries the audio between them.
   found wherever its three zero octets come.
 - It trains for 2 s in phase 4, and picks its rate from its own equaliser
   error.
+- Past its error thresholds it retrains rather than renegotiates, as noise
+  31 dB down shows. It follows a retrain from this modem too.
+- The bridge adds noise both ways from `SOFTMODEM_NOISE_AFTER` seconds past
+  the answer, at `SOFTMODEM_NOISE_RMS`.
 
 ## Known cost
 

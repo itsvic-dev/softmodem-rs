@@ -63,4 +63,7 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `checks.aarch64-linux.slmodemd-v22bis` and `slmodemd-v34` call this
   modem from slmodemd in an x86-64 guest under TCG, and pass text both
   ways. `result/dumps/softmodem/` has the call as one stereo WAV,
-  slmodemd on the left.
+  slmodemd on the left. `slmodemd-v34-retrain` retrains from ATO1, and
+  `slmodemd-v34-noise` adds noise that makes slmodemd retrain. Each check
+  fails on its run's `status`, and the run itself, recording and journals
+  included, is `.#checks.<system>.<check>.run`.
