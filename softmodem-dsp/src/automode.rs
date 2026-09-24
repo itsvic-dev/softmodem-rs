@@ -618,6 +618,8 @@ impl DataPump for Call {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use super::*;
     use crate::v8bis::{Pair, Signal, SignalDetector};
 
@@ -658,6 +660,83 @@ mod tests {
         let frames = connect(caller.as_mut(), answerer.as_mut());
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (33_600, 33_600));
         assert!(frames * 20 < 15_000, "V.8 and V.34 took {} ms", frames * 20);
+    }
+
+    #[test]
+    fn two_v34_ends_connect_whatever_the_delay_each_way() {
+        let mut failed = Vec::new();
+        for up_delay in [0, 1, 160, 320, 555] {
+            for down_delay in [0, 1, 160, 320, 555] {
+                let mut caller = pump(Modulation::V34, Role::Originate);
+                let mut answerer = pump(Modulation::V34, Role::Answer);
+                let mut lines = [
+                    VecDeque::from(vec![0; up_delay]),
+                    VecDeque::from(vec![0; down_delay]),
+                ];
+                let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+                let mut frames = 0;
+                while !(caller.connected() && answerer.connected()) && frames < 1000 {
+                    caller.transmit(&mut up);
+                    answerer.transmit(&mut down);
+                    lines[0].extend(up);
+                    lines[1].extend(down);
+                    let heard: Vec<i16> = lines[0].drain(..FRAME).collect();
+                    answerer.receive(&heard, &mut Vec::new());
+                    let heard: Vec<i16> = lines[1].drain(..FRAME).collect();
+                    caller.receive(&heard, &mut Vec::new());
+                    frames += 1;
+                }
+                if !(caller.connected() && answerer.connected() && caller.bit_rate() == 33_600) {
+                    failed.push((up_delay, down_delay));
+                }
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "no V.34 connection over lines of these delays up and down, in samples: {failed:?}"
+        );
+    }
+
+    #[test]
+    fn two_v34_ends_connect_when_each_sends_and_hears_in_either_order() {
+        let mut failed = Vec::new();
+        for seed in 1..=40u32 {
+            let mut state = seed.wrapping_mul(2_654_435_761);
+            let mut coin = move || {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state & 1 == 1
+            };
+            let mut ends = [
+                pump(Modulation::V34, Role::Originate),
+                pump(Modulation::V34, Role::Answer),
+            ];
+            let mut queues = [VecDeque::new(), VecDeque::new()];
+            let mut frames = 0;
+            while !ends.iter().all(|end| end.connected()) && frames < 1000 {
+                for end in 0..2 {
+                    let first = coin();
+                    for transmit in [first, !first] {
+                        if transmit {
+                            let mut frame = [0; FRAME];
+                            ends[end].transmit(&mut frame);
+                            queues[end].push_back(frame);
+                        } else if let Some(heard) = queues[1 - end].pop_front() {
+                            ends[end].receive(&heard, &mut Vec::new());
+                        }
+                    }
+                }
+                frames += 1;
+            }
+            if !(ends.iter().all(|end| end.connected()) && ends[0].bit_rate() == 33_600) {
+                failed.push(seed);
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "no V.34 connection when each end sends and hears in either order, for seeds {failed:?}"
+        );
     }
 
     #[test]

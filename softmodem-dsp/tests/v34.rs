@@ -197,6 +197,19 @@ fn probe(level_dbm0: f64, samples: usize) -> Vec<i16> {
     out
 }
 
+#[test]
+fn a_tone_that_follows_l2_is_not_a_reversal() {
+    for l2 in (3000..3160).step_by(7) {
+        let mut line = probe(L2_DBM0, l2);
+        line.extend(tone(Role::Answer, 3000, &[]));
+        let heard = reversals(Role::Answer, &line);
+        assert!(
+            heard.is_empty(),
+            "the call modem would start its probing early after {l2} samples of L2: {heard:?}"
+        );
+    }
+}
+
 fn analyse(samples: &[i16]) -> Probing {
     let mut analyser = Analyser::new(L2_DBM0);
     analyser.push(samples);

@@ -720,6 +720,41 @@ mod tests {
     }
 
     #[test]
+    fn two_ends_connect_whatever_the_delay_of_the_line() {
+        for delay in [1, 37, 80, 160, 241, 320, 480, 800, 1600] {
+            let mut caller = V34::new(Role::Originate);
+            let mut answerer = V34::new(Role::Answer);
+            let mut lines = [
+                VecDeque::from(vec![0; delay]),
+                VecDeque::from(vec![0; delay]),
+            ];
+            let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+            let mut frames = 0;
+            while !(caller.connected() && answerer.connected()) && frames < 500 {
+                caller.transmit(&mut up);
+                answerer.transmit(&mut down);
+                lines[0].extend(up);
+                lines[1].extend(down);
+                let up: Vec<i16> = lines[0].drain(..FRAME).collect();
+                let down: Vec<i16> = lines[1].drain(..FRAME).collect();
+                answerer.receive(&up, &mut Vec::new());
+                caller.receive(&down, &mut Vec::new());
+                frames += 1;
+            }
+            assert!(
+                caller.connected() && answerer.connected(),
+                "no V.34 connection over a line of {delay} samples each way: caller {:?}/{:?} {:?}, answerer {:?}/{:?} {:?}",
+                caller.source.as_ref().map(|s| s.send),
+                caller.sink.as_ref().map(|s| s.listen),
+                caller.far,
+                answerer.source.as_ref().map(|s| s.send),
+                answerer.sink.as_ref().map(|s| s.listen),
+                answerer.far,
+            );
+        }
+    }
+
+    #[test]
     fn two_ends_connect_at_33600_and_carry_data_both_ways() {
         let mut caller = V34::new(Role::Originate);
         let mut answerer = V34::new(Role::Answer);

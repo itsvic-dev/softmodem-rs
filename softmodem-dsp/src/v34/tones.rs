@@ -74,6 +74,7 @@ pub struct Detector {
     last_projection: f64,
     candidate: Option<(f64, u64)>,
     absent_for: usize,
+    present_from: u64,
 }
 
 fn power(a: Complex) -> f64 {
@@ -97,6 +98,7 @@ impl Detector {
             last_projection: f64::NAN,
             candidate: None,
             absent_for: 2 * WINDOW,
+            present_from: 0,
         }
     }
 
@@ -146,11 +148,18 @@ impl Detector {
         let tone = 2.0 * power(average);
         let heard = 2.0 * tone.sqrt() >= self.threshold
             && tone >= PURITY * self.sum_of_squares.max(0.0) / window;
+        let was_present = self.present();
         self.absent_for = if heard { 0 } else { self.absent_for + 1 };
+        if self.present() && !was_present {
+            self.present_from = n;
+        }
 
         let before = self.averages[0];
-        // A reversal is of a pure tone: L1 and L2 beat within the window.
-        if !self.present() || 2.0 * 2.0 * power(before) < self.threshold * self.threshold {
+        // A pure tone only: L1 and L2 beat within the window, and at onset `before` still holds them.
+        if !self.present()
+            || n < self.present_from + 2 * WINDOW as u64
+            || 2.0 * 2.0 * power(before) < self.threshold * self.threshold
+        {
             self.last_projection = f64::NAN;
             self.candidate = None;
             return None;
