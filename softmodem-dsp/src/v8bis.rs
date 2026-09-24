@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 
 use crate::correlator::Correlator;
+use crate::fsk::{Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
 use crate::hdlc::{self, Deframer};
 use crate::sine_peak;
 use crate::tone::Tone;
@@ -517,16 +518,419 @@ impl Reader {
     }
 }
 
+// § 9.8: a station that has waited 5 s goes back to its initial state.
+const TRANSACTION_SAMPLES: usize = 40_000;
+const CARRIER_ON_SAMPLES: u32 = 160;
+const TRAILING_MARK_BITS: usize = 4;
+// § 7.1.4: CRe goes 12 to 15 dB below continuous signals.
+const CRE_DBM0: f64 = V21_MAX_LEVEL_DBM0 - 13.0;
+
+/// What follows a transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Startup {
+    /// This end sends `ANSam` and answers V.8 (§ 9.9.1).
+    V8,
+    /// This end sends ANS and answers as V.25 (§ 9.9.3).
+    V25,
+    /// The far end sends the answer tone, and this end calls.
+    Caller,
+}
+
+// V.21(L) for the initiating station's messages, V.21(H) for the other's (§ 7.2).
+#[derive(Debug)]
+struct Messages {
+    modulator: Modulator,
+    demodulator: Demodulator,
+    reader: Reader,
+}
+
+impl Messages {
+    fn new(pair: Pair) -> Self {
+        let (transmit, receive) = match pair {
+            Pair::Initiating => (V21_ORIGINATE, V21_ANSWER),
+            Pair::Responding => (V21_ANSWER, V21_ORIGINATE),
+        };
+        Self {
+            modulator: Modulator::new(transmit, V21_MAX_LEVEL_DBM0),
+            demodulator: Demodulator::with_carrier_on(receive, CARRIER_ON_SAMPLES),
+            reader: Reader::new(),
+        }
+    }
+
+    fn send(&mut self, messages: &[Message]) {
+        for message in messages {
+            self.modulator.push_bits(message.bits());
+        }
+        self.modulator.push_bits([true; TRAILING_MARK_BITS]);
+    }
+
+    fn sending(&self) -> bool {
+        self.modulator.pending() > 0
+    }
+
+    fn transmit(&mut self, out: &mut [i16]) {
+        if self.sending() {
+            self.modulator.render(out);
+        } else {
+            out.fill(0);
+        }
+    }
+
+    fn hear(&mut self, input: &[i16]) -> Vec<Heard> {
+        let mut bits = Vec::new();
+        self.demodulator.process(input, &mut bits);
+        bits.into_iter()
+            .filter_map(|b| self.reader.push(b))
+            .collect()
+    }
+}
+
+fn data_message(kind: Kind, v8: bool, modes: Modes) -> Message {
+    Message {
+        v8,
+        transmit_ack: true,
+        data: Some(modes),
+        ..Message::plain(kind)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerStage {
+    Cre,
+    Awaiting,
+    Escaped,
+    SentCl,
+    SentMs,
+    Ending(Startup),
+}
+
+/// The answering station's side (§ 10.2.2): `CRe`, then the transaction the
+/// calling station picks with its answer.
+#[derive(Debug)]
+pub struct Answering {
+    modes: Modes,
+    stage: AnswerStage,
+    cre: SignalSender,
+    detector: SignalDetector,
+    messages: Messages,
+    elapsed: usize,
+    since: usize,
+}
+
+impl Answering {
+    /// An answering station that offers the data mode over `modes`.
+    #[must_use]
+    pub fn new(modes: Modes) -> Self {
+        Self {
+            modes,
+            stage: AnswerStage::Cre,
+            cre: SignalSender::new(Signal::CRe, Pair::Initiating, CRE_DBM0),
+            detector: SignalDetector::new(Pair::Responding),
+            messages: Messages::new(Pair::Initiating),
+            elapsed: 0,
+            since: 0,
+        }
+    }
+
+    /// Whether the calling station has answered `CRe`, so that the
+    /// transaction goes on.
+    #[must_use]
+    pub fn engaged(&self) -> bool {
+        !matches!(self.stage, AnswerStage::Cre | AnswerStage::Awaiting)
+    }
+
+    /// The start-up to go on with, once the transaction has ended and its
+    /// last message has been sent.
+    #[must_use]
+    pub fn startup(&self) -> Option<Startup> {
+        match self.stage {
+            AnswerStage::Ending(startup) if !self.messages.sending() => Some(startup),
+            _ => None,
+        }
+    }
+
+    pub fn transmit(&mut self, out: &mut [i16]) {
+        if self.stage == AnswerStage::Cre {
+            self.cre.render(out);
+            if self.cre.done() {
+                self.stage = AnswerStage::Awaiting;
+            }
+        } else {
+            self.messages.transmit(out);
+        }
+        self.elapsed += out.len();
+        let waiting = self.engaged() && !matches!(self.stage, AnswerStage::Ending(_));
+        if waiting && self.elapsed - self.since > TRANSACTION_SAMPLES {
+            self.stage = AnswerStage::Ending(Startup::V8);
+        }
+    }
+
+    pub fn receive(&mut self, input: &[i16]) {
+        let signal = self.detector.process(input);
+        if self.stage == AnswerStage::Awaiting {
+            match signal {
+                Some(Signal::CRd) => {
+                    let cl = data_message(Kind::Cl, true, self.modes);
+                    self.reply(&[cl], AnswerStage::SentCl);
+                }
+                Some(Signal::ESr) => self.enter(AnswerStage::Escaped),
+                _ => {}
+            }
+        }
+        for heard in self.messages.hear(input) {
+            self.take(heard);
+        }
+    }
+
+    fn take(&mut self, heard: Heard) {
+        let waiting = self.engaged() && !matches!(self.stage, AnswerStage::Ending(_));
+        let message = match heard {
+            Heard::Message(message) if waiting => message,
+            Heard::Invalid if waiting => {
+                let nak = Message::plain(Kind::Nak1);
+                self.reply(&[nak], AnswerStage::Ending(Startup::V8));
+                return;
+            }
+            _ => return,
+        };
+        let ms = data_message(Kind::Ms, true, self.modes);
+        match (self.stage, message.kind) {
+            (AnswerStage::Escaped, Kind::Cl) => self.reply(&[ms], AnswerStage::SentMs),
+            (AnswerStage::Escaped, Kind::Clr) => {
+                let cl = data_message(Kind::Cl, true, self.modes);
+                self.reply(&[cl, ms], AnswerStage::SentMs);
+            }
+            (AnswerStage::SentCl, Kind::Ms) => self.select(message),
+            (AnswerStage::SentMs, Kind::Ack1) => self.enter(AnswerStage::Ending(Startup::Caller)),
+            (AnswerStage::SentMs, Kind::Nak1 | Kind::Nak2 | Kind::Nak3 | Kind::Nak4) => {
+                self.enter(AnswerStage::Ending(Startup::V8));
+            }
+            _ => {}
+        }
+    }
+
+    // § 9.9: V.8 if MS asks for it, V.25 if it asks for neither kind of V.8.
+    fn select(&mut self, ms: Message) {
+        let startup = ms.data.and_then(|modes| {
+            let common = self.modes.common(modes);
+            if ms.v8 {
+                Some(Startup::V8)
+            } else if !ms.short_v8 && (common.v22bis || common.v21) {
+                Some(Startup::V25)
+            } else {
+                None
+            }
+        });
+        match startup {
+            Some(startup) if ms.transmit_ack => {
+                self.reply(&[Message::plain(Kind::Ack1)], AnswerStage::Ending(startup));
+            }
+            Some(startup) => self.enter(AnswerStage::Ending(startup)),
+            None => {
+                let nak = Message::plain(Kind::Nak3);
+                self.reply(&[nak], AnswerStage::Ending(Startup::V8));
+            }
+        }
+    }
+
+    fn reply(&mut self, messages: &[Message], stage: AnswerStage) {
+        self.messages.send(messages);
+        self.enter(stage);
+    }
+
+    fn enter(&mut self, stage: AnswerStage) {
+        self.stage = stage;
+        self.since = self.elapsed;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallStage {
+    Idle,
+    Crd,
+    AwaitingCl,
+    SentMs,
+    Done,
+}
+
+/// The calling station's side (§ 10.2.1): `CRd` in answer to `CRe` or `MRe`, so
+/// that the answering station lists its modes, then MS for the data mode.
+#[derive(Debug)]
+pub struct Responding {
+    modes: Modes,
+    stage: CallStage,
+    crd: SignalSender,
+    detector: SignalDetector,
+    messages: Messages,
+    elapsed: usize,
+    since: usize,
+}
+
+impl Responding {
+    /// A calling station that selects the data mode over `modes`.
+    #[must_use]
+    pub fn new(modes: Modes) -> Self {
+        Self {
+            modes,
+            stage: CallStage::Idle,
+            crd: SignalSender::new(Signal::CRd, Pair::Responding, V21_MAX_LEVEL_DBM0),
+            detector: SignalDetector::new(Pair::Initiating),
+            messages: Messages::new(Pair::Responding),
+            elapsed: 0,
+            since: 0,
+        }
+    }
+
+    pub fn transmit(&mut self, out: &mut [i16]) {
+        if self.stage == CallStage::Crd {
+            self.crd.render(out);
+            if self.crd.done() {
+                self.enter(CallStage::AwaitingCl);
+            }
+        } else {
+            self.messages.transmit(out);
+        }
+        self.elapsed += out.len();
+        let waiting = matches!(self.stage, CallStage::AwaitingCl | CallStage::SentMs);
+        if waiting && self.elapsed - self.since > TRANSACTION_SAMPLES {
+            self.stage = CallStage::Done;
+        }
+    }
+
+    pub fn receive(&mut self, input: &[i16]) {
+        let signal = self.detector.process(input);
+        if self.stage == CallStage::Idle && matches!(signal, Some(Signal::CRe | Signal::MRe)) {
+            self.enter(CallStage::Crd);
+        }
+        for heard in self.messages.hear(input) {
+            match (self.stage, heard) {
+                (CallStage::AwaitingCl | CallStage::SentMs, Heard::Invalid) => {
+                    self.messages.send(&[Message::plain(Kind::Nak1)]);
+                    self.enter(CallStage::Done);
+                }
+                (CallStage::AwaitingCl, Heard::Message(cl)) if cl.kind == Kind::Cl => {
+                    match cl.data {
+                        Some(theirs) => {
+                            let ms = data_message(Kind::Ms, cl.v8, self.modes.common(theirs));
+                            self.messages.send(&[ms]);
+                            self.enter(CallStage::SentMs);
+                        }
+                        None => self.enter(CallStage::Done),
+                    }
+                }
+                (CallStage::SentMs, Heard::Message(_)) => self.enter(CallStage::Done),
+                _ => {}
+            }
+        }
+    }
+
+    fn enter(&mut self, stage: CallStage) {
+        self.stage = stage;
+        self.since = self.elapsed;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ansam::{AnswerTone, AnswerToneKind};
-    use crate::fsk::{Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
 
     const BOTH: Modes = Modes {
         v22bis: true,
         v21: true,
     };
+    const V21_ONLY: Modes = Modes {
+        v22bis: false,
+        v21: true,
+    };
+
+    fn exchange(answering: &mut Answering, responding: &mut Responding, ms: usize) {
+        let mut up = [0; 160];
+        let mut down = [0; 160];
+        for _ in 0..ms / 20 {
+            answering.transmit(&mut down);
+            responding.transmit(&mut up);
+            answering.receive(&up);
+            responding.receive(&down);
+        }
+    }
+
+    fn drain(answering: &mut Answering) {
+        let mut out = [0; 160];
+        while answering.messages.sending() {
+            answering.transmit(&mut out);
+        }
+    }
+
+    fn answering_at(stage: AnswerStage) -> Answering {
+        let mut answering = Answering::new(BOTH);
+        answering.stage = stage;
+        answering
+    }
+
+    #[test]
+    fn a_calling_station_answers_cre_and_selects_v8() {
+        let mut answering = Answering::new(BOTH);
+        let mut responding = Responding::new(V21_ONLY);
+        exchange(&mut answering, &mut responding, 1000);
+        assert!(answering.engaged());
+        assert_eq!(answering.startup(), None);
+        exchange(&mut answering, &mut responding, 2000);
+        assert_eq!(answering.startup(), Some(Startup::V8));
+        assert_eq!(responding.stage, CallStage::Done);
+    }
+
+    #[test]
+    fn without_an_answer_cre_starts_no_transaction() {
+        let mut answering = Answering::new(BOTH);
+        let mut out = [0; 160];
+        for _ in 0..150 {
+            answering.transmit(&mut out);
+            answering.receive(&[0; 160]);
+        }
+        assert!(!answering.engaged());
+        assert_eq!(answering.startup(), None);
+    }
+
+    #[test]
+    fn an_ms_without_either_v8_asks_for_v25() {
+        let mut answering = answering_at(AnswerStage::SentCl);
+        let ms = data_message(Kind::Ms, false, V21_ONLY);
+        answering.take(Heard::Message(ms));
+        assert_eq!(answering.startup(), None, "ACK(1) goes first");
+        drain(&mut answering);
+        assert_eq!(answering.startup(), Some(Startup::V25));
+    }
+
+    #[test]
+    fn an_ms_for_another_mode_is_refused_and_v8_follows() {
+        let mut answering = answering_at(AnswerStage::SentCl);
+        answering.take(Heard::Message(Message::plain(Kind::Ms)));
+        assert!(answering.messages.sending());
+        drain(&mut answering);
+        assert_eq!(answering.startup(), Some(Startup::V8));
+    }
+
+    #[test]
+    fn esr_and_cl_make_this_end_select_and_then_call() {
+        let mut answering = answering_at(AnswerStage::Escaped);
+        let cl = data_message(Kind::Cl, true, V21_ONLY);
+        answering.take(Heard::Message(cl));
+        assert_eq!(answering.stage, AnswerStage::SentMs);
+        answering.take(Heard::Message(Message::plain(Kind::Ack1)));
+        drain(&mut answering);
+        assert_eq!(answering.startup(), Some(Startup::Caller));
+    }
+
+    #[test]
+    fn a_stalled_transaction_ends_in_v8_after_5_s() {
+        let mut answering = answering_at(AnswerStage::SentCl);
+        let mut out = [0; 160];
+        for _ in 0..251 {
+            answering.transmit(&mut out);
+        }
+        assert_eq!(answering.startup(), Some(Startup::V8));
+    }
 
     fn cl() -> Message {
         Message {
