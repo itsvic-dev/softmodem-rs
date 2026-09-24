@@ -1,6 +1,7 @@
 //! V.34: the sequences of its start-up and the encoding of its data mode.
 
 mod bits;
+pub mod constellation;
 pub mod info;
 pub mod mp;
 
