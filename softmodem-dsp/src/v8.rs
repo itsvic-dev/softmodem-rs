@@ -137,7 +137,14 @@ enum State {
 pub struct Reader {
     state: State,
     octets: Vec<u8>,
-    zeros: usize,
+    // The last 30 bits, newest lowest, as CJ may follow a menu or the preamble of the next.
+    recent: u32,
+}
+
+const CJ_BITS: usize = 30;
+
+fn cj_pattern() -> u32 {
+    cj().into_iter().fold(0, |recent, bit| recent << 1 | u32::from(bit))
 }
 
 impl Default for Reader {
@@ -152,11 +159,18 @@ impl Reader {
         Self {
             state: State::Hunt { ones: 0 },
             octets: Vec::new(),
-            zeros: 0,
+            recent: u32::MAX,
         }
     }
 
     pub fn push(&mut self, bit: bool) -> Option<Heard> {
+        self.recent = (self.recent << 1 | u32::from(bit)) & ((1 << CJ_BITS) - 1);
+        if self.recent == cj_pattern() {
+            self.recent = u32::MAX;
+            self.octets.clear();
+            self.state = State::Hunt { ones: 0 };
+            return Some(Heard::Cj);
+        }
         let (next, heard) = match self.state {
             State::Hunt { ones } if bit => (State::Hunt { ones: ones + 1 }, None),
             State::Hunt { ones } if ones >= PREAMBLE_ONES => (self.sync(0, bit), None),
@@ -183,15 +197,8 @@ impl Reader {
                 }
             }
             State::Stop { value } if bit => {
-                self.zeros = if value == 0 { self.zeros + 1 } else { 0 };
-                if self.zeros == 3 {
-                    self.zeros = 0;
-                    self.octets.clear();
-                    (State::Hunt { ones: 0 }, Some(Heard::Cj))
-                } else {
-                    self.octets.push(value);
-                    (State::Octets, None)
-                }
+                self.octets.push(value);
+                (State::Octets, None)
             }
             State::Stop { .. } => {
                 self.octets.clear();
@@ -210,7 +217,6 @@ impl Reader {
         }
         if at + 1 == SYNC.len() {
             self.octets.clear();
-            self.zeros = 0;
             State::Octets
         } else {
             State::Sync { at: at + 1 }
@@ -273,6 +279,19 @@ mod tests {
         let heard = read(bits);
         assert_eq!(heard.last(), Some(&Heard::Cj));
         assert!(heard.contains(&Heard::Menu(menu)));
+    }
+
+    #[test]
+    fn hears_cj_that_follows_the_preamble_of_a_new_menu() {
+        let mut bits = Menu::data(BOTH).sequence().repeat(2);
+        bits.extend([true; 10]);
+        bits.extend(cj());
+        bits.extend([true; 20]);
+        assert_eq!(
+            read(bits).last(),
+            Some(&Heard::Cj),
+            "a caller that ends CM after its preamble would hold JM on until its carrier drops"
+        );
     }
 
     #[test]
