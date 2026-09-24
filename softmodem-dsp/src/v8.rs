@@ -7,19 +7,56 @@ const SYNC: [bool; 10] = [
     false, false, false, false, false, false, true, true, true, true,
 ];
 
-// Tables 2 to 4, with bit i of each byte being b_i.
+// Tables 2 to 7, with bit i of each byte being b_i.
 const CALL_FUNCTION_DATA: u8 = 0xC1;
 const MODULATION_TAG: u8 = 0x05;
+const PCM_PRESENT_BIT: u8 = 0x20;
 const V34_BIT: u8 = 0x40;
 const CALL_FUNCTION_TAG: u8 = 0x01;
 const EXTENSION: u8 = 0x10;
 const EXTENSION_MASK: u8 = 0x38;
 const V22BIS_BIT: u8 = 0x02;
 const V21_BIT: u8 = 0x80;
+const CATEGORY_MASK: u8 = 0x1F;
+const ACCESS_TAG: u8 = 0x0D;
+const DIGITAL_ACCESS_BIT: u8 = 0x80;
+const PCM_TAG: u8 = 0x07;
+const PCM_ANALOGUE_BIT: u8 = 0x20;
+const PCM_DIGITAL_BIT: u8 = 0x40;
+
+/// The sides of V.90 a menu offers, from table 5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Pcm {
+    /// The analogue modem, b5.
+    pub analogue: bool,
+    /// The digital modem, b6.
+    pub digital: bool,
+}
+
+impl Pcm {
+    pub const NONE: Self = Self {
+        analogue: false,
+        digital: false,
+    };
+
+    #[must_use]
+    pub fn any(self) -> bool {
+        self.analogue || self.digital
+    }
+
+    /// V.90 needs an analogue and a digital modem, one at each end (V.90 § 9.1.1).
+    fn common(self, other: Self) -> Self {
+        Self {
+            analogue: self.analogue && other.digital,
+            digital: self.digital && other.analogue,
+        }
+    }
+}
 
 /// The modulations a menu offers, of those this modem has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modes {
+    pub v90: Pcm,
     /// V.34 duplex, item 2 of table 4.
     pub v34: bool,
     /// V.22bis or V.22, item 4 of table 4.
@@ -32,6 +69,7 @@ impl Modes {
     #[must_use]
     pub fn common(self, other: Self) -> Self {
         Self {
+            v90: self.v90.common(other.v90),
             v34: self.v34 && other.v34,
             v22bis: self.v22bis && other.v22bis,
             v21: self.v21 && other.v21,
@@ -52,12 +90,23 @@ impl Menu {
         Self { data: true, modes }
     }
 
-    fn octets(self) -> [u8; 4] {
+    // This modem is always on a digital network connection, as it speaks RTP.
+    fn octets(self) -> Vec<u8> {
+        let modes = self.modes;
         let call = if self.data { CALL_FUNCTION_DATA } else { 0x01 };
-        let modn0 = MODULATION_TAG | if self.modes.v34 { V34_BIT } else { 0 };
-        let modn1 = EXTENSION | if self.modes.v22bis { V22BIS_BIT } else { 0 };
-        let modn2 = EXTENSION | if self.modes.v21 { V21_BIT } else { 0 };
-        [call, modn0, modn1, modn2]
+        let modn0 = MODULATION_TAG
+            | if modes.v90.any() { PCM_PRESENT_BIT } else { 0 }
+            | if modes.v34 { V34_BIT } else { 0 };
+        let modn1 = EXTENSION | if modes.v22bis { V22BIS_BIT } else { 0 };
+        let modn2 = EXTENSION | if modes.v21 { V21_BIT } else { 0 };
+        let mut octets = vec![call, modn0, modn1, modn2];
+        if modes.v90.any() {
+            let pcm0 = PCM_TAG
+                | if modes.v90.analogue { PCM_ANALOGUE_BIT } else { 0 }
+                | if modes.v90.digital { PCM_DIGITAL_BIT } else { 0 };
+            octets.extend([ACCESS_TAG | DIGITAL_ACCESS_BIT, pcm0]);
+        }
+        octets
     }
 
     /// One sequence of the menu, to be sent over and over.
@@ -93,6 +142,12 @@ impl Menu {
                 in_modulation = octet & 0x0F == MODULATION_TAG;
                 if in_modulation {
                     modes.v34 = octet & V34_BIT != 0;
+                }
+                if octet & CATEGORY_MASK == PCM_TAG {
+                    modes.v90 = Pcm {
+                        analogue: octet & PCM_ANALOGUE_BIT != 0,
+                        digital: octet & PCM_DIGITAL_BIT != 0,
+                    };
                 }
                 extension = 0;
             }
@@ -234,9 +289,28 @@ mod tests {
     }
 
     const BOTH: Modes = Modes {
+        v90: Pcm::NONE,
         v34: false,
         v22bis: true,
         v21: true,
+    };
+
+    const ANALOGUE: Modes = Modes {
+        v90: Pcm {
+            analogue: true,
+            digital: false,
+        },
+        v34: true,
+        ..BOTH
+    };
+
+    const DIGITAL: Modes = Modes {
+        v90: Pcm {
+            analogue: false,
+            digital: true,
+        },
+        v34: true,
+        ..BOTH
     };
 
     #[test]
@@ -247,10 +321,48 @@ mod tests {
     }
 
     #[test]
+    fn encodes_v90_with_the_pstn_access_and_pcm_octets_of_tables_5_and_7() {
+        assert_eq!(
+            Menu::data(ANALOGUE).octets(),
+            [0xC1, 0x65, 0x12, 0x90, 0x8D, 0x27]
+        );
+        assert_eq!(
+            Menu::data(DIGITAL).octets(),
+            [0xC1, 0x65, 0x12, 0x90, 0x8D, 0x47]
+        );
+    }
+
+    #[test]
     fn reads_back_v34() {
         let menu = Menu::data(Modes { v34: true, ..BOTH });
         let heard = read(menu.sequence().repeat(2).into_iter().chain([true; 10]));
         assert_eq!(heard, [Heard::Menu(menu); 2]);
+    }
+
+    #[test]
+    fn reads_back_v90() {
+        for modes in [ANALOGUE, DIGITAL] {
+            let menu = Menu::data(modes);
+            let heard = read(menu.sequence().repeat(2).into_iter().chain([true; 10]));
+            assert_eq!(heard, [Heard::Menu(menu); 2]);
+        }
+    }
+
+    #[test]
+    fn reads_pcm0_past_a_protocol_octet() {
+        let prot0 = 0x8A;
+        let octets = [0xC1, 0x65, 0x12, 0x90, prot0, 0x0D, 0x27];
+        let menu = Menu::parse(&octets).expect("a data CM");
+        assert_eq!(menu.modes, ANALOGUE);
+    }
+
+    #[test]
+    fn pairs_an_analogue_modem_only_with_a_digital_one() {
+        assert!(DIGITAL.common(ANALOGUE).v90.digital);
+        assert!(ANALOGUE.common(DIGITAL).v90.analogue);
+        assert!(!ANALOGUE.common(ANALOGUE).v90.any());
+        assert!(!DIGITAL.common(DIGITAL).v90.any());
+        assert!(DIGITAL.common(ANALOGUE).v34);
     }
 
     #[test]
@@ -263,9 +375,8 @@ mod tests {
     #[test]
     fn reads_back_repeated_menus() {
         let menu = Menu::data(Modes {
-            v34: false,
             v22bis: false,
-            v21: true,
+            ..BOTH
         });
         let heard = read(menu.sequence().repeat(3).into_iter().chain([true; 10]));
         assert_eq!(heard, [Heard::Menu(menu); 3]);
@@ -305,9 +416,8 @@ mod tests {
     fn keeps_only_the_modes_in_common() {
         let ours = BOTH;
         let theirs = Modes {
-            v34: false,
             v22bis: false,
-            v21: true,
+            ..BOTH
         };
         assert_eq!(ours.common(theirs), theirs);
     }

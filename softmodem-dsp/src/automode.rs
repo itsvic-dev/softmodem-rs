@@ -7,7 +7,7 @@ use crate::fsk::{self, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
 use crate::pump::{DataPump, Modulation, Role};
 use crate::tone::ToneDetector;
 use crate::uart::Decoder;
-use crate::v8::{self, Heard, Menu, Modes};
+use crate::v8::{self, Heard, Menu, Modes, Pcm};
 use crate::v8bis::{Answering, Responding, Startup};
 use crate::v21::V21;
 
@@ -76,12 +76,14 @@ impl Offered {
         let family = matches!(top, Modulation::V22 | Modulation::V22bis);
         if self.fallback {
             Modes {
+                v90: Pcm::NONE,
                 v34: top == Modulation::V34,
                 v22bis: top != Modulation::V21,
                 v21: true,
             }
         } else {
             Modes {
+                v90: Pcm::NONE,
                 v34: top == Modulation::V34,
                 v22bis: family,
                 v21: top == Modulation::V21,

@@ -8,7 +8,7 @@ use crate::fsk::{Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORI
 use crate::hdlc::{self, Deframer};
 use crate::sine_peak;
 use crate::tone::Tone;
-use crate::v8::Modes;
+use crate::v8::{Modes, Pcm};
 
 // § 7.1.1, tables 1 and 2.
 const INITIATING_HZ: [f64; 2] = [1375.0, 2002.0];
@@ -451,6 +451,7 @@ impl Field {
         }
         let modulations = self.par2.first()?.get(2).copied().unwrap_or(0);
         Some(Modes {
+            v90: Pcm::NONE,
             v34: false,
             v22bis: modulations & (V22BIS | V22) != 0,
             v21: modulations & V21 != 0,
@@ -841,11 +842,13 @@ mod tests {
     use crate::ansam::{AnswerTone, AnswerToneKind};
 
     const BOTH: Modes = Modes {
+        v90: Pcm::NONE,
         v34: false,
         v22bis: true,
         v21: true,
     };
     const V21_ONLY: Modes = Modes {
+        v90: Pcm::NONE,
         v34: false,
         v22bis: false,
         v21: true,
