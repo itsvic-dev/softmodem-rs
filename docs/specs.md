@@ -23,6 +23,7 @@ times. The local copies:
 | `V.8bis-200011-I.pdf` | V.8 bis (11/2000), revision 2 |
 | `V.14-199303-I.pdf` | V.14 (03/1993) |
 | `V.25-199610-I.pdf` | V.25 (10/1996) |
+| `V.34-199802-I.pdf` | V.34 (02/1998) |
 | `V.32bis-199102-I.pdf` | V.32bis (02/1991), with the automode of its Annex A |
 | `V.42-200203-I.pdf` | V.42 (03/2002) |
 | `V.42bis-199001-I.pdf` | V.42bis (01/1990) |
