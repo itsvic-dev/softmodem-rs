@@ -149,7 +149,8 @@ impl Detector {
         self.absent_for = if heard { 0 } else { self.absent_for + 1 };
 
         let before = self.averages[0];
-        if 2.0 * 2.0 * power(before) < self.threshold * self.threshold {
+        // A reversal is of a pure tone: L1 and L2 beat within the window.
+        if !self.present() || 2.0 * 2.0 * power(before) < self.threshold * self.threshold {
             self.last_projection = f64::NAN;
             self.candidate = None;
             return None;
