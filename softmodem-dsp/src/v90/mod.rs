@@ -2,6 +2,7 @@
 //! analogue modem, which receives them and sends V.34 up.
 
 pub mod analogue;
+pub mod cp;
 pub mod digital;
 pub mod frames;
 pub mod info;
