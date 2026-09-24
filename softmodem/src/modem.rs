@@ -367,11 +367,13 @@ where
                 lapm: control.originator_tries(),
                 detection: control.originator_detects(),
                 required: control.originator_requires(),
+                compression: None,
             },
             answer: Setup {
                 lapm: control.answerer_tries(),
                 detection: true,
                 required: control.answerer_requires(),
+                compression: None,
             },
         };
         self.line = Some(Line::new(call, offer, setups, role));

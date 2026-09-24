@@ -15,6 +15,7 @@ const DETECTING: Setup = Setup {
     lapm: true,
     detection: true,
     required: true,
+    compression: None,
 };
 
 struct Call {

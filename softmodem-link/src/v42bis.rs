@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::xid::Compression;
+
 /// N6, the control codewords before the first character's.
 const CONTROL_CODEWORDS: u16 = 3;
 /// N5, the first codeword that holds a string of two or more characters.
@@ -44,6 +46,115 @@ impl Parameters {
     /// N1, the longest codeword in bits.
     fn max_bits(self) -> u32 {
         u16::BITS - (self.codewords - 1).leading_zeros()
+    }
+}
+
+const DEFAULT: Parameters = Parameters {
+    codewords: Parameters::MIN_CODEWORDS,
+    max_string: Parameters::MIN_STRING,
+};
+const FROM_INITIATOR: u8 = 1;
+const TO_INITIATOR: u8 = 2;
+
+/// Directions and parameters, from this end's point of view: what it offers
+/// before negotiation, or what applies after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Directions {
+    pub transmit: bool,
+    pub receive: bool,
+    pub parameters: Parameters,
+}
+
+/// A P1 or P2 outside what § 5.1 allows, which ends the call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProceduralError;
+
+impl Directions {
+    /// P0 to P2 as the negotiation initiator sends them.
+    #[must_use]
+    pub fn proposal(self) -> Compression {
+        Compression {
+            directions: u8::from(self.transmit) * FROM_INITIATOR
+                + u8::from(self.receive) * TO_INITIATOR,
+            codewords: Some(self.parameters.codewords),
+            max_string: Some(self.parameters.max_string),
+        }
+    }
+
+    /// The responder's reply to `theirs`, and what then applies.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `theirs` holds values outside § 5.1.
+    pub fn answer(
+        offer: Option<Self>,
+        theirs: Compression,
+    ) -> Result<(Compression, Option<Self>), ProceduralError> {
+        let proposed = received(theirs)?;
+        let ours = offer.map_or(0, |offer| {
+            u8::from(offer.receive) * FROM_INITIATOR + u8::from(offer.transmit) * TO_INITIATOR
+        });
+        let directions = theirs.directions & ours;
+        let Some(offer) = offer.filter(|_| directions != 0) else {
+            let none = Compression {
+                directions: 0,
+                codewords: None,
+                max_string: None,
+            };
+            return Ok((none, None));
+        };
+        let parameters = lower(proposed, offer.parameters);
+        let reply = Compression {
+            directions,
+            codewords: Some(parameters.codewords),
+            max_string: Some(parameters.max_string),
+        };
+        let agreed = Self {
+            transmit: directions & TO_INITIATOR != 0,
+            receive: directions & FROM_INITIATOR != 0,
+            parameters,
+        };
+        Ok((reply, Some(agreed)))
+    }
+
+    /// What applies once the responder has replied, if anything.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the reply holds values outside § 5.1, or a direction that
+    /// was not proposed.
+    pub fn conclude(self, reply: Option<Compression>) -> Result<Option<Self>, ProceduralError> {
+        let Some(reply) = reply.filter(|r| r.directions != 0) else {
+            return Ok(None);
+        };
+        if reply.directions & !self.proposal().directions != 0 {
+            return Err(ProceduralError);
+        }
+        let parameters = lower(received(reply)?, self.parameters);
+        Ok(Some(Self {
+            transmit: reply.directions & FROM_INITIATOR != 0,
+            receive: reply.directions & TO_INITIATOR != 0,
+            parameters,
+        }))
+    }
+}
+
+fn received(compression: Compression) -> Result<Parameters, ProceduralError> {
+    let parameters = Parameters {
+        codewords: compression.codewords.unwrap_or(DEFAULT.codewords),
+        max_string: compression.max_string.unwrap_or(DEFAULT.max_string),
+    };
+    if parameters.valid() {
+        Ok(parameters)
+    } else {
+        Err(ProceduralError)
+    }
+}
+
+fn lower(a: Parameters, b: Parameters) -> Parameters {
+    Parameters {
+        codewords: a.codewords.min(b.codewords),
+        max_string: a.max_string.min(b.max_string),
     }
 }
 
@@ -669,6 +780,63 @@ mod tests {
         writer.put(0x0cd, 9);
         writer.align();
         assert_eq!(writer.out, [0xab, 0x9b, 0x01]);
+    }
+
+    fn offer(transmit: bool, receive: bool, parameters: Parameters) -> Directions {
+        Directions {
+            transmit,
+            receive,
+            parameters,
+        }
+    }
+
+    #[test]
+    fn both_ends_take_the_lower_values_and_the_common_directions() {
+        let initiator = offer(true, true, LARGE);
+        let responder = offer(false, true, SMALL);
+        let (reply, agreed) = Directions::answer(Some(responder), initiator.proposal()).unwrap();
+        assert_eq!(agreed, Some(offer(false, true, SMALL)));
+        assert_eq!(reply.directions, FROM_INITIATOR);
+        assert_eq!(
+            initiator.conclude(Some(reply)),
+            Ok(Some(offer(true, false, SMALL)))
+        );
+        let (reply, agreed) =
+            Directions::answer(Some(offer(true, true, SMALL)), initiator.proposal()).unwrap();
+        assert_eq!(agreed, Some(offer(true, true, SMALL)));
+        assert_eq!(
+            initiator.conclude(Some(reply)),
+            Ok(Some(offer(true, true, SMALL)))
+        );
+    }
+
+    #[test]
+    fn no_offer_or_no_reply_means_no_compression() {
+        let initiator = offer(true, true, LARGE);
+        let (reply, agreed) = Directions::answer(None, initiator.proposal()).unwrap();
+        assert_eq!((reply.directions, agreed), (0, None));
+        assert_eq!(initiator.conclude(Some(reply)), Ok(None));
+        assert_eq!(initiator.conclude(None), Ok(None));
+    }
+
+    #[test]
+    fn values_outside_section_5_1_are_procedural_errors() {
+        let bad = Compression {
+            directions: 3,
+            codewords: Some(300),
+            max_string: None,
+        };
+        assert_eq!(
+            Directions::answer(Some(offer(true, true, LARGE)), bad),
+            Err(ProceduralError)
+        );
+        let only_transmit = offer(true, false, LARGE);
+        let reply = Compression {
+            directions: 3,
+            codewords: None,
+            max_string: None,
+        };
+        assert_eq!(only_transmit.conclude(Some(reply)), Err(ProceduralError));
     }
 
     #[test]

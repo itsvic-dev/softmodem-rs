@@ -3,7 +3,15 @@
 
 const FORMAT: u8 = 0x82;
 const PARAMETERS: u8 = 0x80;
+const PRIVATE: u8 = 0xf0;
 const USER_DATA: u8 = 0xff;
+
+const PARAMETER_SET: u8 = 0;
+const P0: u8 = 1;
+const P1: u8 = 2;
+const P2: u8 = 3;
+// V.42 bis Annex A, Table A-1.
+const V42: [u8; 3] = *b"V42";
 
 const OPTIONAL_FUNCTIONS: u8 = 3;
 const N401_TX: u8 = 5;
@@ -26,6 +34,20 @@ pub struct Xid {
     pub n401_rx: Option<u16>,
     pub k_tx: Option<u8>,
     pub k_rx: Option<u8>,
+    /// V.42 bis, when P0 is present to ask for it.
+    pub compression: Option<Compression>,
+}
+
+/// V.42 bis's parameters, in the private parameter group (V.42 Table 11b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Compression {
+    /// P0: bit 0 for the direction from the negotiation initiator, bit 1 for
+    /// the direction to it.
+    pub directions: u8,
+    /// P1, the number of codewords. Left out, it is 512.
+    pub codewords: Option<u16>,
+    /// P2, the longest string. Left out, it is 6.
+    pub max_string: Option<u8>,
 }
 
 impl Xid {
@@ -45,11 +67,20 @@ impl Xid {
                 push_parameter(&mut group, id, &[k]);
             }
         }
-        #[expect(clippy::cast_possible_truncation, reason = "at most 20 octets")]
-        let length = group.len() as u16;
-        let mut bytes = vec![FORMAT, PARAMETERS];
-        bytes.extend(length.to_be_bytes());
-        bytes.extend(group);
+        let mut bytes = vec![FORMAT];
+        push_group(&mut bytes, PARAMETERS, &group);
+        if let Some(compression) = self.compression {
+            let mut group = Vec::new();
+            push_parameter(&mut group, PARAMETER_SET, &V42);
+            push_parameter(&mut group, P0, &[compression.directions]);
+            if let Some(codewords) = compression.codewords {
+                push_parameter(&mut group, P1, &codewords.to_be_bytes());
+            }
+            if let Some(max_string) = compression.max_string {
+                push_parameter(&mut group, P2, &[max_string]);
+            }
+            push_group(&mut bytes, PRIVATE, &group);
+        }
         bytes
     }
 
@@ -70,21 +101,19 @@ impl Xid {
             let length = usize::from(u16::from_be_bytes([*high, *low]));
             let group = tail.get(..length)?;
             rest = &tail[length..];
-            if *id == PARAMETERS {
-                xid.read_parameters(group)?;
+            match *id {
+                PARAMETERS => xid.read_parameters(group)?,
+                PRIVATE => xid.read_private(group)?,
+                _ => {}
             }
         }
         Some(xid)
     }
 
-    fn read_parameters(&mut self, mut group: &[u8]) -> Option<()> {
-        while let [id, length, tail @ ..] = group {
-            let value = tail.get(..usize::from(*length))?;
-            group = &tail[usize::from(*length)..];
-            let number = value
-                .iter()
-                .try_fold(0u32, |n, &b| n.checked_mul(256).map(|n| n | u32::from(b)));
-            match *id {
+    fn read_parameters(&mut self, group: &[u8]) -> Option<()> {
+        for (id, value) in parameters(group)? {
+            let number = number(value);
+            match id {
                 OPTIONAL_FUNCTIONS => {
                     let mut bytes = [0; 4];
                     let n = value.len().min(4);
@@ -100,6 +129,50 @@ impl Xid {
         }
         Some(())
     }
+
+    fn read_private(&mut self, group: &[u8]) -> Option<()> {
+        let mut directions = None;
+        let mut codewords = None;
+        let mut max_string = None;
+        for (id, value) in parameters(group)? {
+            let number = number(value);
+            match id {
+                P0 => directions = number.map(|n| n.to_le_bytes()[0] & 3),
+                P1 => codewords = number.map(|n| u16::try_from(n).unwrap_or(u16::MAX)),
+                P2 => max_string = number.map(window),
+                _ => {}
+            }
+        }
+        self.compression = directions.map(|directions| Compression {
+            directions,
+            codewords,
+            max_string,
+        });
+        Some(())
+    }
+}
+
+/// The identifier and value of each parameter in a group.
+fn parameters(mut group: &[u8]) -> Option<Vec<(u8, &[u8])>> {
+    let mut found = Vec::new();
+    while let [id, length, tail @ ..] = group {
+        let value = tail.get(..usize::from(*length))?;
+        group = &tail[usize::from(*length)..];
+        found.push((*id, value));
+    }
+    Some(found)
+}
+
+fn number(value: &[u8]) -> Option<u32> {
+    value
+        .iter()
+        .try_fold(0u32, |n, &b| n.checked_mul(256).map(|n| n | u32::from(b)))
+}
+
+fn push_group(bytes: &mut Vec<u8>, id: u8, group: &[u8]) {
+    bytes.push(id);
+    bytes.extend(u16::try_from(group.len()).unwrap_or(u16::MAX).to_be_bytes());
+    bytes.extend_from_slice(group);
 }
 
 fn push_parameter(group: &mut Vec<u8>, id: u8, value: &[u8]) {
@@ -166,6 +239,27 @@ mod tests {
                 ..Xid::default()
             })
         );
+    }
+
+    #[test]
+    fn carries_v42bis_in_the_private_group_as_annex_a_shows() {
+        let xid = Xid {
+            compression: Some(Compression {
+                directions: 3,
+                codewords: Some(2048),
+                max_string: Some(32),
+            }),
+            ..Xid::default()
+        };
+        let bytes = xid.bytes();
+        assert_eq!(
+            bytes[10..],
+            [
+                0xf0, 0x00, 0x0f, 0x00, 0x03, b'V', b'4', b'2', 0x01, 0x01, 0x03, 0x02, 0x02, 0x08,
+                0x00, 0x03, 0x01, 0x20
+            ]
+        );
+        assert_eq!(Xid::parse(&bytes), Some(xid));
     }
 
     #[test]

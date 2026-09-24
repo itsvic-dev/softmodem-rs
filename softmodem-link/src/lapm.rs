@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use softmodem_dsp::pump::Role;
 
 use crate::frame::{Control, Frame, Rejected, Supervisory, Unnumbered};
+use crate::v42bis::Directions;
 use crate::xid::Xid;
 
 pub const DEFAULT_N401: u16 = 128;
@@ -83,27 +84,34 @@ pub struct Lapm {
     /// Unnumbered frames to send first, each with whether it starts T401.
     urgent: VecDeque<(Frame, bool)>,
     owed: Owed,
+    /// The V.42 bis this end will run, in its own directions.
+    offer: Option<Directions>,
+    compression: Option<Directions>,
 }
 
 impl Lapm {
-    /// An originator, which negotiates with XID and then sends SABME.
+    /// An originator, which negotiates with XID, asking for `offer`, and
+    /// then sends SABME.
     #[must_use]
-    pub fn originate(t401: Duration) -> Self {
-        let mut lapm = Self::new(Role::Originate, State::Negotiating, t401);
+    pub fn originate(t401: Duration, offer: Option<Directions>) -> Self {
+        let mut lapm = Self::new(Role::Originate, State::Negotiating, t401, offer);
         lapm.send_xid_command();
         lapm
     }
 
-    /// An answerer, which gives up if the originator has not established
-    /// the connection within `N400` times `t401`.
+    /// An answerer, which agrees to what it can of `offer`, and gives up if
+    /// the originator has not established the connection within `N400`
+    /// times `t401`.
     #[must_use]
-    pub fn answer(t401: Duration, now: Instant) -> Self {
+    pub fn answer(t401: Duration, now: Instant, offer: Option<Directions>) -> Self {
         let deadline = now + t401 * u32::from(N400);
-        Self::new(Role::Answer, State::Waiting(deadline), t401)
+        Self::new(Role::Answer, State::Waiting(deadline), t401, offer)
     }
 
-    fn new(role: Role, state: State, t401: Duration) -> Self {
+    fn new(role: Role, state: State, t401: Duration, offer: Option<Directions>) -> Self {
         Self {
+            offer,
+            compression: None,
             role,
             state,
             t401,
@@ -131,6 +139,12 @@ impl Lapm {
             State::Connected => Status::Connected,
             State::Released => Status::Released,
         }
+    }
+
+    /// The V.42 bis the two ends agreed on, in this end's directions.
+    #[must_use]
+    pub fn compression(&self) -> Option<Directions> {
+        self.compression
     }
 
     /// The largest information field this end sends.
@@ -289,6 +303,7 @@ impl Lapm {
             n401_rx: Some(DEFAULT_N401),
             k_tx: Some(DEFAULT_K),
             k_rx: Some(DEFAULT_K),
+            compression: self.offer.map(Directions::proposal),
             ..Xid::default()
         };
         let frame = self
@@ -323,12 +338,22 @@ impl Lapm {
             (_, _, State::Released) => {}
             (Unnumbered::Xid, true, _) => {
                 if let Some(theirs) = Xid::parse(info) {
-                    let ours = self.agree(&theirs);
-                    self.respond(Unnumbered::Xid, false, ours.bytes());
+                    match self.agree(&theirs) {
+                        Some(ours) => self.respond(Unnumbered::Xid, false, ours.bytes()),
+                        None => self.release(),
+                    }
                 }
             }
             (Unnumbered::Xid, false, State::Negotiating) => {
                 if let Some(theirs) = Xid::parse(info) {
+                    let Some(offer) = self
+                        .offer
+                        .map_or(Ok(None), |offer| offer.conclude(theirs.compression))
+                        .ok()
+                    else {
+                        return self.release();
+                    };
+                    self.compression = offer;
                     self.n401_tx = theirs
                         .n401_rx
                         .map_or(DEFAULT_N401, |n| n.clamp(1, MAX_N401));
@@ -367,19 +392,29 @@ impl Lapm {
         }
     }
 
-    /// The XID response that agrees to no optional procedure (§ 9.2.3, § 9.2.4).
-    fn agree(&mut self, theirs: &Xid) -> Xid {
+    /// The XID response, or `None` for bad V.42 bis values (§ 9.2.3, § 9.2.4).
+    fn agree(&mut self, theirs: &Xid) -> Option<Xid> {
         let n401 = |n: Option<u16>| n.map_or(DEFAULT_N401, |n| n.clamp(1, MAX_N401));
         let k = |k: Option<u8>| k.map_or(DEFAULT_K, |k| k.clamp(1, MAX_K));
+        let mut compression = None;
+        // V.42 bis § 5.1: the parameters hold for the whole connection.
+        if self.state != State::Connected
+            && let Some(proposal) = theirs.compression
+        {
+            let (reply, agreed) = Directions::answer(self.offer, proposal).ok()?;
+            self.compression = agreed;
+            compression = Some(reply);
+        }
         self.n401_tx = n401(theirs.n401_rx);
         self.k_tx = k(theirs.k_rx);
-        Xid {
+        Some(Xid {
             functions: 0,
             n401_tx: Some(self.n401_tx),
             n401_rx: Some(n401(theirs.n401_tx)),
             k_tx: Some(self.k_tx),
             k_rx: Some(k(theirs.k_tx)),
-        }
+            compression,
+        })
     }
 
     /// Acknowledges a BRK (§ 8.13.3.2) without passing the break to the DTE.
@@ -520,8 +555,8 @@ mod tests {
             let now = Instant::now();
             Self {
                 now,
-                caller: Lapm::originate(T401),
-                answerer: Lapm::answer(T401, now),
+                caller: Lapm::originate(T401, None),
+                answerer: Lapm::answer(T401, now, None),
             }
         }
 
@@ -669,7 +704,7 @@ mod tests {
     #[test]
     fn the_answerer_takes_the_originators_smaller_frames() {
         let now = Instant::now();
-        let mut answerer = Lapm::answer(T401, now);
+        let mut answerer = Lapm::answer(T401, now, None);
         let theirs = Xid {
             n401_tx: Some(64),
             n401_rx: Some(32),

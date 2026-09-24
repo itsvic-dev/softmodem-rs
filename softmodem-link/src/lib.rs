@@ -17,6 +17,7 @@ use softmodem_dsp::uart::{self, Decoder};
 use crate::detect::{Adp, Heard};
 use crate::hdlc::Deframer;
 use crate::lapm::{DEFAULT_N401, Lapm};
+use crate::v42bis::Directions;
 
 /// The detection phase timer (V.42 § 9.1.1).
 const T400: Duration = Duration::from_millis(750);
@@ -40,6 +41,16 @@ pub struct Setup {
     /// Whether to end the call, rather than fall back to plain characters,
     /// when there is no V.42, even if it was not tried.
     pub required: bool,
+    /// V.42 bis over LAPM, as V.250's `+DS` sets it.
+    pub compression: Option<CompressionSetup>,
+}
+
+/// The V.42 bis a call asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressionSetup {
+    pub offer: Directions,
+    /// Whether to end the call unless the far end agrees to all of `offer`.
+    pub required: bool,
 }
 
 impl Setup {
@@ -48,7 +59,12 @@ impl Setup {
         lapm: false,
         detection: false,
         required: false,
+        compression: None,
     };
+
+    fn offer(self) -> Option<Directions> {
+        self.compression.map(|c| c.offer)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +109,14 @@ pub struct Link {
     /// ADPs sent, while the answerer still sends them.
     adps: usize,
     flags_heard: bool,
+    /// V.42 bis, set up once LAPM is connected.
+    codec: Option<Codec>,
+}
+
+#[derive(Debug)]
+struct Codec {
+    encoder: Option<v42bis::Encoder>,
+    decoder: Option<v42bis::Decoder>,
 }
 
 impl Link {
@@ -113,6 +137,7 @@ impl Link {
             received: Vec::new(),
             adps: 0,
             flags_heard: false,
+            codec: None,
         }
     }
 
@@ -136,7 +161,7 @@ impl Link {
                 },
                 Role::Originate,
             ) => Phase::Originating(now + T400),
-            (_, Role::Originate) => self.protocol(Lapm::originate(self.t401)),
+            (_, Role::Originate) => self.protocol(Lapm::originate(self.t401, self.setup.offer())),
             (_, Role::Answer) => Phase::Listening(now + ANSWERER_T400),
         };
     }
@@ -155,10 +180,23 @@ impl Link {
         }
     }
 
+    /// The V.42 bis in use, in this end's directions.
+    #[must_use]
+    pub fn compression(&self) -> Option<Directions> {
+        match &self.phase {
+            Phase::Protocol(lapm) => lapm.compression(),
+            _ => None,
+        }
+    }
+
     /// Queues data from the DTE.
     pub fn send(&mut self, bytes: &[u8]) {
+        self.set_up_codec();
         match &mut self.phase {
-            Phase::Protocol(lapm) => lapm.send(bytes),
+            Phase::Protocol(lapm) => match self.codec.as_mut().and_then(|c| c.encoder.as_mut()) {
+                Some(encoder) => lapm.send(&encoder.encode(bytes)),
+                None => lapm.send(bytes),
+            },
             Phase::Normal => self.tx.extend(bytes.iter().flat_map(|&b| uart::frame(b))),
             _ => {}
         }
@@ -212,6 +250,11 @@ impl Link {
                         self.adps = 0;
                         hdlc::push_flag(&mut self.tx);
                     }
+                    if lapm.queued() == 0
+                        && let Some(encoder) = self.codec.as_mut().and_then(|c| c.encoder.as_mut())
+                    {
+                        lapm.send(&encoder.flush());
+                    }
                     match lapm.next_frame(now) {
                         Some(frame) => hdlc::push_frame(&frame, &mut self.tx),
                         None => hdlc::push_flag(&mut self.tx),
@@ -245,10 +288,46 @@ impl Link {
                 Phase::Idle | Phase::Originating(_) | Phase::Listening(_) => self.detect(bit, now),
             }
         }
+        self.set_up_codec();
         if let Phase::Protocol(lapm) = &mut self.phase {
-            self.received.extend(lapm.take_received());
+            let data = lapm.take_received();
+            match self.codec.as_mut().and_then(|c| c.decoder.as_mut()) {
+                Some(decoder) => {
+                    if decoder.decode(&data, &mut self.received).is_err() {
+                        self.phase = Phase::Released;
+                    }
+                }
+                None => self.received.extend(data),
+            }
         }
         self.expire(now);
+    }
+
+    /// V.42 bis § 5.2: starts as LAPM connects, or ends a call that required it.
+    fn set_up_codec(&mut self) {
+        let Phase::Protocol(lapm) = &self.phase else {
+            return;
+        };
+        if self.codec.is_some() || lapm.status() != lapm::Status::Connected {
+            return;
+        }
+        let agreed = lapm.compression();
+        let directions = agreed.map(|a| (a.transmit, a.receive));
+        if let Some(wanted) = self.setup.compression
+            && wanted.required
+            && directions != Some((wanted.offer.transmit, wanted.offer.receive))
+        {
+            self.phase = Phase::Released;
+            return;
+        }
+        self.codec = Some(Codec {
+            encoder: agreed
+                .filter(|a| a.transmit)
+                .map(|a| v42bis::Encoder::new(a.parameters)),
+            decoder: agreed
+                .filter(|a| a.receive)
+                .map(|a| v42bis::Decoder::new(a.parameters)),
+        });
     }
 
     fn detect(&mut self, bit: bool, now: Instant) {
@@ -259,7 +338,10 @@ impl Link {
         }
         match self.phase {
             Phase::Originating(_) => match self.heard.adp() {
-                Some(Adp::Lapm) => self.phase = self.protocol(Lapm::originate(self.t401)),
+                Some(Adp::Lapm) => {
+                    let lapm = Lapm::originate(self.t401, self.setup.offer());
+                    self.phase = self.protocol(lapm);
+                }
                 Some(Adp::NoErrorCorrection) => {
                     self.held.clear();
                     self.phase = self.fall_back();
@@ -267,14 +349,14 @@ impl Link {
                 None => {}
             },
             Phase::Listening(_) if self.heard.odp() => {
-                self.phase = self.protocol(Lapm::answer(self.t401, now));
+                self.phase = self.protocol(Lapm::answer(self.t401, now, self.setup.offer()));
                 self.adps = 1;
                 detect::push_adp(&mut self.tx, Adp::Lapm);
             }
             Phase::Listening(_)
                 if frame.is_some() || self.deframer.flags_in_a_row() >= FLAGS_HEARD =>
             {
-                let mut lapm = Lapm::answer(self.t401, now);
+                let mut lapm = Lapm::answer(self.t401, now, self.setup.offer());
                 if let Some(frame) = frame {
                     lapm.receive(&frame, now);
                 }
@@ -328,7 +410,33 @@ mod tests {
         lapm: true,
         detection: true,
         required: false,
+        compression: None,
     };
+
+    const BOTH_WAYS: Directions = Directions {
+        transmit: true,
+        receive: true,
+        parameters: v42bis::Parameters {
+            codewords: 2048,
+            max_string: 32,
+        },
+    };
+
+    fn compressing(offer: Directions, required: bool) -> Setup {
+        Setup {
+            compression: Some(CompressionSetup { offer, required }),
+            ..V42
+        }
+    }
+
+    fn text(len: usize) -> Vec<u8> {
+        b"the carrier carries the data over the line to the other end\r\n"
+            .iter()
+            .copied()
+            .cycle()
+            .take(len)
+            .collect()
+    }
 
     struct Call {
         now: Instant,
@@ -449,5 +557,66 @@ mod tests {
         let mut link = Link::new(Role::Answer, setup, Decoder::v14());
         link.start(RATE, Instant::now());
         assert_eq!(link.status(), Status::Released);
+    }
+
+    #[test]
+    fn compresses_both_ways_when_both_ends_offer_it() {
+        let setup = compressing(BOTH_WAYS, false);
+        let mut call = Call::new(setup, setup);
+        call.run(Duration::from_secs(1));
+        assert_eq!(call.caller.compression(), Some(BOTH_WAYS));
+        assert_eq!(call.answerer.compression(), Some(BOTH_WAYS));
+        let data = text(20_000);
+        call.caller.send(&data);
+        call.answerer.send(&data[..5000]);
+        call.run(Duration::from_secs(40));
+        assert_eq!(call.answerer.take_received(), data);
+        assert_eq!(call.caller.take_received(), &data[..5000]);
+    }
+
+    #[test]
+    fn short_writes_are_flushed_and_arrive() {
+        let setup = compressing(BOTH_WAYS, false);
+        let mut call = Call::new(setup, setup);
+        call.run(Duration::from_secs(1));
+        let data = text(3000);
+        for chunk in data.chunks(50) {
+            call.caller.send(chunk);
+            call.run(Duration::from_millis(100));
+        }
+        call.run(Duration::from_secs(2));
+        assert_eq!(call.answerer.take_received(), data);
+    }
+
+    #[test]
+    fn compression_agreed_one_way_runs_one_way() {
+        let receive_only = Directions {
+            transmit: false,
+            ..BOTH_WAYS
+        };
+        let mut call = Call::new(
+            compressing(BOTH_WAYS, false),
+            compressing(receive_only, false),
+        );
+        call.run(Duration::from_secs(1));
+        let caller = call.caller.compression().unwrap();
+        assert!(caller.transmit && !caller.receive);
+        let data = text(5000);
+        call.caller.send(&data);
+        call.answerer.send(&data);
+        call.run(Duration::from_secs(30));
+        assert_eq!(call.answerer.take_received(), data);
+        assert_eq!(call.caller.take_received(), data);
+    }
+
+    #[test]
+    fn a_far_end_without_v42bis_leaves_plain_lapm_or_ends_a_call_that_required_it() {
+        let mut call = Call::new(compressing(BOTH_WAYS, false), V42);
+        call.run(Duration::from_secs(1));
+        assert_eq!(call.statuses(), (Status::Reliable, Status::Reliable));
+        assert_eq!(call.caller.compression(), None);
+        let mut call = Call::new(compressing(BOTH_WAYS, true), V42);
+        call.run(Duration::from_secs(1));
+        assert_eq!(call.caller.status(), Status::Released);
     }
 }
