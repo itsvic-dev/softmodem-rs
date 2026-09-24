@@ -106,7 +106,7 @@ struct Source {
     training: training::Sender,
     points: Points,
     mp: Mp,
-    acked: bool,
+    acks_sent: u8,
     encoder: Option<Encoder>,
     scale: f64,
     scrambler: Scrambler,
@@ -135,7 +135,7 @@ impl Source {
             training: training::Sender::new(role),
             points: Points::Four,
             mp,
-            acked: false,
+            acks_sent: 0,
             encoder: None,
             scale: 1.0,
             scrambler: Scrambler::with(polynomial(role)),
@@ -258,7 +258,8 @@ impl Source {
         let far_clears = far
             .mp
             .is_some_and(|mp| mp.max_call_to_answer == 0 && mp.max_answer_to_call == 0);
-        if self.acked && far.ack {
+        // Two MP′ at least, as slmodemd may miss the first while it restarts its own MP.
+        if self.acks_sent >= 2 && far.ack {
             // § 11.7: MP′ both ways ends a cleardown, with no E.
             if self.clearing || far_clears {
                 self.send = Send::Cleared;
@@ -276,7 +277,7 @@ impl Source {
             mp.max_answer_to_call = 0;
         }
         mp.acknowledge = far.mp.is_some();
-        self.acked |= mp.acknowledge;
+        self.acks_sent += u8::from(mp.acknowledge);
         let frame = mp.frame();
         self.queue
             .extend(self.training.sequence(&frame, self.points));
@@ -295,7 +296,7 @@ impl Source {
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(self.role);
         self.points = Points::Four;
-        self.acked = false;
+        self.acks_sent = 0;
         self.encoder = None;
         self.b1_sent = false;
         self.send = Send::Trn { sent: 0 };
