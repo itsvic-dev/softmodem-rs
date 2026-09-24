@@ -75,6 +75,8 @@ struct Far {
     mp: Option<Mp>,
     /// MP′ or E from the far end.
     ack: bool,
+    /// Rate renegotiations heard from the far end, by the S̄ that starts each.
+    renegotiations: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +108,7 @@ struct Source {
     bits: VecDeque<bool>,
     b1_frames: usize,
     b1_sent: bool,
+    renegotiations: u32,
 }
 
 impl Source {
@@ -132,6 +135,7 @@ impl Source {
             bits: VecDeque::new(),
             b1_frames: 0,
             b1_sent: false,
+            renegotiations: 0,
         }
     }
 
@@ -143,6 +147,13 @@ impl Source {
     }
 
     fn refill(&mut self, far: &Far) {
+        if far.renegotiations != self.renegotiations {
+            self.renegotiations = far.renegotiations;
+            // § 11.6.1.2.2: the responding modem answers the far S̄; an initiating one has already begun.
+            if self.send == Send::Data {
+                self.renegotiate();
+            }
+        }
         match self.send {
             Send::Wait => self.wait(far),
             Send::Trn { sent } => self.trn(sent, far),
@@ -249,6 +260,18 @@ impl Source {
             .extend(self.training.sequence(&frame, self.points));
     }
 
+    // § 11.6: S, S̄ and TRN, then MP, E and B1 as in phase 4, all on 4 points.
+    fn renegotiate(&mut self) {
+        self.queue.extend((0..S_SYMBOLS).map(training::s));
+        self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
+        self.training = training::Sender::new(self.role);
+        self.points = Points::Four;
+        self.acked = false;
+        self.encoder = None;
+        self.b1_sent = false;
+        self.send = Send::Trn { sent: 0 };
+    }
+
     fn data(&mut self) {
         let Some(encoder) = &mut self.encoder else {
             self.queue.push_back((0.0, 0.0));
@@ -290,6 +313,8 @@ enum Listen {
     Trn { from: usize },
     /// B1 and data, from `from`.
     Data { from: usize },
+    /// S in data mode, until the S̄ that starts a rate renegotiation.
+    Hold,
 }
 
 /// The receive side from phase 3 on.
@@ -376,21 +401,23 @@ impl Sink {
         let z = self.equalizer.output(symbol);
         let index = self.count.checked_sub(DELAY);
         self.count += 1;
-        if let Some(Heard::SBar(at)) = self.detector.push(symbol) {
-            match self.listen {
-                Listen::S => {
-                    self.listen = Listen::Train { from: at };
-                    self.front_end.track(Tracking::Train);
-                    far.s_bar = 1;
-                }
-                Listen::Sequences if self.phase == 4 && far.s_bar == 1 => {
-                    self.listen = Listen::Trn {
-                        from: at + S_BAR_SYMBOLS,
-                    };
-                    far.s_bar = 2;
-                }
-                _ => {}
+        match (self.detector.push(symbol), self.listen) {
+            (Some(Heard::SBar(at)), Listen::S) => {
+                self.listen = Listen::Train { from: at };
+                self.front_end.track(Tracking::Train);
+                far.s_bar = 1;
             }
+            (Some(Heard::SBar(at)), Listen::Sequences) if self.phase == 4 && far.s_bar == 1 => {
+                self.listen = Listen::Trn {
+                    from: at + S_BAR_SYMBOLS,
+                };
+                far.s_bar = 2;
+            }
+            (Some(Heard::S), Listen::Data { .. }) => self.listen = Listen::Hold,
+            (Some(Heard::SBar(at)), Listen::Data { .. } | Listen::Hold) => {
+                self.renegotiate(at, far);
+            }
+            _ => {}
         }
         let Some(index) = index else {
             return;
@@ -407,8 +434,24 @@ impl Sink {
                 }
             }
             Listen::Data { from } if index >= from => self.data(z, data),
-            Listen::S | Listen::Data { .. } => {}
+            Listen::S | Listen::Data { .. } | Listen::Hold => {}
         }
+    }
+
+    // § 11.6.1.1.2 and § 11.6.1.2.1: after the far S̄, TRN, MP and E again, then B1 at the new rate.
+    fn renegotiate(&mut self, at: usize, far: &mut Far) {
+        self.listen = Listen::Trn {
+            from: at + S_BAR_SYMBOLS,
+        };
+        self.trn_error = 0.0;
+        self.deframer = mp::Deframer::default();
+        self.decoder = None;
+        self.frame.clear();
+        far.trn = false;
+        far.trained = None;
+        far.mp = None;
+        far.ack = false;
+        far.renegotiations += 1;
     }
 
     fn train(&mut self, index: usize, from: usize) {
@@ -495,6 +538,7 @@ impl Sink {
     fn start_data(&mut self, framing: Framing) {
         self.scale = Encoder::new(framing, Settings::default()).energy().sqrt();
         self.decoder = Some(Decoder::new(framing, TRELLIS));
+        self.data_descrambler = Descrambler::with(polynomial(self.far_role));
         self.skip_bits = framing.p * framing.b - (framing.p - framing.r);
     }
 
@@ -540,6 +584,8 @@ pub struct V34 {
     rate: u8,
     level: f64,
     carrier: bool,
+    /// Connected once, and still in the call through renegotiations.
+    online: bool,
 }
 
 impl V34 {
@@ -556,7 +602,25 @@ impl V34 {
             rate: 0,
             level: sine_peak(CARRIER_DBM0) / std::f64::consts::SQRT_2,
             carrier: false,
+            online: false,
         }
+    }
+
+    /// Starts a rate renegotiation from data mode, as § 11.6.1.1 has the
+    /// initiating modem do. Data stops until both ends are in data mode
+    /// again, at the rate the two MPs then agree.
+    pub fn renegotiate(&mut self) {
+        let Some(source) = &mut self.source else {
+            return;
+        };
+        if source.send != Send::Data {
+            return;
+        }
+        source.renegotiate();
+        self.far.trn = false;
+        self.far.trained = None;
+        self.far.mp = None;
+        self.far.ack = false;
     }
 
     #[expect(
@@ -631,6 +695,7 @@ impl V34 {
         let encoder = Encoder::new(transmit, settings);
         source.scale = encoder.energy().sqrt();
         source.encoder = Some(encoder);
+        source.scrambler = Scrambler::with(polynomial(self.role));
         source.b1_frames = transmit.p;
         sink.start_data(receive);
         self.rate = rate;
@@ -684,10 +749,11 @@ impl DataPump for V34 {
             sink.take(&symbol, &mut self.far, bits);
         }
         self.agree();
+        self.online |= self.connected();
     }
 
     fn carrier(&self) -> bool {
-        self.connected() && self.carrier
+        self.online && self.carrier
     }
 
     fn connected(&self) -> bool {
@@ -856,6 +922,108 @@ mod tests {
         let (at_caller, at_answerer) = exchange(&mut caller, &mut answerer, 60);
         let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
         assert!(found(&at_answerer) && found(&at_caller), "data lost after a short TRN");
+    }
+
+    thread_local! {
+        static NOISE: std::cell::Cell<u64> = const { std::cell::Cell::new(0x2545_F491_4F6C_DD1D) };
+    }
+
+    // White noise about 26 dB below the signal.
+    fn noisy(sample: i16) -> i16 {
+        let uniform = || {
+            NOISE.with(|state| {
+                let mut x = state.get();
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                state.set(x);
+                f64::from(u32::try_from(x >> 32).unwrap()) / f64::from(u32::MAX) - 0.5
+            })
+        };
+        let noise: f64 = (0..4).map(|_| uniform()).sum::<f64>() * 300.0;
+        #[expect(clippy::cast_possible_truncation, reason = "clamped to i16")]
+        let out = (f64::from(sample) + noise).clamp(-32_768.0, 32_767.0) as i16;
+        out
+    }
+
+    fn connected_pair() -> (V34, V34) {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let mut frames = 0;
+        while !(caller.connected() && answerer.connected()) && frames < 400 {
+            exchange(&mut caller, &mut answerer, 1);
+            frames += 1;
+        }
+        assert!(caller.connected(), "no V.34 connection to renegotiate");
+        (caller, answerer)
+    }
+
+    // Runs until both ends are in data mode again, and says whether the carrier held throughout.
+    fn back_in_data(caller: &mut V34, answerer: &mut V34, line: fn(i16) -> i16) -> bool {
+        let mut left = false;
+        let mut carrier = true;
+        for _ in 0..500 {
+            exchange_over(caller, answerer, 1, line);
+            carrier &= caller.carrier() && answerer.carrier();
+            left |= !(caller.connected() && answerer.connected());
+            if left && caller.connected() && answerer.connected() {
+                return carrier;
+            }
+        }
+        panic!(
+            "a rate renegotiation would never return to data: caller {:?}/{:?}, answerer {:?}/{:?}",
+            caller.source.as_ref().map(|s| s.send),
+            caller.sink.as_ref().map(|s| s.listen),
+            answerer.source.as_ref().map(|s| s.send),
+            answerer.sink.as_ref().map(|s| s.listen),
+        );
+    }
+
+    #[test]
+    fn renegotiates_from_either_end_and_carries_data_after() {
+        for initiator in [Role::Originate, Role::Answer] {
+            let (mut caller, mut answerer) = connected_pair();
+            match initiator {
+                Role::Originate => caller.renegotiate(),
+                Role::Answer => answerer.renegotiate(),
+            }
+            assert!(
+                back_in_data(&mut caller, &mut answerer, |sample| sample),
+                "DCD would drop during a renegotiation started by the {initiator:?} end"
+            );
+            assert_eq!((caller.bit_rate(), answerer.bit_rate()), (33_600, 33_600));
+            let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+            caller.push_bits(&message);
+            answerer.push_bits(&message);
+            let (at_caller, at_answerer) = exchange(&mut caller, &mut answerer, 60);
+            let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+            assert!(
+                found(&at_answerer) && found(&at_caller),
+                "data would be lost after a renegotiation started by the {initiator:?} end"
+            );
+        }
+    }
+
+    #[test]
+    fn renegotiates_down_when_the_line_gets_worse() {
+        let (mut caller, mut answerer) = connected_pair();
+        exchange_over(&mut caller, &mut answerer, 50, noisy);
+        caller.renegotiate();
+        back_in_data(&mut caller, &mut answerer, noisy);
+        let rate = caller.bit_rate();
+        assert!(
+            rate < 33_600 && rate == answerer.bit_rate(),
+            "a noisier line would keep {rate} bit/s and lose data"
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_over(&mut caller, &mut answerer, 80, noisy);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost at {rate} bit/s after stepping down"
+        );
     }
 
     #[test]
