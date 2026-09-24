@@ -55,6 +55,26 @@ What spandsp does that matters here:
 What spandsp cannot stand in for is a modem's automode, the probing a real
 modem does when it hears ANS instead of ANSam. That needs the real modem.
 
+## slmodemd
+
+slmodemd, the Smart Link soft modem, is the DSP of many real winmodems, and
+it has V.34. Aon's D-Modem (github.com/strozfriedberg/D-Modem) replaces its
+kernel driver with a socket, and runs a program of its choice on `ATD` with
+the dial string and that socket. `softmodem-slmodem` is that program: it
+dials a softmodem over the UDP wire and carries the audio between them.
+
+- The Smart Link DSP is a 32-bit x86 object, so slmodemd is built with
+  `pkgsCross.gnu32` (`nix/slmodemd.nix`), and the checks run it in an x86-64
+  guest under TCG. It is GPL-2.0, and only the checks use it.
+- The socket carries 16-bit samples at 9600 Hz. slmodemd answers each block
+  it reads with a block of the same length, so the softmodem's 20 ms frames
+  set the clock, resampled between 8000 and 9600 samples/s.
+- As released, `-e` takes no argument, so slmodemd never learns what to run.
+  The package patches this.
+- It only dials, so it tests this modem's answering side.
+- Its `+MS` numbers the modulations: 122 for V.22bis, 34 for V.34.
+- Its dial string keeps the T of `ATDT`.
+
 ## Known cost
 
 Against a far end without V.42, the link is raw async: PPP drops frames that

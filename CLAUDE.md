@@ -21,6 +21,9 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   the dev shell provides. The default shell has spandsp 3.0.0, and
   `nix develop .#spandsp-3_1` has 3.1.1 with V.34
   (`nix/spandsp.nix`). Run the interop tests in both.
+- `softmodem-slmodem`: tests only. The program that D-Modem's slmodemd runs
+  on `ATD`, which dials a softmodem over the UDP wire. See
+  `docs/interop.md`.
 
 ## Working here
 
@@ -57,3 +60,7 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - The CUSE port is Linux only and needs root, so it has its own VM test,
   `checks.aarch64-linux.cuse`, which includes a nested QEMU guest under TCG
   and takes about 3 minutes.
+- `checks.aarch64-linux.slmodemd-v22bis` and `slmodemd-v34` call this
+  modem from slmodemd in an x86-64 guest under TCG, and pass text both
+  ways. `result/dumps/softmodem/` has the call as one stereo WAV,
+  slmodemd on the left.

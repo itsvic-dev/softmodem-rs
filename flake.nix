@@ -60,6 +60,26 @@
           );
           cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
         }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
+          let
+            guestPkgs = nixpkgs.legacyPackages.x86_64-linux;
+            peer =
+              label: ours: theirs:
+              pkgs.testers.runNixOSTest (
+                import ./nix/tests/slmodemd.nix {
+                  inherit guestPkgs label ours theirs;
+                  softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
+                  bridge =
+                    (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
+                  slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
+                }
+              );
+          in
+          {
+            slmodemd-v22bis = peer "V22B" "+MS=V22B,0" "+MS=122,0";
+            slmodemd-v34 = peer "V34" "+MS=V34,0" "+MS=34,0,2400,33600";
+          }
+        )
       );
 
       devShells = forSystems (
