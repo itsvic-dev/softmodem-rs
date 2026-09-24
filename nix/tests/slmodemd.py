@@ -42,8 +42,19 @@ class Port:
         os.write(self.fd, data)
 
 
+def exchange(caller, isp, round):
+    up = TEXT_UP.replace(b"slmodemd", f"slmodemd, round {round}".encode())
+    down = TEXT_DOWN.replace(b"softmodem", f"softmodem, round {round}".encode())
+    caller.send(up)
+    isp.expect(re.escape(up.strip()), 90)
+    isp.send(down)
+    caller.expect(re.escape(down.strip()), 90)
+
+
 def main():
     caller_path, isp_path, theirs = sys.argv[1:4]
+    # Before a second exchange: seconds to wait for noise, or "ato1" to retrain from the softmodem.
+    later = sys.argv[4] if len(sys.argv) > 4 else None
     caller = Port("slmodemd", caller_path)
     isp = Port("softmodem", isp_path)
     caller.send(f"ATE0X3{theirs}\r".encode())
@@ -54,10 +65,18 @@ def main():
         sys.exit(f"slmodemd gave {result!r}")
     isp.expect(rb"CONNECT[^\r\n]*", 60)
     time.sleep(2)
-    caller.send(TEXT_UP)
-    isp.expect(re.escape(TEXT_UP.strip()), 60)
-    isp.send(TEXT_DOWN)
-    caller.expect(re.escape(TEXT_DOWN.strip()), 60)
+    exchange(caller, isp, 1)
+    if later == "ato1":
+        time.sleep(1.5)
+        isp.send(b"+++")
+        isp.expect(rb"OK", 10)
+        isp.send(b"ATO1\r")
+        isp.expect(rb"CONNECT[^\r\n]*", 30)
+        time.sleep(15)
+        exchange(caller, isp, 2)
+    elif later is not None:
+        time.sleep(float(later))
+        exchange(caller, isp, 2)
 
 
 if __name__ == "__main__":

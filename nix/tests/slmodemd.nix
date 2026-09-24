@@ -8,11 +8,22 @@
   # For the softmodem's +MS, and slmodemd's, which numbers the modulations.
   ours,
   theirs,
+  # Noise from `after` seconds past the answer, of RMS `rms`, then a second exchange.
+  noise ? null,
+  # ATO1 from the softmodem after the first exchange, then a second.
+  retrain ? false,
 }:
 
 let
   port = "/run/softmodem/ttyS0";
   wav = "/var/lib/softmodem/${label}.wav";
+  later =
+    if retrain then
+      " ato1"
+    else if noise == null then
+      ""
+    else
+      " ${toString noise.later}";
 in
 {
   name = "softmodem-slmodemd-${label}";
@@ -39,7 +50,13 @@ in
       systemd.services.slmodemd = {
         wantedBy = [ "multi-user.target" ];
         after = [ "softmodem.service" ];
-        environment.SOFTMODEM_PEER = "127.0.0.1:5300";
+        environment = {
+          SOFTMODEM_PEER = "127.0.0.1:5300";
+        }
+        // guestPkgs.lib.optionalAttrs (noise != null) {
+          SOFTMODEM_NOISE_AFTER = toString noise.after;
+          SOFTMODEM_NOISE_RMS = toString noise.rms;
+        };
         serviceConfig.ExecStart = "${slmodemd}/bin/slmodemd -d9 -e ${bridge}/bin/slmodem-bridge";
       };
     };
@@ -53,7 +70,7 @@ in
     import os
 
     # The call's result goes in $out/status, so that a failed call still keeps its recording.
-    status, output = machine.execute("python3 ${./slmodemd.py} /dev/ttySL0 ${port} '${theirs}' 2>&1", timeout=600)
+    status, output = machine.execute("python3 ${./slmodemd.py} /dev/ttySL0 ${port} '${theirs}'${later} 2>&1", timeout=600)
     print(output)
     machine.systemctl("stop slmodemd.service softmodem.service")
     machine.succeed("journalctl -u slmodemd -u softmodem --no-pager > /var/lib/softmodem/journal.txt")

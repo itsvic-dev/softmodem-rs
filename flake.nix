@@ -64,20 +64,18 @@
           let
             guestPkgs = nixpkgs.legacyPackages.x86_64-linux;
             peer =
-              label: ours: theirs:
+              { label, ... }@call:
               let
                 run = pkgs.testers.runNixOSTest (
-                  import ./nix/tests/slmodemd.nix {
-                    inherit
-                      guestPkgs
-                      label
-                      ours
-                      theirs
-                      ;
-                    softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
-                    bridge = (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
-                    slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
-                  }
+                  import ./nix/tests/slmodemd.nix (
+                    call
+                    // {
+                      inherit guestPkgs;
+                      softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
+                      bridge = (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
+                      slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
+                    }
+                  )
                 );
               in
               # The run always succeeds, to keep a failed call's recording in `passthru.run`.
@@ -88,8 +86,33 @@
               '';
           in
           {
-            slmodemd-v22bis = peer "V22B" "+MS=V22B,0" "+MS=122,0";
-            slmodemd-v34 = peer "V34" "+MS=V34,0" "+MS=34,0,2400,33600";
+            slmodemd-v22bis = peer {
+              label = "V22B";
+              ours = "+MS=V22B,0";
+              theirs = "+MS=122,0";
+            };
+            slmodemd-v34 = peer {
+              label = "V34";
+              ours = "+MS=V34,0";
+              theirs = "+MS=34,0,2400,33600";
+            };
+            slmodemd-v34-retrain = peer {
+              label = "V34-retrain";
+              ours = "+MS=V34,0";
+              theirs = "+MS=34,0,2400,33600";
+              retrain = true;
+            };
+            # Noise about 31 dB below the signal, once in data mode, for slmodemd to retrain.
+            slmodemd-v34-noise = peer {
+              label = "V34-noise";
+              ours = "+MS=V34,0";
+              theirs = "+MS=34,0,2400,33600";
+              noise = {
+                after = 20;
+                rms = 95;
+                later = 15;
+              };
+            };
           }
         )
       );
