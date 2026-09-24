@@ -106,7 +106,7 @@ in
         status, output = caller.execute("timeout 600 ${guest} 2>&1")
         output = output.replace("\r", "")
         for line in output.splitlines():
-            if line.startswith("guest"):
+            if status != 0 or line.startswith("guest"):
                 caller.log(line)
         assert status == 0, f"the guest did not finish, status {status}"
 
