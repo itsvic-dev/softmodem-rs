@@ -434,6 +434,23 @@ async fn a_v22bis_call_connects_at_2400_and_carries_data_both_ways() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_v90_call_connects_at_56000_and_carries_data_both_ways() {
+    let (mut a, mut b) = two_modems("ATE0+MS=V90", "ATE0S0=1+MS=V90");
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 56000\r\n").await;
+    b.expect("CONNECT 56000\r\n").await;
+
+    let text = (0..200)
+        .map(|n| format!("line {n} from the caller\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    a.send(text.as_bytes()).await;
+    b.expect(&text).await;
+    b.send(text.as_bytes()).await;
+    a.expect(&text).await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn ato1_retrains_and_the_call_goes_on() {
     for (modulation, connect) in [
         ("+MS=V22B", "CONNECT 2400\r\n"),
