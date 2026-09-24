@@ -1,5 +1,6 @@
-//! Automode: V.8 to agree on a modulation, and Annex A of V.32 bis with one
-//! step of this modem's own for a far end that does not speak V.8.
+//! Automode: V.8 bis, then V.8 to agree on a modulation, and Annex A of
+//! V.32 bis with one step of this modem's own for a far end that does not
+//! speak V.8.
 
 use crate::ansam::{AnswerTone, AnswerToneDetector, AnswerToneKind};
 use crate::fsk::{self, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
@@ -7,8 +8,11 @@ use crate::pump::{DataPump, Modulation, Role};
 use crate::tone::ToneDetector;
 use crate::uart::Decoder;
 use crate::v8::{self, Heard, Menu, Modes};
+use crate::v8bis::{Answering, Responding, Startup};
 use crate::v21::V21;
 
+// V.8 bis § 10.2.2.
+const V8BIS_SILENCE_SAMPLES: usize = 3_200;
 // V.25 § 4.3, and V.8 §§ 8.1.1, 8.1.2, 8.2.2.
 const SILENCE_SAMPLES: usize = 16_000;
 const ANSAM_SAMPLES: usize = 40_000;
@@ -136,7 +140,8 @@ impl MenuLink {
 #[derive(Debug)]
 enum AnswerStage {
     Silence,
-    Ansam {
+    V8bis(Box<Answering>),
+    Tone {
         until: usize,
     },
     Jm {
@@ -153,7 +158,7 @@ enum AnswerStage {
     Chosen(Box<dyn DataPump>),
 }
 
-// Answers with ANSam and V.8, or with USB1 then V.21 mark for a far end without V.8.
+// Answers with CRe, then ANSam and V.8, or with USB1 then V.21 mark for a far end without V.8.
 #[derive(Debug)]
 struct Answer {
     top: Modulation,
@@ -177,11 +182,24 @@ impl Answer {
     fn advance(&mut self) {
         let sent = self.sent;
         let stage = std::mem::replace(&mut self.stage, AnswerStage::Silence);
+        let tone = AnswerStage::Tone {
+            until: sent + ANSAM_SAMPLES,
+        };
         self.stage = match stage {
-            AnswerStage::Silence if sent >= SILENCE_SAMPLES => AnswerStage::Ansam {
-                until: sent + ANSAM_SAMPLES,
+            AnswerStage::Silence if sent >= V8BIS_SILENCE_SAMPLES => {
+                AnswerStage::V8bis(Box::new(Answering::new(offered(self.top))))
+            }
+            AnswerStage::V8bis(answering) => match answering.startup() {
+                Some(Startup::V8) => tone,
+                Some(Startup::V25) => {
+                    self.tone = AnswerTone::new(AnswerToneKind::Ans, true, ANSWER_TONE_DBM0);
+                    tone
+                }
+                Some(Startup::Caller) => AnswerStage::Chosen(Box::new(Call::new(self.top))),
+                None if !answering.engaged() && sent >= SILENCE_SAMPLES => tone,
+                None => AnswerStage::V8bis(answering),
             },
-            AnswerStage::Ansam { until } if sent >= until => AnswerStage::Gap {
+            AnswerStage::Tone { until } if sent >= until => AnswerStage::Gap {
                 until: sent + GAP_SAMPLES,
                 next: None,
             },
@@ -243,7 +261,8 @@ impl DataPump for Answer {
         self.advance();
         match &mut self.stage {
             AnswerStage::Silence | AnswerStage::Gap { .. } => out.fill(0),
-            AnswerStage::Ansam { .. } => self.tone.render(out),
+            AnswerStage::V8bis(answering) => answering.transmit(out),
+            AnswerStage::Tone { .. } => self.tone.render(out),
             AnswerStage::Jm { menu } => self.link.repeat(out, *menu),
             AnswerStage::Trying { pump, .. } | AnswerStage::Chosen(pump) => pump.transmit(out),
         }
@@ -252,7 +271,8 @@ impl DataPump for Answer {
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
         match &mut self.stage {
-            AnswerStage::Silence | AnswerStage::Ansam { .. } => {
+            AnswerStage::V8bis(answering) => answering.receive(input),
+            AnswerStage::Silence | AnswerStage::Tone { .. } => {
                 if let Some(cm) = self.link.menu(input) {
                     let modes = offered(self.top).common(cm.modes);
                     self.stage = AnswerStage::Jm {
@@ -372,11 +392,12 @@ impl SigA {
     }
 }
 
-// Calls with V.8 after ANSam, or follows USB1 or V.21 mark after plain ANS.
+// Answers CRe, calls with V.8 after ANSam, or follows USB1 or V.21 mark after plain ANS.
 #[derive(Debug)]
 struct Call {
     top: Modulation,
     stage: CallStage,
+    responder: Responding,
     detector: AnswerToneDetector,
     sig_a: SigA,
     link: MenuLink,
@@ -388,6 +409,7 @@ impl Call {
         Self {
             top,
             stage: CallStage::Listening { heard_ans: false },
+            responder: Responding::new(offered(top)),
             detector: AnswerToneDetector::new(),
             sig_a: SigA::new(top),
             link: MenuLink::new(Role::Originate),
@@ -454,9 +476,8 @@ impl DataPump for Call {
             _ => {}
         }
         match &mut self.stage {
-            CallStage::Listening { .. } | CallStage::Te { .. } | CallStage::Gap { .. } => {
-                out.fill(0);
-            }
+            CallStage::Listening { .. } => self.responder.transmit(out),
+            CallStage::Te { .. } | CallStage::Gap { .. } | CallStage::Legacy => out.fill(0),
             CallStage::Cm { joint } => {
                 if self.link.modulator.pending() == 0
                     && let Some(modes) = *joint
@@ -478,7 +499,6 @@ impl DataPump for Call {
                     };
                 }
             }
-            CallStage::Legacy => out.fill(0),
             CallStage::Chosen(pump) => pump.transmit(out),
         }
         if matches!(
@@ -500,16 +520,19 @@ impl DataPump for Call {
             return;
         }
         match &mut self.stage {
-            CallStage::Listening { heard_ans } => match self.detector.process(input) {
-                Some(AnswerToneKind::Ansam) => {
-                    self.stage = CallStage::Te {
-                        until: self.sent + TE_SAMPLES,
-                    };
+            CallStage::Listening { heard_ans } => {
+                self.responder.receive(input);
+                match self.detector.process(input) {
+                    Some(AnswerToneKind::Ansam) => {
+                        self.stage = CallStage::Te {
+                            until: self.sent + TE_SAMPLES,
+                        };
+                    }
+                    Some(AnswerToneKind::Ans) => *heard_ans = true,
+                    None if *heard_ans => self.stage = CallStage::Legacy,
+                    None => {}
                 }
-                Some(AnswerToneKind::Ans) => *heard_ans = true,
-                None if *heard_ans => self.stage = CallStage::Legacy,
-                None => {}
-            },
+            }
             CallStage::Cm { joint } => {
                 if joint.is_none()
                     && let Some(jm) = self.link.menu(input)
@@ -537,6 +560,7 @@ impl DataPump for Call {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v8bis::{Pair, Signal, SignalDetector};
 
     const FRAME: usize = 160;
 
@@ -561,7 +585,30 @@ mod tests {
         let mut answerer = pump(Modulation::V22bis, Role::Answer);
         let frames = connect(caller.as_mut(), answerer.as_mut());
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (2400, 2400));
-        assert!(frames * 20 < 7000, "V.8 took {} ms", frames * 20);
+        assert!(
+            frames * 20 < 8000,
+            "V.8 bis and V.8 took {} ms",
+            frames * 20
+        );
+    }
+
+    #[test]
+    fn a_caller_that_ignores_cre_hears_ansam_at_2_s() {
+        let mut answerer = pump(Modulation::V22bis, Role::Answer);
+        let mut line = vec![0; 20_000];
+        for chunk in line.chunks_mut(FRAME) {
+            answerer.transmit(chunk);
+            answerer.receive(&[0; FRAME], &mut Vec::new());
+        }
+        assert!(line[..V8BIS_SILENCE_SAMPLES].iter().all(|&s| s == 0));
+        let mut cre = SignalDetector::new(Pair::Initiating);
+        assert_eq!(cre.process(&line[..8000]), Some(Signal::CRe));
+        assert!(line[8000..SILENCE_SAMPLES].iter().all(|&s| s == 0));
+        let mut ansam = AnswerToneDetector::new();
+        assert_eq!(
+            ansam.process(&line[SILENCE_SAMPLES..]),
+            Some(AnswerToneKind::Ansam)
+        );
     }
 
     #[test]
