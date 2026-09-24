@@ -7,11 +7,13 @@ use super::framing::Framing;
 use super::info::Probe;
 use super::probing::Probing;
 
-// Uncoded QAM at 10⁻⁶, less the trellis's 4 dB, with 5 dB of margin.
-const DB_PER_BIT: f64 = 3.01;
-const REQUIRED_DB: f64 = 12.8;
-// The same with 2 dB of margin, as the equaliser measures the SNR of the data path itself.
-const TRAINED_DB: f64 = 9.8;
+// The decoder reaches 10⁻⁶ at 4 dB + 3.01 dB per bit per 2D symbol, in white noise.
+pub(super) const DB_PER_BIT: f64 = 3.01;
+pub(super) const DECODED_DB: f64 = 4.0;
+// Probing only estimates the SNR, so it leaves 5 dB of margin.
+const PROBED_MARGIN_DB: f64 = 5.0;
+// The equaliser measures the SNR of the data path itself.
+const TRAINED_MARGIN_DB: f64 = 2.0;
 // The part of the band either side of the carrier that the tones must cover.
 const BAND: f64 = 0.45;
 
@@ -19,7 +21,7 @@ const BAND: f64 = 0.45;
 /// line probing carries at `symbol_rate`, or 0 if none.
 #[must_use]
 pub fn max_rate(symbol_rate: SymbolRate, snr_db: f64) -> u8 {
-    highest(symbol_rate, (snr_db - REQUIRED_DB) / DB_PER_BIT)
+    highest(symbol_rate, snr_db - PROBED_MARGIN_DB)
 }
 
 /// The highest data rate, in multiples of 2400 bit/s, that an equaliser
@@ -27,10 +29,11 @@ pub fn max_rate(symbol_rate: SymbolRate, snr_db: f64) -> u8 {
 /// `symbol_rate`, or 0 if none.
 #[must_use]
 pub fn trained_rate(symbol_rate: SymbolRate, mse: f64) -> u8 {
-    highest(symbol_rate, (-10.0 * mse.log10() - TRAINED_DB) / DB_PER_BIT)
+    highest(symbol_rate, -10.0 * mse.log10() - TRAINED_MARGIN_DB)
 }
 
-fn highest(symbol_rate: SymbolRate, bits: f64) -> u8 {
+fn highest(symbol_rate: SymbolRate, snr_db: f64) -> u8 {
+    let bits = (snr_db - DECODED_DB) / DB_PER_BIT;
     (1..=14u8)
         .rev()
         .find(|&n| {
@@ -156,10 +159,10 @@ mod tests {
     }
 
     #[test]
-    fn training_through_a_law_carries_31200_at_3429_baud() {
+    fn training_through_a_law_carries_33600_at_3429_baud() {
         let alaw_mse = 10f64.powf(-37.6 / 10.0);
-        assert_eq!(trained_rate(SymbolRate::S3429, alaw_mse), 13);
-        assert_eq!(trained_rate(SymbolRate::S3429, 1e-6), 14);
+        assert_eq!(trained_rate(SymbolRate::S3429, alaw_mse), 14);
+        assert_eq!(trained_rate(SymbolRate::S3429, 10f64.powf(-34.0 / 10.0)), 13);
         assert_eq!(trained_rate(SymbolRate::S3429, 0.1), 0);
     }
 

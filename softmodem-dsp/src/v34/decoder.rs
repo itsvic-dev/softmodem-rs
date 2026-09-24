@@ -234,8 +234,8 @@ impl Decoder {
 
 #[cfg(test)]
 mod tests {
-    use super::super::SymbolRate;
     use super::super::encoder::{Encoder, Settings};
+    use super::super::{SymbolRate, rates};
     use super::*;
 
     #[test]
@@ -330,6 +330,24 @@ mod tests {
                     "{symbol_rate:?} at {bit_rate} with {trellis:?} would lose data"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn decodes_as_well_as_the_rate_choice_assumes() {
+        for (symbol_rate, bit_rate) in [(SymbolRate::S3429, 33_600), (SymbolRate::S2400, 9_600)] {
+            let framing = Framing::new(symbol_rate, bit_rate, false).unwrap();
+            let energy = Encoder::new(framing, Settings::default()).energy();
+            let bits = f64::from(bit_rate) / symbol_rate.baud();
+            let snr_db = rates::DECODED_DB + rates::DB_PER_BIT * bits;
+            let sigma = (energy / 2.0 / 10f64.powf(snr_db / 10.0)).sqrt();
+            let (wrong, decided) = (0..4)
+                .map(|_| errors(symbol_rate, bit_rate, Trellis::States16, sigma))
+                .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+            assert!(
+                wrong * 100_000 <= decided,
+                "at {snr_db:.1} dB, {bit_rate} bit/s would lose {wrong} of {decided} bits"
+            );
         }
     }
 

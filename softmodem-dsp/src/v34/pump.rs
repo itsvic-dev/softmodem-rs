@@ -762,8 +762,8 @@ mod tests {
         assert!(caller.connected(), "no V.34 connection over A-law");
         assert_eq!(
             (caller.bit_rate(), answerer.bit_rate()),
-            (31_200, 31_200),
-            "A-law leaves room for 31 200 bit/s at 3429 baud"
+            (33_600, 33_600),
+            "A-law leaves room for 33 600 bit/s at 3429 baud"
         );
         let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
         caller.push_bits(&message);
