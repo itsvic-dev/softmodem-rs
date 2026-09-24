@@ -26,5 +26,7 @@ times. The local copies:
 | `V.34-199802-I.pdf` | V.34 (02/1998) |
 | `V.32bis-199102-I.pdf` | V.32bis (02/1991), with the automode of its Annex A |
 | `V.42-200203-I.pdf` | V.42 (03/2002) |
+| `V.90-199809-I.pdf` | V.90 (09/1998) |
+| `V.92-200011-I.pdf` | V.92 (11/2000) |
 | `V.42bis-199001-I.pdf` | V.42bis (01/1990) |
 | `V.250-200307-I.pdf` | V.250 (07/2003), including `+MS` |
