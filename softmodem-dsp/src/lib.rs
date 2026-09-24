@@ -17,6 +17,7 @@ mod v22;
 mod v22bis;
 pub mod v34;
 pub mod v8;
+pub mod v90;
 pub mod v8bis;
 
 pub const SAMPLE_RATE: f64 = 8000.0;
