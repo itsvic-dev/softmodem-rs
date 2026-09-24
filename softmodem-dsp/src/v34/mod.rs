@@ -1,10 +1,39 @@
 //! V.34: the sequences of its start-up and the encoding of its data mode.
 
+use crate::pump::Role;
+
 mod bits;
 pub mod constellation;
+pub mod dpsk;
 pub mod info;
 pub mod mp;
 pub mod shell;
+
+/// The nominal transmit power, the mean that V.2 allows.
+pub const NOMINAL_DBM0: f64 = -13.0;
+/// The guard tone the answer modem sends with INFO and tone A.
+pub const GUARD_HZ: f64 = 1800.0;
+/// 7 dB below nominal, as § 10.1.2.3.1 has it for INFO.
+pub const GUARD_DBM0: f64 = NOMINAL_DBM0 - 7.0;
+
+/// The phase 2 carrier of INFO and of tone A or B, from the end in `role`.
+#[must_use]
+pub fn carrier_hz(role: Role) -> f64 {
+    match role {
+        Role::Answer => 2400.0,
+        Role::Originate => 1200.0,
+    }
+}
+
+/// The level of INFO and of tone A or B, from the end in `role`: 1 dB below
+/// nominal from the answer modem, to leave room for its guard tone.
+#[must_use]
+pub fn info_level_dbm0(role: Role) -> f64 {
+    match role {
+        Role::Answer => NOMINAL_DBM0 - 1.0,
+        Role::Originate => NOMINAL_DBM0,
+    }
+}
 
 /// Table 1, in the order INFO sequences number them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

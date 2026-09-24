@@ -12,7 +12,7 @@ pub(crate) const BAUD: f64 = 600.0;
 const ROLL_OFF: f64 = 0.75;
 
 // Symbols each side of the one being sent that still shape the output.
-const SPAN: usize = 3;
+pub(crate) const SPAN: usize = 3;
 
 // V.22 and V.22bis § 3.3.
 const CARRIER_ON_DBM0: f64 = -43.0;
