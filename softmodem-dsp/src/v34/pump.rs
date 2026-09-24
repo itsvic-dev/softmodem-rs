@@ -275,6 +275,7 @@ enum Listen {
 /// The receive side from phase 3 on.
 #[derive(Debug)]
 struct Sink {
+    far_role: Role,
     front_end: FrontEnd,
     equalizer: Equalizer,
     detector: SDetector,
@@ -298,6 +299,7 @@ impl Sink {
     fn new(role: Role, outcome: &Outcome) -> Self {
         let far = other(role);
         Self {
+            far_role: far,
             front_end: FrontEnd::new(outcome.receive.symbol_rate, outcome.receive.high_carrier),
             equalizer: Equalizer::default(),
             detector: SDetector::default(),
@@ -420,7 +422,10 @@ impl Sink {
                 if far.j.is_some() {
                     self.phase = 4;
                 }
-            } else if !far.trn && self.window.iter().eq(&training::pattern(J_PRIME)) {
+            } else if self.far_role == Role::Originate
+                && !far.trn
+                && self.window.iter().eq(&training::pattern(J_PRIME))
+            {
                 self.listen = Listen::Trn { from: index + 1 };
             }
             if let Some(mp) = self.deframer.push(bit) {
