@@ -509,6 +509,7 @@ impl Phase2 {
                 if let Some(at) = reversal {
                     let ours = at + ANSWER_DELAY;
                     self.reverse_at(ours);
+                    self.tx_until = Some(ours.max(self.sent) + HELD_TAIL);
                     self.step = Step::AwaitReply { ours };
                 }
             }
