@@ -77,6 +77,12 @@ def main():
     elif later is not None:
         time.sleep(float(later))
         exchange(caller, isp, 2)
+    time.sleep(1.5)
+    isp.send(b"+++")
+    isp.expect(rb"OK", 10)
+    isp.send(b"ATH\r")
+    isp.expect(rb"OK", 10)
+    caller.expect(rb"NO CARRIER", 10)
 
 
 if __name__ == "__main__":

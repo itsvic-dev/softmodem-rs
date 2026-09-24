@@ -87,7 +87,9 @@ dials a softmodem over the UDP wire and carries the audio between them.
 - The bridge adds noise from `SOFTMODEM_NOISE_AFTER` seconds past the
   answer, at `SOFTMODEM_NOISE_RMS`, both ways or as `SOFTMODEM_NOISE_WAY`
   (`to-softmodem` or `to-slmodemd`) says. It answers a renegotiation from
-  this modem.
+  this modem, and a cleardown, which it takes as a renegotiation.
+- Each check ends with ATH from this modem, and slmodemd must report
+  NO CARRIER.
 
 ## Known cost
 
