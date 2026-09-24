@@ -1,28 +1,58 @@
-//! The self-synchronising scrambler of V.22 § 5: 1 + x⁻¹⁴ + x⁻¹⁷.
+//! Self-synchronising scramblers: 1 + x⁻¹⁴ + x⁻¹⁷ of V.22 § 5, and the two of
+//! V.34 § 7.
 
-const TAPS: (u32, u32) = (13, 16);
-const HISTORY: u32 = (1 << 17) - 1;
 const LOCKUP_ONES: u32 = 64;
 
-fn taps(history: u32) -> bool {
-    (history >> TAPS.0 ^ history >> TAPS.1) & 1 == 1
+/// A generating polynomial 1 + x⁻ᵃ + x⁻ᵇ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Polynomial {
+    a: u32,
+    b: u32,
 }
 
-fn shift(history: u32, bit: bool) -> u32 {
-    (history << 1 | u32::from(bit)) & HISTORY
+impl Polynomial {
+    pub const V22: Self = Self { a: 14, b: 17 };
+    /// From the call modem.
+    pub const V34_CALL: Self = Self { a: 18, b: 23 };
+    /// From the answer modem.
+    pub const V34_ANSWER: Self = Self { a: 5, b: 23 };
+
+    fn taps(self, history: u32) -> bool {
+        (history >> (self.a - 1) ^ history >> (self.b - 1)) & 1 == 1
+    }
+
+    fn shift(self, history: u32, bit: bool) -> u32 {
+        (history << 1 | u32::from(bit)) & ((1 << self.b) - 1)
+    }
+}
+
+impl Default for Polynomial {
+    fn default() -> Self {
+        Self::V22
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct Scrambler {
+    polynomial: Polynomial,
     history: u32,
     ones: u32,
     guard: bool,
 }
 
 impl Scrambler {
+    /// V.22's.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn with(polynomial: Polynomial) -> Self {
+        Self {
+            polynomial,
+            ..Self::default()
+        }
     }
 
     /// From now on, inverts the next input after 64 ones in a row at the
@@ -39,8 +69,8 @@ impl Scrambler {
         } else {
             bit
         };
-        let out = bit ^ taps(self.history);
-        self.history = shift(self.history, out);
+        let out = bit ^ self.polynomial.taps(self.history);
+        self.history = self.polynomial.shift(self.history, out);
         self.ones = if out { self.ones + 1 } else { 0 };
         out
     }
@@ -48,18 +78,28 @@ impl Scrambler {
 
 #[derive(Debug, Default)]
 pub struct Descrambler {
+    polynomial: Polynomial,
     history: u32,
 }
 
 impl Descrambler {
+    /// V.22's.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
+    pub fn with(polynomial: Polynomial) -> Self {
+        Self {
+            polynomial,
+            history: 0,
+        }
+    }
+
     pub fn descramble(&mut self, bit: bool) -> bool {
-        let out = bit ^ taps(self.history);
-        self.history = shift(self.history, bit);
+        let out = bit ^ self.polynomial.taps(self.history);
+        self.history = self.polynomial.shift(self.history, bit);
         out
     }
 }
@@ -100,6 +140,42 @@ mod tests {
     }
 
     #[test]
+    fn each_v34_polynomial_synchronises_itself_within_23_bits() {
+        for polynomial in [Polynomial::V34_CALL, Polynomial::V34_ANSWER] {
+            let mut scrambler = Scrambler::with(polynomial);
+            for bit in data() {
+                scrambler.scramble(bit);
+            }
+            let mut descrambler = Descrambler::with(polynomial);
+            let out: Vec<bool> = data()
+                .into_iter()
+                .map(|b| descrambler.descramble(scrambler.scramble(b)))
+                .collect();
+            assert_eq!(out[23..], data()[23..], "{polynomial:?}");
+        }
+    }
+
+    #[test]
+    fn the_v34_directions_scramble_differently() {
+        let run = |polynomial| {
+            let mut scrambler = Scrambler::with(polynomial);
+            (0..100)
+                .map(|_| scrambler.scramble(true))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(run(Polynomial::V34_CALL), run(Polynomial::V34_ANSWER));
+    }
+
+    #[test]
+    fn divides_by_its_polynomial() {
+        let mut scrambler = Scrambler::with(Polynomial::V34_ANSWER);
+        let out: Vec<bool> = data().into_iter().map(|b| scrambler.scramble(b)).collect();
+        for n in 23..out.len() {
+            assert_eq!(out[n], data()[n] ^ out[n - 5] ^ out[n - 23], "bit {n}");
+        }
+    }
+
+    #[test]
     fn scrambles_idle_mark_into_both_values() {
         let mut scrambler = Scrambler::new();
         let out: Vec<bool> = (0..200).map(|_| scrambler.scramble(true)).collect();
@@ -115,7 +191,7 @@ mod tests {
         let mut longest = 0;
         for n in 0..300 {
             let bit = if n < 17 {
-                !taps(scrambler.history)
+                !scrambler.polynomial.taps(scrambler.history)
             } else {
                 true
             };
