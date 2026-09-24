@@ -745,8 +745,8 @@ and takes whichever transaction the caller answers with:
   sends ACK(1). The caller has then received MS, so it sends ANSam and this
   modem goes on as the V.8 caller (transactions 2 and 3).
 
-The calling modem answers CRe or MRe with CRd, reads CL, and sends MS with
-the data mode and the V.8 bit as CL has it.
+The calling modem answers CRe or MRe with CRd once the signal has ended,
+reads CL, and sends MS with the data mode and the V.8 bit as CL has it.
 
 The sequences, for this modem with automode on:
 

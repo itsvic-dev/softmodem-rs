@@ -206,7 +206,8 @@ impl SignalDetector {
         }
     }
 
-    /// The signal that ended its segment 2 within `input`, if any.
+    /// The signal whose segment 2 tone stopped within `input`, if any, or
+    /// that goes on into the mark of a message.
     pub fn process(&mut self, input: &[i16]) -> Option<Signal> {
         let mut heard = None;
         for &sample in input {
@@ -227,14 +228,17 @@ impl SignalDetector {
                     at: usize::MAX,
                 },
                 Stage::Pair { .. } => Stage::Pair { lasted: 0 },
+                Stage::Single { waited, lasted, at }
+                    if lasted >= SINGLE_SAMPLES
+                        && (single != Some(at) || waited >= SEGMENT_2_WAIT_SAMPLES) =>
+                {
+                    heard = Some(self.signals[at]);
+                    Stage::Pair { lasted: 0 }
+                }
                 Stage::Single { waited, .. } if waited >= SEGMENT_2_WAIT_SAMPLES => {
                     Stage::Pair { lasted: 0 }
                 }
                 Stage::Single { waited, lasted, at } => match single {
-                    Some(i) if i == at && lasted + 1 >= SINGLE_SAMPLES => {
-                        heard = Some(self.signals[i]);
-                        Stage::Pair { lasted: 0 }
-                    }
                     Some(i) if i == at => Stage::Single {
                         waited: waited + 1,
                         lasted: lasted + 1,
@@ -1062,6 +1066,21 @@ mod tests {
     fn hears_cre_at_its_low_level_with_the_short_segment_1() {
         let cre = signal(Signal::CRe, Pair::Initiating, LOW_LEVEL);
         assert_eq!(heard(Pair::Initiating, &cre), [Signal::CRe]);
+    }
+
+    #[test]
+    fn reports_cre_only_once_it_has_ended() {
+        let cre = signal(Signal::CRe, Pair::Initiating, LOW_LEVEL);
+        let end = 800 + SHORT_SEGMENT_1_SAMPLES + SEGMENT_2_SAMPLES;
+        let mut detector = SignalDetector::new(Pair::Initiating);
+        let at = cre
+            .chunks(8)
+            .position(|c| detector.process(c).is_some())
+            .map(|chunk| chunk * 8);
+        assert!(
+            at.is_some_and(|at| at >= end),
+            "heard at {at:?}, ended at {end}"
+        );
     }
 
     #[test]
