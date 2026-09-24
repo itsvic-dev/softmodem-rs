@@ -435,20 +435,28 @@ async fn a_v22bis_call_connects_at_2400_and_carries_data_both_ways() {
 
 #[tokio::test(start_paused = true)]
 async fn ato1_retrains_and_the_call_goes_on() {
-    let (mut a, mut b) = two_modems("ATE0+MS=V22B", "ATE0S0=1+MS=V22B");
-    a.command("ATDT0300").await;
-    a.expect("CONNECT 2400\r\n").await;
-    b.expect("CONNECT 2400\r\n").await;
+    for (modulation, connect) in [
+        ("+MS=V22B", "CONNECT 2400\r\n"),
+        ("+MS=V34", "CONNECT 33600\r\n"),
+    ] {
+        let (mut a, mut b) = two_modems(
+            &format!("ATE0{modulation}"),
+            &format!("ATE0S0=1{modulation}"),
+        );
+        a.command("ATDT0300").await;
+        a.expect(connect).await;
+        b.expect(connect).await;
 
-    a.escape().await;
-    a.expect_next(b"\r\nOK\r\n").await;
-    a.command("ATO1").await;
-    a.expect_next(b"\r\nCONNECT 2400\r\n").await;
-    sleep(Duration::from_secs(2)).await;
-    a.send(b"after the retrain").await;
-    b.expect("after the retrain").await;
-    b.send(b"and back").await;
-    a.expect("and back").await;
+        a.escape().await;
+        a.expect_next(b"\r\nOK\r\n").await;
+        a.command("ATO1").await;
+        a.expect_next(format!("\r\n{connect}").as_bytes()).await;
+        sleep(Duration::from_secs(8)).await;
+        a.send(b"after the retrain").await;
+        b.expect("after the retrain").await;
+        b.send(b"and back").await;
+        a.expect("and back").await;
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -524,7 +532,14 @@ async fn a_call_rings_is_answered_and_carries_data_both_ways() {
 #[tokio::test(start_paused = true)]
 async fn keeps_what_the_answerer_sends_before_the_caller_connects() {
     let mut calls = Vec::new();
-    for modulation in ["+MS=V21,0", "+MS=V22,0", "+MS=V22B,0", "+MS=V22B,1", "+MS=V34,0", "+MS=V34,1"] {
+    for modulation in [
+        "+MS=V21,0",
+        "+MS=V22,0",
+        "+MS=V22B,0",
+        "+MS=V22B,1",
+        "+MS=V34,0",
+        "+MS=V34,1",
+    ] {
         let (mut a, mut b) = two_modems(
             &format!("ATE0{modulation}"),
             &format!("ATE0S0=1{modulation}"),
