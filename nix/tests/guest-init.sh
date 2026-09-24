@@ -8,7 +8,11 @@ for module in /modules/*.ko; do
     [ -e "$module" ] && insmod "$module"
 done
 
-tty=$(ls /sys/bus/pci/drivers/serial/*/tty)
+for device in /sys/class/tty/ttyS*; do
+    case $(readlink "$device") in
+    */pci0000:*) tty=${device##*/} ;;
+    esac
+done
 port=/dev/$tty
 
 status() {
