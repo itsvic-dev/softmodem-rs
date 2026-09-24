@@ -11,6 +11,8 @@ use crate::tone::Tone;
 
 // § 11.1: 75 ms of silence after CJ.
 const CJ_SILENCE: usize = 600;
+// § 11.5: 70 ms of silence before the tone of a retrain.
+const RETRAIN_SILENCE: usize = 560;
 // § 11.2.1: a reversal answers one 40 ms after it arrives.
 const ANSWER_DELAY: usize = 320;
 // § 11.2.1: each tone goes on 10 ms after its reversal.
@@ -210,6 +212,22 @@ impl Phase2 {
         }
     }
 
+    /// Phase 2 again, to answer or start a retrain (§ 11.5): 70 ms of
+    /// silence, then tone A or B and the rest of phase 2 from the tones, with
+    /// the far INFO0 heard before.
+    #[must_use]
+    pub fn retrain(role: Role, far: Info0) -> Self {
+        let mut phase2 = Self::new(role);
+        phase2.info = dpsk::Modulator::new(role);
+        phase2.far = Some(far);
+        phase2.step = match role {
+            Role::Answer => Step::ToneA,
+            Role::Originate => Step::ToneB,
+        };
+        phase2.tx_until = Some(RETRAIN_SILENCE);
+        phase2
+    }
+
     /// What phase 2 settled, once it has.
     #[must_use]
     pub fn outcome(&self) -> Option<Outcome> {
@@ -252,11 +270,11 @@ impl Phase2 {
     fn segment_ended(&mut self) {
         let (tx, until) = match (self.step, self.tx) {
             (Step::SendInfo0, Tx::Silence) => (Tx::Info, None),
+            (Step::ToneA | Step::ToneB, Tx::Silence) | (Step::Probe, Tx::L2) => (Tx::Tone, None),
             (Step::Probe | Step::ProbeFar, Tx::Tone) => (Tx::L1, Some(self.sent + L1_SAMPLES)),
             (Step::Probe | Step::ProbeFar, Tx::L1) => {
                 (Tx::L2, Some(self.sent + L2_MOST + self.round_trip))
             }
-            (Step::Probe, Tx::L2) => (Tx::Tone, None),
             (Step::ProbeFar, Tx::L2) => {
                 self.send_info1();
                 return;
@@ -371,6 +389,7 @@ impl Phase2 {
         match self.step {
             Step::ToneA
                 if self.far.is_some()
+                    && self.tx == Tx::Tone
                     && self.detector.present()
                     && self.sent >= self.tone_from + TONE_FIRST =>
             {

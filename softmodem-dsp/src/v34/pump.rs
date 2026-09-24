@@ -12,7 +12,7 @@ use super::mp::{self, Mp, Trellis};
 use super::phase2::{Outcome, Phase2};
 use super::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use super::training::{self, J_4, J_16, J_PRIME, PP_SYMBOLS, Points};
-use super::{NOMINAL_DBM0, SymbolRate, rates};
+use super::{NOMINAL_DBM0, SymbolRate, rates, tones};
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Descrambler, Polynomial, Scrambler};
@@ -27,6 +27,8 @@ const TRN_LEAST: usize = 512;
 // Of the far phase 4 TRN: the symbols the equaliser settles on, then the end of the measurement.
 const TRN_SETTLE: usize = 512;
 const TRN_HEARD: usize = 1536;
+// § 11.5: the far tone for more than 50 ms starts a retrain.
+const RETRAIN_TONE: usize = 400;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
@@ -590,8 +592,11 @@ pub struct V34 {
     rate: u8,
     level: f64,
     carrier: bool,
-    /// Connected once, and still in the call through renegotiations.
+    /// Connected once, and still in the call through renegotiations and retrains.
     online: bool,
+    /// The far end's tone A or B in data mode, which starts a retrain.
+    retrain_tone: tones::Detector,
+    tone_heard: usize,
 }
 
 impl V34 {
@@ -609,7 +614,42 @@ impl V34 {
             level: sine_peak(CARRIER_DBM0) / std::f64::consts::SQRT_2,
             carrier: false,
             online: false,
+            retrain_tone: tones::Detector::new(other(role)),
+            tone_heard: 0,
         }
+    }
+
+    // § 11.5: phase 2 again from the tones, then phases 3 and 4, with the far INFO0 kept.
+    fn restart(&mut self) {
+        let Some(outcome) = self.outcome else {
+            return;
+        };
+        self.phase2 = Phase2::retrain(self.role, outcome.far);
+        self.outcome = None;
+        self.modulator = None;
+        self.source = None;
+        self.sink = None;
+        self.far = Far::default();
+        self.tone_heard = 0;
+    }
+
+    // § 11.5.1.2 and § 11.5.2.2: the far tone for more than 50 ms in data mode.
+    fn far_retrains(&mut self, input: &[i16]) -> bool {
+        let in_data = self
+            .sink
+            .as_ref()
+            .is_some_and(|sink| matches!(sink.listen, Listen::Data { .. }));
+        if !in_data {
+            self.tone_heard = 0;
+            return false;
+        }
+        self.retrain_tone.process(input);
+        self.tone_heard = if self.retrain_tone.present() {
+            self.tone_heard + input.len()
+        } else {
+            0
+        };
+        self.tone_heard > RETRAIN_TONE
     }
 
     /// Starts a rate renegotiation from data mode, as § 11.6.1.1 has the
@@ -741,21 +781,34 @@ impl DataPump for V34 {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
-        let Some(sink) = &mut self.sink else {
+        if self.sink.is_none() {
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.outcome().filter(|_| self.phase2.done()) {
                 self.start_training(outcome);
             }
             return;
-        };
+        }
         let power = input.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
             / f64::from(u32::try_from(input.len().max(1)).unwrap_or(1));
         self.carrier = power.sqrt() > self.level;
+        if self.far_retrains(input) {
+            self.restart();
+            return;
+        }
+        let Some(sink) = &mut self.sink else {
+            return;
+        };
         for symbol in sink.front_end.process(input) {
             sink.take(&symbol, &mut self.far, bits);
         }
         self.agree();
         self.online |= self.connected();
+    }
+
+    fn retrain(&mut self) {
+        if self.connected() {
+            self.restart();
+        }
     }
 
     fn carrier(&self) -> bool {
@@ -1008,6 +1061,50 @@ mod tests {
                 "data would be lost after a renegotiation started by the {initiator:?} end"
             );
         }
+    }
+
+    #[test]
+    fn retrains_from_either_end_and_carries_data_after() {
+        for initiator in [Role::Originate, Role::Answer] {
+            let (mut caller, mut answerer) = connected_pair();
+            match initiator {
+                Role::Originate => caller.retrain(),
+                Role::Answer => answerer.retrain(),
+            }
+            back_in_data(&mut caller, &mut answerer, |sample| sample);
+            assert_eq!((caller.bit_rate(), answerer.bit_rate()), (33_600, 33_600));
+            let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+            caller.push_bits(&message);
+            answerer.push_bits(&message);
+            let (at_caller, at_answerer) = exchange(&mut caller, &mut answerer, 60);
+            let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+            assert!(
+                found(&at_answerer) && found(&at_caller),
+                "data would be lost after a retrain started by the {initiator:?} end"
+            );
+        }
+    }
+
+    #[test]
+    fn retrains_down_when_the_line_gets_worse() {
+        let (mut caller, mut answerer) = connected_pair();
+        exchange_over(&mut caller, &mut answerer, 50, noisy);
+        caller.retrain();
+        back_in_data(&mut caller, &mut answerer, noisy);
+        let rate = caller.bit_rate();
+        assert!(
+            rate < 33_600 && rate == answerer.bit_rate(),
+            "a retrain over a noisier line would keep {rate} bit/s"
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_over(&mut caller, &mut answerer, 80, noisy);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost at {rate} bit/s after a retrain"
+        );
     }
 
     #[test]
