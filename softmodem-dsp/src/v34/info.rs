@@ -9,9 +9,8 @@ use super::bits::{self, Reader, Writer};
 
 const FILL: &str = "1111";
 const SYNC: &str = "01110010";
-const HEADER: [bool; 12] = [
-    true, true, true, true, false, true, true, true, false, false, true, false,
-];
+// The frame sync alone: a receiver still settling after L2 may lose the fill.
+const HEADER: [bool; 8] = [false, true, true, true, false, false, true, false];
 const CRC: usize = 16;
 // Bits 79:88 of INFO1c and 40:49 of INFO1a: this value means "ignore".
 const NO_OFFSET: i16 = -512;
