@@ -16,6 +16,12 @@ spandsp3.overrideAttrs (previousAttrs: {
       substituteInPlace $rx --replace-fail '#define _SPANDSP_PRIVATE_V' \
         $'#include <spandsp/godard.h>\n#include <spandsp/private/godard.h>\n#define _SPANDSP_PRIVATE_V'
     done
+  ''
+  # d9681c3 does not step past the XID's optional functions.
+  + ''
+    substituteInPlace src/v42.c --replace-fail \
+      'put_net_unaligned_uint32(buf, 0x8A890000);' \
+      'put_net_unaligned_uint32(buf, 0x8A890000); buf += 4;'
   '';
   preConfigure = ''
     autoreconf -fi
