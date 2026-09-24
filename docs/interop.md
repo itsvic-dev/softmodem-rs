@@ -72,7 +72,13 @@ dials a softmodem over the UDP wire and carries the audio between them.
 - As released, `-e` takes no argument, so slmodemd never learns what to run.
   The package patches this.
 - It only dials, so it tests this modem's answering side.
-- Its `+MS` numbers the modulations: 122 for V.22bis, 34 for V.34.
+- Its `+MS` numbers the modulations: 122 for V.22bis, 34 for V.34, 90 for
+  V.90.
+- At `+MS=90` it is a V.90 analogue modem, and its CM offers V.90, V.34
+  and V.32bis. A JM without `pcm0` takes it to V.34 through the same V.90
+  code. A JM with the digital bit takes it to V.90 phase 2: it sends INFO0a
+  at 2400 Hz and waits for INFO0d at 1200 Hz, and hangs up after about 3 s
+  without one. It asks for 300 to 56 000 bit/s down and 4800 to 33 600 up.
 - Its dial string keeps the T of `ATDT`.
 - `-d9` logs the Smart Link state machine: the V.8 and V.34 phases, the
   INFO and MP it hears, and the rate it picks. The check keeps it on, and
