@@ -11,6 +11,7 @@ pub mod info;
 pub mod jd;
 pub mod training;
 pub mod ucode;
+pub mod upstream;
 
 use ucode::Law;
 
