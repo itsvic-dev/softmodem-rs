@@ -1765,6 +1765,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "softmodem-link"
+version = "0.1.0"
+dependencies = [
+ "softmodem-dsp",
+]
+
+[[package]]
 name = "softmodem-terminal"
 version = "0.1.0"
 dependencies = [

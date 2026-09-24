@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["softmodem", "softmodem-dsp", "softmodem-interop", "softmodem-terminal", "softmodem-transport"]
+members = ["softmodem", "softmodem-dsp", "softmodem-interop", "softmodem-link", "softmodem-terminal", "softmodem-transport"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 softmodem = { path = "softmodem" }
 softmodem-dsp = { path = "softmodem-dsp" }
+softmodem-link = { path = "softmodem-link" }
 softmodem-terminal = { path = "softmodem-terminal" }
 softmodem-transport = { path = "softmodem-transport" }
 

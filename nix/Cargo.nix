@@ -73,6 +73,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "softmodem-link" = rec {
+      packageId = "softmodem-link";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "softmodem-link";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "softmodem-terminal" = rec {
       packageId = "softmodem-terminal";
       build = internal.buildRustCrateWithFeatures {
@@ -5632,6 +5642,20 @@ rec {
           {
             name = "tracing-subscriber";
             packageId = "tracing-subscriber";
+          }
+        ];
+
+      };
+      "softmodem-link" = rec {
+        crateName = "softmodem-link";
+        version = "0.1.0";
+        edition = "2024";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ../softmodem-link; };
+        libName = "softmodem_link";
+        dependencies = [
+          {
+            name = "softmodem-dsp";
+            packageId = "softmodem-dsp";
           }
         ];
 
