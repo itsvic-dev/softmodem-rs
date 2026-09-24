@@ -34,8 +34,9 @@ an echo canceller for the echo of its own signal from the far hybrid.
 
 spandsp 3.1.1 has a V.34 modem, but only part of one. Two instances of it
 exchange INFO0, send the line probing tones and start INFO1, then stop
-before data. So it can check the start of phase 2 and no further. Beyond
-that, the ITU text is the only reference until a real modem is at hand.
+before data, and its own test does not get past INFO0. So it is not used as
+a reference: the ITU text is the only one until a real modem is at hand.
+See [V.34](v34.md).
 
 ## 56k
 
