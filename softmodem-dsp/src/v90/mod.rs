@@ -4,6 +4,7 @@
 pub mod analogue;
 pub mod cp;
 pub mod digital;
+pub mod dil;
 pub mod frames;
 pub mod info;
 pub mod jd;
