@@ -7,3 +7,4 @@ pub mod line;
 pub mod port;
 pub mod pty;
 pub mod settings;
+pub mod tcp;
