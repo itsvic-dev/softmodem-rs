@@ -10,6 +10,7 @@ use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
 use softmodem_terminal::settings::Settings;
+use softmodem_terminal::tcp::TcpPort;
 use softmodem_transport::sip::{Account, Sip};
 use softmodem_transport::speaker::Speaker;
 use softmodem_transport::wire::{Impairment, Wire};
@@ -71,11 +72,14 @@ struct WireArgs {
 #[derive(Args)]
 struct ModemArgs {
     /// Serial port as a pseudoterminal linked from this path, not stdin and stdout.
-    #[arg(long, conflicts_with = "cuse")]
+    #[arg(long, conflicts_with_all = ["cuse", "tcp"])]
     pty: Option<PathBuf>,
     /// Serial port as the character device /dev/NAME, with DCD and RI. Linux only.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", conflicts_with = "tcp")]
     cuse: Option<String>,
+    /// Serial port as a TCP listener on ADDR, for one computer at a time.
+    #[arg(long, value_name = "ADDR")]
+    tcp: Option<SocketAddr>,
     /// Commands for the stored profile that ATZ restores, such as "ATS0=1".
     #[arg(long, default_value = "")]
     init: String,
@@ -150,6 +154,12 @@ async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()>
     } else if let Some(name) = args.cuse {
         let port = CusePort::open(&name).context("opening /dev/cuse")?;
         info!(device = %format!("/dev/{name}"), "serial port ready");
+        station.run(port).await
+    } else if let Some(address) = args.tcp {
+        let port = TcpPort::bind(address)
+            .await
+            .with_context(|| format!("listening on {address}"))?;
+        info!(address = %port.local_addr()?, "serial port ready");
         station.run(port).await
     } else {
         station
