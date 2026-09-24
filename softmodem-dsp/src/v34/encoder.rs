@@ -230,7 +230,7 @@ fn parity(c: Point) -> bool {
     (c.0 / 2 + c.1 / 2).rem_euclid(2) == 1
 }
 
-// Rings as the shell mapper spreads evenly spread bits.
+// Rings as the shell mapper spreads evenly spread bits, in the high and the low mapping frames.
 #[expect(clippy::cast_precision_loss, reason = "small counts")]
 fn average_energy(framing: &Framing, shell: &ShellMapper) -> f64 {
     let per_ring = 1 << framing.q;
@@ -248,19 +248,23 @@ fn average_energy(framing: &Framing, shell: &ShellMapper) -> f64 {
     if framing.k == 0 {
         return ring_energy[0];
     }
-    let samples = 4096u64;
-    let span = 1u64 << framing.k;
-    let total: f64 = (0..samples)
-        .map(|n| {
-            let r0 = n.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 11 & (span - 1);
-            shell
-                .map(r0)
-                .iter()
-                .map(|&ring| ring_energy[usize::from(ring)])
-                .sum::<f64>()
-        })
-        .sum();
-    total / (8 * samples) as f64
+    let samples = 16_384u64;
+    let mean = |shell_bits: usize| {
+        let span = 1u64 << shell_bits;
+        let total: f64 = (0..samples)
+            .map(|n| {
+                let r0 = (2 * n + 1) * span / (2 * samples);
+                shell
+                    .map(r0)
+                    .iter()
+                    .map(|&ring| ring_energy[usize::from(ring)])
+                    .sum::<f64>()
+            })
+            .sum();
+        total / (8 * samples) as f64
+    };
+    let high = framing.r as f64 / framing.p as f64;
+    high * mean(framing.k) + (1.0 - high) * mean(framing.k - 1)
 }
 
 #[cfg(test)]
@@ -331,23 +335,26 @@ mod tests {
 
     #[test]
     fn its_points_have_the_energy_it_reports() {
-        let mut encoder = encoder(SymbolRate::S3200, 26_400, Settings::default());
-        let mut seed = 3;
-        let mut total = 0.0;
-        for _ in 0..2000 {
-            let bits = bits_for(&encoder, &mut seed);
-            total += encoder
-                .encode(&bits)
-                .iter()
-                .map(|p| p.0 * p.0 + p.1 * p.1)
-                .sum::<f64>();
+        for (symbol_rate, bit_rate) in [(SymbolRate::S3200, 26_400), (SymbolRate::S3429, 33_600)] {
+            let mut encoder = encoder(symbol_rate, bit_rate, Settings::default());
+            let mut seed = 3;
+            let mut total = 0.0;
+            let frames = 12_000;
+            for _ in 0..frames {
+                let bits = bits_for(&encoder, &mut seed);
+                total += encoder
+                    .encode(&bits)
+                    .iter()
+                    .map(|p| p.0 * p.0 + p.1 * p.1)
+                    .sum::<f64>();
+            }
+            let mean = total / f64::from(8 * frames);
+            assert!(
+                (mean / encoder.energy() - 1.0).abs() < 0.01,
+                "{bit_rate} bit/s would be sent at a level off by more than 1% from what a far receiver expects: {mean:.2} against {:.2}",
+                encoder.energy()
+            );
         }
-        let mean = total / 16_000.0;
-        assert!(
-            (mean / encoder.energy() - 1.0).abs() < 0.03,
-            "the transmit level would be off: {mean:.1} against {:.1}",
-            encoder.energy()
-        );
     }
 
     #[test]
