@@ -10,11 +10,15 @@ pub struct Noise {
     rms: f64,
     frames: u64,
     state: u64,
+    pub to_softmodem: bool,
+    pub to_slmodemd: bool,
 }
 
 impl Noise {
     /// From `SOFTMODEM_NOISE_AFTER`, in seconds after the answer, and
     /// `SOFTMODEM_NOISE_RMS`, in linear sample units. None without both.
+    /// `SOFTMODEM_NOISE_WAY` of `to-softmodem` or `to-slmodemd` keeps it to
+    /// one direction.
     #[must_use]
     #[expect(
         clippy::cast_possible_truncation,
@@ -24,11 +28,14 @@ impl Noise {
     pub fn from_env() -> Option<Self> {
         let after: f64 = std::env::var("SOFTMODEM_NOISE_AFTER").ok()?.parse().ok()?;
         let rms: f64 = std::env::var("SOFTMODEM_NOISE_RMS").ok()?.parse().ok()?;
+        let way = std::env::var("SOFTMODEM_NOISE_WAY").unwrap_or_default();
         Some(Self {
             from_frame: (after / FRAME_SECONDS) as u64,
             rms,
             frames: 0,
             state: 0x2545_F491_4F6C_DD1D,
+            to_softmodem: way != "to-slmodemd",
+            to_slmodemd: way != "to-softmodem",
         })
     }
 

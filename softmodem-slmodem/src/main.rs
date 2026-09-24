@@ -75,7 +75,9 @@ async fn run(number: &str, fd: i32, peer: SocketAddr) -> anyhow::Result<()> {
                     if noise.tick() {
                         info!("noise on the line from now");
                     }
-                    noise.add(&mut frame);
+                    if noise.to_slmodemd {
+                        noise.add(&mut frame);
+                    }
                 }
                 high.clear();
                 up.process(&frame, &mut high);
@@ -89,7 +91,9 @@ async fn run(number: &str, fd: i32, peer: SocketAddr) -> anyhow::Result<()> {
                 } else {
                     vec![0; FRAME_SAMPLES]
                 };
-                if let Some(noise) = &mut noise {
+                if let Some(noise) = &mut noise
+                    && noise.to_softmodem
+                {
                     noise.add(&mut reply);
                 }
                 if call.audio_out.send(reply).await.is_err() {
