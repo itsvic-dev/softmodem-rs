@@ -687,13 +687,13 @@ mod tests {
                     frames += 1;
                 }
                 if !(caller.connected() && answerer.connected() && caller.bit_rate() == 33_600) {
-                    failed.push((up_delay, down_delay));
+                    failed.push((up_delay, down_delay, caller.bit_rate()));
                 }
             }
         }
         assert!(
             failed.is_empty(),
-            "no V.34 connection over lines of these delays up and down, in samples: {failed:?}"
+            "no V.34 connection at 33 600 over lines of these delays up and down, in samples, with the rate reached: {failed:?}"
         );
     }
 

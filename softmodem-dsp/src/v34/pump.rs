@@ -12,7 +12,7 @@ use super::mp::{self, Mp, Trellis};
 use super::phase2::{Outcome, Phase2};
 use super::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use super::training::{self, J_4, J_16, J_PRIME, PP_SYMBOLS, Points};
-use super::{NOMINAL_DBM0, rates};
+use super::{NOMINAL_DBM0, SymbolRate, rates};
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Descrambler, Polynomial, Scrambler};
@@ -24,6 +24,9 @@ const S_BAR_SYMBOLS: usize = 16;
 // § 11.3.1: TRN for at least 512T; this modem sends twice that in phase 3.
 const TRN_SYMBOLS: usize = 1024;
 const TRN_LEAST: usize = 512;
+// Of the far phase 4 TRN: the symbols the equaliser settles on, then the end of the measurement.
+const TRN_SETTLE: usize = 512;
+const TRN_HEARD: usize = 1536;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
@@ -62,8 +65,10 @@ struct Far {
     s_bar: u8,
     /// J, and the constellation it asks this end to train with.
     j: Option<Points>,
-    /// At least 512T of the far phase 4 TRN.
+    /// The far phase 4 TRN measured, or ended by its MP.
     trn: bool,
+    /// The highest rate that the far phase 4 TRN was heard well enough for.
+    trained: Option<u8>,
     mp: Option<Mp>,
     /// MP′ or E from the far end.
     ack: bool,
@@ -214,6 +219,18 @@ impl Source {
         }
     }
 
+    // Ours, with the rate the far TRN allows in the direction this end hears.
+    fn own_mp(&self, far: &Far) -> Mp {
+        let mut mp = self.mp;
+        if let Some(trained) = far.trained {
+            match self.role {
+                Role::Originate => mp.max_answer_to_call = trained,
+                Role::Answer => mp.max_call_to_answer = trained,
+            }
+        }
+        mp
+    }
+
     fn mp(&mut self, far: &Far) {
         if self.acked && far.ack {
             let e = self.training.sequence(&[true; mp::E_ONES], self.points);
@@ -221,7 +238,7 @@ impl Source {
             self.send = Send::Data;
             return;
         }
-        let mut mp = self.mp;
+        let mut mp = self.own_mp(far);
         mp.acknowledge = far.mp.is_some();
         self.acked |= mp.acknowledge;
         let frame = mp.frame();
@@ -276,6 +293,7 @@ enum Listen {
 #[derive(Debug)]
 struct Sink {
     far_role: Role,
+    symbol_rate: SymbolRate,
     front_end: FrontEnd,
     equalizer: Equalizer,
     detector: SDetector,
@@ -288,6 +306,8 @@ struct Sink {
     quadrant: u8,
     window: VecDeque<bool>,
     deframer: mp::Deframer,
+    trn_heard: usize,
+    trn_error: f64,
     decoder: Option<Decoder>,
     scale: f64,
     frame: Vec<Complex>,
@@ -300,6 +320,7 @@ impl Sink {
         let far = other(role);
         Self {
             far_role: far,
+            symbol_rate: outcome.receive.symbol_rate,
             front_end: FrontEnd::new(outcome.receive.symbol_rate, outcome.receive.high_carrier),
             equalizer: Equalizer::default(),
             detector: SDetector::default(),
@@ -312,6 +333,8 @@ impl Sink {
             quadrant: 0,
             window: VecDeque::new(),
             deframer: mp::Deframer::default(),
+            trn_heard: TRN_HEARD,
+            trn_error: 0.0,
             decoder: None,
             scale: 1.0,
             frame: Vec::new(),
@@ -373,11 +396,11 @@ impl Sink {
             Listen::Train { from } => self.train(index, from),
             Listen::Sequences => self.sequences(z, index, far),
             Listen::Trn { from } => {
-                self.equalizer.adapt(Self::corner(Self::quarter(z)));
-                self.sequence_bits(z);
-                if index >= from + TRN_LEAST {
-                    far.trn = true;
-                    self.listen = Listen::Sequences;
+                if let Some(offset) = index.checked_sub(from) {
+                    self.trn(z, offset, far);
+                } else {
+                    self.equalizer.adapt(Self::corner(Self::quarter(z)));
+                    self.sequence_bits(z);
                 }
             }
             Listen::Data { from } if index >= from => self.data(z, data),
@@ -404,6 +427,33 @@ impl Sink {
         if trn + 1 >= TRN_LEAST {
             self.listen = Listen::Sequences;
         }
+    }
+
+    // The far phase 4 TRN, until `trn_heard` symbols of it or the far MP after it.
+    fn trn(&mut self, z: Complex, offset: usize, far: &mut Far) {
+        self.front_end.track(Tracking::Data);
+        let target = Self::corner(Self::quarter(z));
+        if offset >= TRN_SETTLE {
+            self.trn_error += (z.0 - target.0).powi(2) + (z.1 - target.1).powi(2);
+        }
+        self.equalizer.adapt(target);
+        for bit in self.sequence_bits(z) {
+            if let Some(mp) = self.deframer.push(bit) {
+                far.ack |= mp.acknowledge;
+                far.mp = Some(mp);
+            }
+        }
+        if offset + 1 < self.trn_heard && far.mp.is_none() {
+            return;
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a few thousand symbols")]
+        let mse = match (offset + 1).checked_sub(TRN_SETTLE) {
+            Some(measured) if measured > 0 => self.trn_error / measured as f64,
+            _ => self.equalizer.error(),
+        };
+        far.trn = true;
+        far.trained = Some(rates::trained_rate(self.symbol_rate, mse));
+        self.listen = Listen::Sequences;
     }
 
     fn sequences(&mut self, z: Complex, index: usize, far: &mut Far) {
@@ -524,10 +574,11 @@ impl V34 {
         } else {
             0
         };
+        // The far end judges the direction it hears, in its own MP.
         let receive_max = outcome.receive.max_rate;
         let (call_to_answer, answer_to_call) = match self.role {
-            Role::Originate => (transmit.max_rate, receive_max),
-            Role::Answer => (receive_max, transmit.max_rate),
+            Role::Originate => (14, receive_max),
+            Role::Answer => (receive_max, 14),
         };
         let mp = Mp {
             max_call_to_answer: call_to_answer,
@@ -550,7 +601,7 @@ impl V34 {
         if source.encoder.is_some() {
             return;
         }
-        let ours = source.mp;
+        let ours = source.own_mp(&self.far);
         let rate = rates::agree(
             [
                 ours.max_call_to_answer,
@@ -704,6 +755,11 @@ mod tests {
             frames += 1;
         }
         assert!(caller.connected(), "no V.34 connection over A-law");
+        assert_eq!(
+            (caller.bit_rate(), answerer.bit_rate()),
+            (31_200, 31_200),
+            "A-law leaves room for 31 200 bit/s at 3429 baud"
+        );
         let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
         caller.push_bits(&message);
         answerer.push_bits(&message);
@@ -757,6 +813,44 @@ mod tests {
                 answerer.far,
             );
         }
+    }
+
+    #[test]
+    fn connects_to_an_end_that_sends_the_shortest_phase_4_trn() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let mut frames = 0;
+        let (mut mp_from, mut trn_until) = (None, None);
+        while !(caller.connected() && answerer.connected()) && frames < 400 {
+            if let Some(sink) = &mut answerer.sink {
+                sink.trn_heard = 1;
+            }
+            exchange(&mut caller, &mut answerer, 1);
+            frames += 1;
+            if answerer.source.as_ref().is_some_and(|s| s.send == Send::Mp) {
+                mp_from.get_or_insert(frames);
+            }
+            if caller.far.trn {
+                trn_until.get_or_insert(frames);
+            }
+        }
+        let late = trn_until.zip(mp_from).map(|(trn, mp)| (trn - mp) * 20);
+        assert!(
+            late.is_some_and(|ms| ms < 150),
+            "the caller heard the far MP as TRN for {late:?} ms, and would answer it that much late"
+        );
+        assert!(
+            caller.connected() && answerer.connected(),
+            "a far end that ends its TRN after 512T would never reach data: caller {:?}/{:?}",
+            caller.source.as_ref().map(|s| s.send),
+            caller.sink.as_ref().map(|s| s.listen),
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange(&mut caller, &mut answerer, 60);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(found(&at_answerer) && found(&at_caller), "data lost after a short TRN");
     }
 
     #[test]

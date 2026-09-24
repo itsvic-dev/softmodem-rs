@@ -10,14 +10,27 @@ use super::probing::Probing;
 // Uncoded QAM at 10⁻⁶, less the trellis's 4 dB, with 5 dB of margin.
 const DB_PER_BIT: f64 = 3.01;
 const REQUIRED_DB: f64 = 12.8;
+// The same with 2 dB of margin, as the equaliser measures the SNR of the data path itself.
+const TRAINED_DB: f64 = 9.8;
 // The part of the band either side of the carrier that the tones must cover.
 const BAND: f64 = 0.45;
 
-/// The highest data rate, in multiples of 2400 bit/s, that `snr_db` carries
-/// at `symbol_rate`, or 0 if none.
+/// The highest data rate, in multiples of 2400 bit/s, that `snr_db` from
+/// line probing carries at `symbol_rate`, or 0 if none.
 #[must_use]
 pub fn max_rate(symbol_rate: SymbolRate, snr_db: f64) -> u8 {
-    let bits = (snr_db - REQUIRED_DB) / DB_PER_BIT;
+    highest(symbol_rate, (snr_db - REQUIRED_DB) / DB_PER_BIT)
+}
+
+/// The highest data rate, in multiples of 2400 bit/s, that an equaliser
+/// error of `mse`, against points of unit mean power, carries at
+/// `symbol_rate`, or 0 if none.
+#[must_use]
+pub fn trained_rate(symbol_rate: SymbolRate, mse: f64) -> u8 {
+    highest(symbol_rate, (-10.0 * mse.log10() - TRAINED_DB) / DB_PER_BIT)
+}
+
+fn highest(symbol_rate: SymbolRate, bits: f64) -> u8 {
     (1..=14u8)
         .rev()
         .find(|&n| {
@@ -140,6 +153,14 @@ mod tests {
         let cut = probe(&probing, SymbolRate::S3429, [true, true]);
         assert!(cut.max_rate < clear.max_rate);
         assert!(probe(&probing, SymbolRate::S3200, [true, true]).max_rate > cut.max_rate);
+    }
+
+    #[test]
+    fn training_through_a_law_carries_31200_at_3429_baud() {
+        let alaw_mse = 10f64.powf(-37.6 / 10.0);
+        assert_eq!(trained_rate(SymbolRate::S3429, alaw_mse), 13);
+        assert_eq!(trained_rate(SymbolRate::S3429, 1e-6), 14);
+        assert_eq!(trained_rate(SymbolRate::S3429, 0.1), 0);
     }
 
     #[test]
