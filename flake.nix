@@ -159,6 +159,7 @@
 
       formatter = forSystems (pkgs: pkgs.nixfmt);
 
-      hydraJobs.checks = nixpkgs.lib.getAttrs [ "x86_64-linux" "aarch64-linux" ] self.checks;
+      # The aarch64 checks run the x86-64 slmodemd guest under TCG, too slow for V.34 in real time.
+      hydraJobs.checks = { inherit (self.checks) x86_64-linux; };
     };
 }
