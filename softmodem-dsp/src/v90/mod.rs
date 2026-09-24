@@ -9,6 +9,7 @@ pub mod encoder;
 pub mod frames;
 pub mod info;
 pub mod jd;
+pub mod training;
 pub mod ucode;
 
 use ucode::Law;
