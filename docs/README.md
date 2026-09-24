@@ -15,15 +15,14 @@ program has to meet.
 A modem places an ordinary SIP call, a PPP session comes up over the
 modulated audio, and the caller gets an address from the ISP.
 
-The point is not bandwidth. The point is that the call is a real call, the
-carrier is a real carrier, and a machine from 1998 can dial in the way it
-would have dialled the internet.
+The point is not bandwidth. The point is that the call is a real call, each
+signal is the one its ITU text defines, so that a real modem could be at the
+other end, and a machine from 1998 can dial in the way it would have dialled
+the internet.
 
 Non-goals:
 
 - Speed. See the ladder in [scope](scope.md).
-- 56k both ways. This modem can be the digital side of V.90 only. See "56k"
-  in [scope](scope.md).
 
 ## Architecture
 

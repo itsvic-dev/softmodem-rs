@@ -13,8 +13,8 @@ Modulations, in order of how hard they are to implement:
 | V.22bis | 2400 bit/s | QAM, adaptive equaliser | yes |
 | V.32bis | 14.4k | QAM, echo cancellation | no |
 | V.34 | 33.6k | QAM, line probing, echo cancellation | yes, see below |
-| V.90 | 56k down | PCM codepoints | the digital side only, see below |
-| V.92 | 48k up | PCM codepoints both ways | no, see below |
+| V.90 | 56k down | PCM codepoints | yes, both sides, see below |
+| V.92 | 48k up | PCM codepoints both ways | later, see below |
 
 The cliff is between FSK and everything after it, and it is not about bit
 rate. FSK is two tones and a slicer. PSK and QAM need carrier recovery and
@@ -40,42 +40,51 @@ See [V.34](v34.md).
 
 ## 56k
 
-V.90 works by having one end sit digitally on the network and inject PCM
-codepoints directly, with exactly one D/A conversion on the path. An A-law
-RTP stream has *no* analogue segment at all. Without loss, the channel is a
-64 kbit/s digital pipe, and a program at each end could send raw bytes as
-samples. That is excluded by the goal: it is not a carrier.
+No path here has an analogue segment. V.21 to V.34 cross A-law RTP, and
+the A-law quantisation is noise on the line. What makes them real is that
+each signal is the one its ITU text defines, so that a real modem behind an
+ATA could be at the other end. V.90 meets the same goal: its codewords are
+the ones V.90 defines.
 
-With a real modem behind the ATA, the ATA's D/A is the one conversion, as a
-line card's would be. So this modem can be the digital side of V.90 against
-a real analogue client. It cannot be the analogue client: two analogue
-modems meet at V.34 at most, and no digital server is on the network.
+V.90 has a digital modem, which sits on the digital network and sends PCM
+codewords down, and an analogue modem, which receives them through at most
+one D/A conversion and sends V.34 up. This modem is either one. The digital
+modem needs V.34 to receive, and the analogue modem needs it to send.
 
-The digital side of V.90 sends codewords down and receives V.34 up, so it
-needs V.34 first. It puts codewords on the wire as the linear values they
-decode to, which `alaw::encode` turns back into the same octets. That
-holds only if nothing scales, mixes or filters the samples between the pump
-and the encoder, and if the PBX and the ATA pass the octets unchanged: no
-transcoding, no gain, no echo cancellation, no loss concealment. The ATA's
-D/A runs on its own clock, so a slip in its jitter buffer costs a retrain.
+PCM needs the octets to arrive unchanged. The digital modem puts codewords on
+the wire as the linear values they decode to, which `alaw::encode` turns back
+into the same octets. So nothing may scale, mix or filter the samples between
+the pump and the encoder, and the PBX and the ATA must pass the octets
+unchanged: no transcoding, no gain, no echo cancellation, no loss
+concealment. An ATA's D/A runs on its own clock, so a slip in its jitter
+buffer costs a retrain.
 
-V.92 also sends codewords up: the client precodes its signal so that the
-ATA's A/D lands on codewords, where V.34 upstream takes the A/D's
-quantisation noise. The digital side of that is out of scope here.
+| Path | D/A conversions | Result |
+|---|---|---|
+| This modem to this modem, on the wire or over SIP | 0 | V.90, either end digital |
+| This modem, digital, to a real modem behind an ATA | 1 | V.90 |
+| This modem, analogue, to a real modem behind an ATA | 1, and the real modem is analogue | V.34 at most |
 
-V.90 can only be checked against a real modem. The free implementations
-are no reference either.
+The last row is a limit of the far end: two analogue modems meet at V.34.
 
-- The analogue client side of V.90 exists in exactly one place in the free
-  world: `dsplibs.o`, a 1.2 MB proprietary Smart Link binary vendored into
-  `slmodem` and from there into D-Modem. It is 32-bit x86 only, cannot be
-  fixed, and cannot be improved.
-- The digital server side exists only in `cryan209/v90modem`, a young
+V.92 also sends codewords up. The analogue modem precodes its signal so
+that the A/D in front of the digital modem lands on codewords. Between two
+instances of this modem there is no A/D, and both ends are digital. V.92
+comes after V.90.
+
+Between two instances, V.90 is checked blind, as V.34 was. The test channel
+must add what a real path adds, a D/A, a band limit, noise and a clock
+offset, or the analogue modem's receiver has nothing to do. slmodemd is a
+V.90 analogue modem, and checks the digital side. See
+[interop](interop.md).
+
+- The analogue side of V.90 is also in `dsplibs.o`, the 1.2 MB proprietary
+  Smart Link binary in slmodemd. It is 32-bit x86 only, and it is used only
+  in checks.
+- The digital side exists only in `cryan209/v90modem`, a young
   single-author research tree with no licence file, a patched Conexant modem
   ROM, and 374 MB of vendored spandsp and PJSIP. Real work, genuinely
-  interesting, not a dependency.
-
-Neither is a dependency, and neither is a reference.
+  interesting, not a dependency and not a reference.
 
 ## Rejected, and why
 
