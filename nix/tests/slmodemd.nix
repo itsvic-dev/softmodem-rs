@@ -56,6 +56,7 @@ in
         // guestPkgs.lib.optionalAttrs (noise != null) {
           SOFTMODEM_NOISE_AFTER = toString noise.after;
           SOFTMODEM_NOISE_RMS = toString noise.rms;
+          SOFTMODEM_NOISE_WAY = noise.way or "both";
         };
         serviceConfig.ExecStart = "${slmodemd}/bin/slmodemd -d9 -e ${bridge}/bin/slmodem-bridge";
       };

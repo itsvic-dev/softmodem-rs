@@ -113,6 +113,18 @@
                 later = 15;
               };
             };
+            # Noise about 32 dB down toward the softmodem only, for it to renegotiate.
+            slmodemd-v34-renegotiate = peer {
+              label = "V34-renegotiate";
+              ours = "+MS=V34,0";
+              theirs = "+MS=34,0,2400,33600";
+              noise = {
+                after = 20;
+                rms = 85;
+                later = 15;
+                way = "to-softmodem";
+              };
+            };
           }
         )
       );
