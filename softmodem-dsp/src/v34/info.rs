@@ -327,18 +327,18 @@ fn read_power_and_md(reader: &mut Reader) -> (u8, u8, u8) {
     )
 }
 
-fn write_offset(writer: &mut Writer, offset: Option<i16>) {
+pub(crate) fn write_offset(writer: &mut Writer, offset: Option<i16>) {
     let offset = offset.map_or(NO_OFFSET, |offset| offset.clamp(-511, 511));
     writer.field(u32::from(offset.cast_unsigned() & 0x3FF), 10);
 }
 
-fn read_offset(reader: &mut Reader) -> Option<i16> {
+pub(crate) fn read_offset(reader: &mut Reader) -> Option<i16> {
     let raw = narrow::<u16>(reader.field(10));
     let offset = (raw << 6).cast_signed() >> 6;
     (offset != NO_OFFSET).then_some(offset)
 }
 
-fn narrow<T: TryFrom<u32>>(value: u32) -> T {
+pub(crate) fn narrow<T: TryFrom<u32>>(value: u32) -> T {
     T::try_from(value).ok().expect("a field fits its width")
 }
 

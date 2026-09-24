@@ -2,7 +2,7 @@
 
 use crate::pump::Role;
 
-mod bits;
+pub(crate) mod bits;
 pub mod constellation;
 pub mod decoder;
 pub mod detect;
