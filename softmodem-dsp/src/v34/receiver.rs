@@ -47,6 +47,11 @@ const FREQUENCY_GAIN: f64 = 0.002;
 const ERROR_SMOOTHING: f64 = 1.0 / 256.0;
 // Slow, as the power of a large constellation swings from symbol to symbol.
 const LEVEL_SMOOTHING: f64 = 1.0 / 8192.0;
+// Of the level heard so far, below which the far end counts as silent.
+const SILENCE: f64 = 0.02;
+// Below this share of the usual energy, as when the far end falls silent, nothing adapts.
+const QUIET: f64 = 0.5;
+const ENERGY_SMOOTHING: f64 = 1.0 / 1024.0;
 
 fn root_raised_cosine(t: f64) -> f64 {
     let b = ROLL_OFF;
@@ -106,6 +111,7 @@ pub struct FrontEnd {
     next: f64,
     middle: Option<Complex>,
     last: Complex,
+    energy: f64,
     timing_gain: f64,
 }
 
@@ -142,6 +148,7 @@ impl FrontEnd {
             next: (half_width + SLACK) as f64,
             middle: None,
             last: (0.0, 0.0),
+            energy: 0.0,
             timing_gain: Tracking::Acquire.gain(),
         }
     }
@@ -207,7 +214,8 @@ impl FrontEnd {
         };
         let step = (value.0 - self.last.0, value.1 - self.last.1);
         let energy = power(value) + power(self.last);
-        if energy > 0.0 {
+        self.energy += ENERGY_SMOOTHING * (energy - self.energy);
+        if energy > QUIET * self.energy && energy > 0.0 {
             let error = (middle.0 * step.0 + middle.1 * step.1) / energy;
             self.next -= self.timing_gain * error * self.samples_per_symbol;
         }
@@ -257,9 +265,12 @@ impl Default for Equalizer {
 impl Equalizer {
     /// The equalised point for `symbol`.
     pub fn output(&mut self, symbol: &Symbol) -> Complex {
-        self.symbols = self.symbols.saturating_add(1);
-        let weight = f64::from(self.symbols).recip().max(LEVEL_SMOOTHING);
-        self.input_power += weight * (power(symbol.symbol) - self.input_power);
+        let heard = power(symbol.symbol);
+        if heard > SILENCE * self.input_power {
+            self.symbols = self.symbols.saturating_add(1);
+            let weight = f64::from(self.symbols).recip().max(LEVEL_SMOOTHING);
+            self.input_power += weight * (heard - self.input_power);
+        }
         let norm = self.input_power.sqrt().max(f64::MIN_POSITIVE).recip();
         for sample in [symbol.middle, symbol.symbol] {
             self.line.pop_front();
@@ -278,8 +289,14 @@ impl Equalizer {
         self.output
     }
 
-    /// Learns from the last output against what it should have been.
+    /// Learns from the last output against what it should have been, unless
+    /// the far end is silent.
     pub fn adapt(&mut self, target: Complex) {
+        let energy: f64 = self.line.iter().map(|&x| power(x)).sum();
+        #[expect(clippy::cast_precision_loss, reason = "48 taps")]
+        if energy < QUIET * EQUALIZER_TAPS as f64 {
+            return;
+        }
         let z = self.output;
         // Weighted by the point's power, so the inner points do not jitter it.
         let phase_error = multiply(z, conjugate(target)).1;
@@ -289,8 +306,7 @@ impl Equalizer {
         let error = (target.0 - z.0, target.1 - z.1);
         self.error += ERROR_SMOOTHING * (power(error) - self.error);
         let error = multiply(error, conjugate(self.rotation));
-        let energy: f64 = self.line.iter().map(|&x| power(x)).sum();
-        let gain = EQUALIZER_STEP / energy.max(f64::EPSILON);
+        let gain = EQUALIZER_STEP / energy;
         for (w, &x) in self.taps.iter_mut().zip(&self.line) {
             let step = multiply(error, conjugate(x));
             *w = (w.0 + gain * step.0, w.1 + gain * step.1);
