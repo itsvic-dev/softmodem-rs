@@ -32,6 +32,14 @@ pub fn trained_rate(symbol_rate: SymbolRate, mse: f64) -> u8 {
     highest(symbol_rate, -10.0 * mse.log10() - TRAINED_MARGIN_DB)
 }
 
+/// How many dB an equaliser error of `mse` leaves above what `bit_rate`
+/// needs at `symbol_rate`: below 0, the decoder loses bits.
+#[must_use]
+pub fn margin_db(symbol_rate: SymbolRate, bit_rate: u32, mse: f64) -> f64 {
+    let bits = f64::from(bit_rate) / symbol_rate.baud();
+    -10.0 * mse.log10() - DECODED_DB - DB_PER_BIT * bits
+}
+
 fn highest(symbol_rate: SymbolRate, snr_db: f64) -> u8 {
     let bits = (snr_db - DECODED_DB) / DB_PER_BIT;
     (1..=14u8)
@@ -164,6 +172,15 @@ mod tests {
         assert_eq!(trained_rate(SymbolRate::S3429, alaw_mse), 14);
         assert_eq!(trained_rate(SymbolRate::S3429, 10f64.powf(-34.0 / 10.0)), 13);
         assert_eq!(trained_rate(SymbolRate::S3429, 0.1), 0);
+    }
+
+    #[test]
+    fn a_law_leaves_4_db_at_33600() {
+        let margin = margin_db(SymbolRate::S3429, 33_600, 10f64.powf(-37.6 / 10.0));
+        assert!(
+            (margin - 4.1).abs() < 0.1,
+            "the error monitor would misjudge an A-law line: {margin:.2} dB"
+        );
     }
 
     #[test]

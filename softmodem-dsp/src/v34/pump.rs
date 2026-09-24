@@ -579,6 +579,96 @@ impl Sink {
     }
 }
 
+// Samples at 8000/s, and dB of margin over what the rate needs.
+const MONITOR_SETTLE: usize = 16_000;
+const DOWN_MARGIN_DB: f64 = 0.5;
+const DOWN_AFTER: usize = 8_000;
+const RETRAIN_MARGIN_DB: f64 = -3.0;
+const RETRAIN_AFTER: usize = 4_000;
+const UP_MARGIN_DB: f64 = 4.5;
+const UP_AFTER: usize = 80_000;
+const UP_MOST: usize = 2_400_000;
+const COOLDOWN: usize = 160_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Renegotiate,
+    Retrain,
+}
+
+// When this end should renegotiate or retrain, from the margin in data mode.
+#[derive(Debug)]
+struct Monitor {
+    in_data: usize,
+    low: usize,
+    lost: usize,
+    high: usize,
+    since_action: usize,
+    up_after: usize,
+    up_from: Option<u8>,
+}
+
+impl Default for Monitor {
+    fn default() -> Self {
+        Self {
+            in_data: 0,
+            low: 0,
+            lost: 0,
+            high: 0,
+            since_action: COOLDOWN,
+            up_after: UP_AFTER,
+            up_from: None,
+        }
+    }
+}
+
+impl Monitor {
+    fn leave(&mut self, samples: usize) {
+        self.since_action = self.since_action.saturating_add(samples);
+        self.in_data = 0;
+        self.low = 0;
+        self.lost = 0;
+        self.high = 0;
+    }
+
+    fn watch(&mut self, margin_db: f64, rate: u8, can_rise: bool, samples: usize) -> Option<Action> {
+        if self.in_data == 0
+            && let Some(from) = self.up_from.take()
+        {
+            // A try at a higher rate that failed waits twice as long for the next.
+            self.up_after = if rate > from {
+                UP_AFTER
+            } else {
+                (2 * self.up_after).min(UP_MOST)
+            };
+        }
+        self.since_action = self.since_action.saturating_add(samples);
+        self.in_data += samples;
+        if self.in_data < MONITOR_SETTLE {
+            return None;
+        }
+        let count = |run: usize, holds: bool| if holds { run + samples } else { 0 };
+        self.low = count(self.low, margin_db < DOWN_MARGIN_DB);
+        self.lost = count(self.lost, margin_db < RETRAIN_MARGIN_DB);
+        self.high = count(self.high, margin_db > UP_MARGIN_DB && can_rise);
+        if self.since_action < COOLDOWN {
+            return None;
+        }
+        let action = if self.lost >= RETRAIN_AFTER {
+            Action::Retrain
+        } else if self.low >= DOWN_AFTER {
+            Action::Renegotiate
+        } else if self.high >= self.up_after {
+            self.up_from = Some(rate);
+            Action::Renegotiate
+        } else {
+            return None;
+        };
+        self.since_action = 0;
+        Some(action)
+    }
+}
+
 /// V.34 duplex, from phase 2 to data mode.
 #[derive(Debug)]
 pub struct V34 {
@@ -597,6 +687,7 @@ pub struct V34 {
     /// The far end's tone A or B in data mode, which starts a retrain.
     retrain_tone: tones::Detector,
     tone_heard: usize,
+    monitor: Monitor,
 }
 
 impl V34 {
@@ -616,6 +707,28 @@ impl V34 {
             online: false,
             retrain_tone: tones::Detector::new(other(role)),
             tone_heard: 0,
+            monitor: Monitor::default(),
+        }
+    }
+
+    // § 11.5 and § 11.6 leave it to each end when to retrain or renegotiate.
+    fn watch(&mut self, samples: usize) {
+        let in_data = self.connected()
+            && self
+                .sink
+                .as_ref()
+                .is_some_and(|sink| matches!(sink.listen, Listen::Data { .. }));
+        let Some(sink) = self.sink.as_ref().filter(|_| in_data) else {
+            self.monitor.leave(samples);
+            return;
+        };
+        let bit_rate = u32::from(self.rate) * 2400;
+        let margin = rates::margin_db(sink.symbol_rate, bit_rate, sink.equalizer.error());
+        let can_rise = self.rate < rates::max_rate(sink.symbol_rate, f64::INFINITY);
+        match self.monitor.watch(margin, self.rate, can_rise, samples) {
+            Some(Action::Renegotiate) => self.renegotiate(),
+            Some(Action::Retrain) => self.restart(),
+            None => {}
         }
     }
 
@@ -803,6 +916,7 @@ impl DataPump for V34 {
         }
         self.agree();
         self.online |= self.connected();
+        self.watch(input.len());
     }
 
     fn retrain(&mut self) {
@@ -1003,6 +1117,71 @@ mod tests {
         #[expect(clippy::cast_possible_truncation, reason = "clamped to i16")]
         let out = (f64::from(sample) + noise).clamp(-32_768.0, 32_767.0) as i16;
         out
+    }
+
+    // Noise about 32 dB below the signal: less room than 33 600 bit/s needs, but not lost.
+    fn mild(sample: i16) -> i16 {
+        sample.saturating_add(noisy(0) / 2)
+    }
+
+    // Frames until both ends are connected again at a rate `holds` accepts, if within `frames`.
+    fn until_rate(
+        caller: &mut V34,
+        answerer: &mut V34,
+        line: fn(i16) -> i16,
+        frames: usize,
+        holds: impl Fn(u32) -> bool,
+    ) -> Option<usize> {
+        (1..=frames).find(|_| {
+            exchange_over(caller, answerer, 1, line);
+            caller.connected() && answerer.connected() && holds(caller.bit_rate())
+        })
+    }
+
+    #[test]
+    fn stays_in_data_mode_on_a_clean_line() {
+        let (mut caller, mut answerer) = connected_pair();
+        for _ in 0..1250 {
+            exchange(&mut caller, &mut answerer, 1);
+            assert!(
+                caller.connected() && answerer.connected(),
+                "a clean line would be renegotiated or retrained for nothing"
+            );
+        }
+        assert_eq!(caller.bit_rate(), 33_600);
+    }
+
+    #[test]
+    fn steps_down_on_its_own_when_the_line_gets_worse() {
+        let (mut caller, mut answerer) = connected_pair();
+        let stepped = until_rate(&mut caller, &mut answerer, mild, 750, |rate| rate < 33_600);
+        assert!(
+            stepped.is_some(),
+            "33 600 bit/s would stay on a line that no longer carries it"
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_over(&mut caller, &mut answerer, 80, mild);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost at {} bit/s after stepping down",
+            caller.bit_rate()
+        );
+    }
+
+    #[test]
+    fn steps_up_again_when_the_line_gets_better() {
+        let (mut caller, mut answerer) = connected_pair();
+        until_rate(&mut caller, &mut answerer, mild, 750, |rate| rate < 33_600)
+            .expect("no step down to come back up from");
+        let low = caller.bit_rate();
+        let rose = until_rate(&mut caller, &mut answerer, |sample| sample, 1500, |rate| rate > low);
+        assert!(
+            rose.is_some(),
+            "{low} bit/s would stay after the line got clean again"
+        );
     }
 
     fn connected_pair() -> (V34, V34) {
