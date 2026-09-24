@@ -115,6 +115,25 @@ unsafe extern "C" {
     fn v42_rx_bit(s: *mut c_void, bit: c_int);
     fn v42_free(s: *mut c_void) -> c_int;
 
+    fn v42bis_init(
+        s: *mut c_void,
+        negotiated_p0: c_int,
+        negotiated_p1: c_int,
+        negotiated_p2: c_int,
+        encode_handler: PutMsg,
+        encode_user: *mut c_void,
+        max_encode_len: c_int,
+        decode_handler: PutMsg,
+        decode_user: *mut c_void,
+        max_decode_len: c_int,
+    ) -> *mut c_void;
+    fn v42bis_compression_control(s: *mut c_void, mode: c_int);
+    fn v42bis_compress(s: *mut c_void, buf: *const u8, len: c_int) -> c_int;
+    fn v42bis_compress_flush(s: *mut c_void) -> c_int;
+    fn v42bis_decompress(s: *mut c_void, buf: *const u8, len: c_int) -> c_int;
+    fn v42bis_decompress_flush(s: *mut c_void) -> c_int;
+    fn v42bis_free(s: *mut c_void) -> c_int;
+
     fn modem_connect_tones_tx_init(s: *mut c_void, tone: c_int) -> *mut c_void;
     fn modem_connect_tones_tx(s: *mut c_void, amp: *mut i16, len: c_int) -> c_int;
     fn modem_connect_tones_tx_free(s: *mut c_void) -> c_int;
@@ -166,6 +185,8 @@ unsafe impl Send for ToneTx {}
 unsafe impl Send for ToneRx {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for V42 {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for V42bis {}
 
 fn length(samples: usize) -> c_int {
     c_int::try_from(samples).expect("a frame fits in a c_int")
@@ -725,6 +746,95 @@ impl Drop for V42 {
         // SAFETY: allocated in `new` and not freed before.
         unsafe {
             v42_free(self.v42);
+        }
+    }
+}
+
+unsafe extern "C" fn collect(user: *mut c_void, msg: *const u8, len: c_int) {
+    // SAFETY: `user` is one of the boxed buffers owned by the `V42bis`.
+    let out = &mut unsafe { &mut *user.cast::<Octets>() }.0;
+    if let Ok(len) = usize::try_from(len)
+        && len > 0
+    {
+        // SAFETY: spandsp passes `len` valid octets.
+        out.extend_from_slice(unsafe { std::slice::from_raw_parts(msg, len) });
+    }
+}
+
+/// When spandsp's encoder is in compressed mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompressionMode {
+    Dynamic = 0,
+    Always = 1,
+    Never = 2,
+}
+
+/// spandsp's V.42bis, compressing and decompressing in both directions.
+pub struct V42bis {
+    state: *mut c_void,
+    encoded: Box<Octets>,
+    decoded: Box<Octets>,
+}
+
+#[derive(Default)]
+struct Octets(Vec<u8>);
+
+impl V42bis {
+    #[must_use]
+    pub fn new(codewords: u16, max_string: u8, mode: CompressionMode) -> Self {
+        let mut encoded = Box::<Octets>::default();
+        let mut decoded = Box::<Octets>::default();
+        let encode_user = ptr::addr_of_mut!(*encoded).cast::<c_void>();
+        let decode_user = ptr::addr_of_mut!(*decoded).cast::<c_void>();
+        // SAFETY: spandsp allocates the state, `drop` frees it, the buffers outlive it.
+        let state = unsafe {
+            let state = v42bis_init(
+                ptr::null_mut(),
+                3,
+                c_int::from(codewords),
+                c_int::from(max_string),
+                collect,
+                encode_user,
+                1024,
+                collect,
+                decode_user,
+                1024,
+            );
+            v42bis_compression_control(state, mode as c_int);
+            state
+        };
+        Self {
+            state,
+            encoded,
+            decoded,
+        }
+    }
+
+    /// Compresses `data`, with a flush after it, and returns what it sent.
+    pub fn compress(&mut self, data: &[u8]) -> Vec<u8> {
+        // SAFETY: `data` is a valid buffer of the length passed.
+        unsafe {
+            v42bis_compress(self.state, data.as_ptr(), length(data.len()));
+            v42bis_compress_flush(self.state);
+        }
+        std::mem::take(&mut self.encoded.0)
+    }
+
+    pub fn decompress(&mut self, data: &[u8]) -> Vec<u8> {
+        // SAFETY: `data` is a valid buffer of the length passed.
+        unsafe {
+            v42bis_decompress(self.state, data.as_ptr(), length(data.len()));
+            v42bis_decompress_flush(self.state);
+        }
+        std::mem::take(&mut self.decoded.0)
+    }
+}
+
+impl Drop for V42bis {
+    fn drop(&mut self) {
+        // SAFETY: allocated in `new` and not freed before.
+        unsafe {
+            v42bis_free(self.state);
         }
     }
 }
