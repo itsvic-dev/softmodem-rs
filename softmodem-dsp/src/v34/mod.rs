@@ -7,6 +7,7 @@ pub mod constellation;
 pub mod dpsk;
 pub mod info;
 pub mod mp;
+pub mod probing;
 pub mod shell;
 pub mod tones;
 
