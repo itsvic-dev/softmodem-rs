@@ -33,7 +33,7 @@ impl Mapping {
     /// From CP or CPt, if its sets carry its rate.
     #[must_use]
     pub fn from_cp(cp: &Cp) -> Option<Self> {
-        let bits = usize::try_from(cp.bit_rate() * 6 / 8000).ok()?;
+        let bits = cp.frame_bits();
         let redundancy = cp.redundancy.min(3);
         let sets: [Vec<u8>; FRAME] =
             std::array::from_fn(|interval| cp::labels(cp.constellation(interval)));

@@ -103,11 +103,17 @@ impl Cp {
         bits
     }
 
-    /// The downstream rate, in bit/s.
+    /// D, the bits of each data frame of six symbols.
+    #[must_use]
+    pub fn frame_bits(&self) -> usize {
+        let offset = if self.training { 8 } else { 20 };
+        usize::from(self.rate) + offset
+    }
+
+    /// The downstream rate, in bit/s, rounded to the nearest.
     #[must_use]
     pub fn bit_rate(&self) -> u32 {
-        let offset = if self.training { 8 } else { 20 };
-        (u32::from(self.rate) + offset) * 8000 / 6
+        (u32::try_from(self.frame_bits()).unwrap_or(0) * 8000 + 3) / 6
     }
 
     /// The constellation of data frame interval `interval`.
@@ -222,6 +228,12 @@ mod tests {
         assert!(frame[137..153].iter().all(|&bit| bit));
         assert!(frame[154..169].iter().all(|&bit| bit) && !frame[170]);
         assert_eq!(cp().bit_rate(), 56_000);
+        let cpt = Cp {
+            training: true,
+            rate: 15,
+            ..cp()
+        };
+        assert_eq!((cpt.frame_bits(), cpt.bit_rate()), (23, 30_667));
     }
 
     #[test]
