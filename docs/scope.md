@@ -74,10 +74,12 @@ that the A/D in front of the digital modem lands on codewords. Between two
 instances of this modem there is no A/D, and both ends are digital. V.92
 comes after V.90.
 
-Between two instances, V.90 is checked blind, as V.34 was. The test channel
-must add what a real path adds, a D/A, a band limit, noise and a clock
-offset, or the analogue modem's receiver has nothing to do. slmodemd is a
-V.90 analogue modem, and checks the digital side. See
+Between two instances, V.90 is checked blind, as V.34 was. This modem's
+analogue side always speaks RTP, so its path is digital, and what that path
+can do to it is digital too: a pad that changes the gain, A-law to µ-law
+transcoding, lost packets. Only an analogue modem that dials a real ISP
+through an FXO gateway has a D/A and an A/D before it, and a clock of its
+own. slmodemd is a V.90 analogue modem, and checks the digital side. See
 [interop](interop.md).
 
 - The analogue side of V.90 is also in `dsplibs.o`, the 1.2 MB proprietary
