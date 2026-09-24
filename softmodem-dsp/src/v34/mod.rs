@@ -5,6 +5,7 @@ use crate::pump::Role;
 mod bits;
 pub mod constellation;
 pub mod dpsk;
+pub mod framing;
 pub mod info;
 pub mod mp;
 pub mod probing;
