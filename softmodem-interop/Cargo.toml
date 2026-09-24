@@ -12,6 +12,7 @@ pkg-config = "0.3"
 [dev-dependencies]
 softmodem.workspace = true
 softmodem-dsp.workspace = true
+softmodem-link.workspace = true
 softmodem-terminal.workspace = true
 softmodem-transport.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

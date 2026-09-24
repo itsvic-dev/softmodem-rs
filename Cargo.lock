@@ -1759,6 +1759,7 @@ dependencies = [
  "pkg-config",
  "softmodem",
  "softmodem-dsp",
+ "softmodem-link",
  "softmodem-terminal",
  "softmodem-transport",
  "tokio",

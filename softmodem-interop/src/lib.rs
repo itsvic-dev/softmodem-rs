@@ -1,5 +1,5 @@
 //! Safe wrappers around the few spandsp parts the interop tests use: V.21
-//! and V.22 with spandsp's own async framing, and modem answer tones.
+//! and V.22 with spandsp's own async framing, modem answer tones, and V.42.
 
 use std::collections::VecDeque;
 use std::ffi::{c_char, c_int, c_void};
@@ -21,6 +21,8 @@ type PutByte = unsafe extern "C" fn(*mut c_void, c_int);
 type Status = unsafe extern "C" fn(*mut c_void, c_int);
 type ToneReport = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int);
 type V8Result = unsafe extern "C" fn(*mut c_void, *mut V8Parms);
+type GetMsg = unsafe extern "C" fn(*mut c_void, *mut u8, c_int) -> c_int;
+type PutMsg = unsafe extern "C" fn(*mut c_void, *const u8, c_int);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -99,6 +101,20 @@ unsafe extern "C" {
     fn v8_rx(s: *mut c_void, amp: *const i16, len: c_int) -> c_int;
     fn v8_free(s: *mut c_void) -> c_int;
 
+    fn v42_init(
+        s: *mut c_void,
+        calling_party: bool,
+        detect: bool,
+        iframe_get: GetMsg,
+        iframe_put: PutMsg,
+        user: *mut c_void,
+    ) -> *mut c_void;
+    fn v42_set_status_callback(s: *mut c_void, callback: Status, user: *mut c_void);
+    fn v42_restart(s: *mut c_void);
+    fn v42_tx_bit(s: *mut c_void) -> c_int;
+    fn v42_rx_bit(s: *mut c_void, bit: c_int);
+    fn v42_free(s: *mut c_void) -> c_int;
+
     fn modem_connect_tones_tx_init(s: *mut c_void, tone: c_int) -> *mut c_void;
     fn modem_connect_tones_tx(s: *mut c_void, amp: *mut i16, len: c_int) -> c_int;
     fn modem_connect_tones_tx_free(s: *mut c_void) -> c_int;
@@ -116,6 +132,8 @@ unsafe extern "C" {
 const SIG_STATUS_CARRIER_UP: c_int = -2;
 const SIG_STATUS_CARRIER_DOWN: c_int = -1;
 const SIG_STATUS_TRAINING_SUCCEEDED: c_int = -4;
+const SIG_STATUS_LINK_CONNECTED: c_int = -14;
+const SIG_STATUS_LINK_DISCONNECTED: c_int = -15;
 const FSK_FRAME_MODE_ASYNC: c_int = 0;
 
 /// One of spandsp's preset FSK channels.
@@ -146,6 +164,8 @@ unsafe impl Send for V22bis {}
 unsafe impl Send for ToneTx {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for ToneRx {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for V42 {}
 
 fn length(samples: usize) -> c_int {
     c_int::try_from(samples).expect("a frame fits in a c_int")
@@ -598,6 +618,113 @@ impl Drop for ToneRx {
         // SAFETY: allocated in `new` and not freed before.
         unsafe {
             modem_connect_tones_rx_free(self.0);
+        }
+    }
+}
+
+#[derive(Default)]
+struct V42Data {
+    outgoing: VecDeque<u8>,
+    received: Vec<u8>,
+    connected: bool,
+}
+
+unsafe extern "C" fn v42_get(user: *mut c_void, msg: *mut u8, max_len: c_int) -> c_int {
+    // SAFETY: `user` is the boxed `V42Data` owned by the `V42`.
+    let data = unsafe { &mut *user.cast::<V42Data>() };
+    let n = data
+        .outgoing
+        .len()
+        .min(usize::try_from(max_len).unwrap_or(0));
+    for (i, byte) in data.outgoing.drain(..n).enumerate() {
+        // SAFETY: spandsp gave room for `max_len` octets, and `i` is below it.
+        unsafe { msg.add(i).write(byte) };
+    }
+    length(n)
+}
+
+unsafe extern "C" fn v42_put(user: *mut c_void, msg: *const u8, len: c_int) {
+    // SAFETY: `user` is the boxed `V42Data` owned by the `V42`.
+    let data = unsafe { &mut *user.cast::<V42Data>() };
+    if let Ok(len) = usize::try_from(len)
+        && len > 0
+    {
+        // SAFETY: spandsp passes `len` valid octets.
+        data.received
+            .extend_from_slice(unsafe { std::slice::from_raw_parts(msg, len) });
+    }
+}
+
+unsafe extern "C" fn v42_status(user: *mut c_void, status: c_int) {
+    // SAFETY: `user` is the boxed `V42Data` owned by the `V42`.
+    let data = unsafe { &mut *user.cast::<V42Data>() };
+    match status {
+        SIG_STATUS_LINK_CONNECTED => data.connected = true,
+        SIG_STATUS_LINK_DISCONNECTED => data.connected = false,
+        _ => {}
+    }
+}
+
+/// spandsp's V.42, over bits with no modulation under it.
+pub struct V42 {
+    v42: *mut c_void,
+    data: Box<V42Data>,
+}
+
+impl V42 {
+    /// With `detect`, it starts with the detection phase, else with LAPM.
+    #[must_use]
+    pub fn new(calling_party: bool, detect: bool) -> Self {
+        let mut data = Box::<V42Data>::default();
+        let user = ptr::addr_of_mut!(*data).cast::<c_void>();
+        // SAFETY: spandsp allocates the state, `drop` frees it, the data outlives it.
+        let v42 = unsafe {
+            let v42 = v42_init(
+                ptr::null_mut(),
+                calling_party,
+                detect,
+                v42_get,
+                v42_put,
+                user,
+            );
+            v42_set_status_callback(v42, v42_status, user);
+            v42_restart(v42);
+            v42
+        };
+        Self { v42, data }
+    }
+
+    pub fn send(&mut self, bytes: &[u8]) {
+        self.data.outgoing.extend(bytes);
+    }
+
+    #[must_use]
+    pub fn tx_bit(&mut self) -> bool {
+        // SAFETY: allocated in `new`.
+        unsafe { v42_tx_bit(self.v42) != 0 }
+    }
+
+    pub fn rx_bit(&mut self, bit: bool) {
+        // SAFETY: allocated in `new`.
+        unsafe { v42_rx_bit(self.v42, c_int::from(bit)) }
+    }
+
+    #[must_use]
+    pub fn received(&self) -> &[u8] {
+        &self.data.received
+    }
+
+    #[must_use]
+    pub fn connected(&self) -> bool {
+        self.data.connected
+    }
+}
+
+impl Drop for V42 {
+    fn drop(&mut self) {
+        // SAFETY: allocated in `new` and not freed before.
+        unsafe {
+            v42_free(self.v42);
         }
     }
 }
