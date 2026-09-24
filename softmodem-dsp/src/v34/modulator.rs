@@ -12,8 +12,11 @@ use crate::{SAMPLE_RATE, to_sample};
 /// Flat to ±0.45 S around the carrier, as the templates of figures 1 and 2
 /// ask.
 pub(crate) const ROLL_OFF: f64 = 0.1;
-const SPAN: usize = 12;
+/// Symbols each side of a symbol that its pulse reaches.
+pub const SPAN: usize = 12;
 const TAPS: usize = 31;
+/// Samples the pre-emphasis filter delays the signal by.
+pub const FILTER_DELAY: usize = TAPS / 2;
 
 pub(crate) fn pulse(symbol_rate: SymbolRate) -> Pulse {
     Pulse {

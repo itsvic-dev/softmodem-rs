@@ -95,3 +95,36 @@ pub fn resample(samples: &[i16], ratio: f64) -> Vec<i16> {
         })
         .collect()
 }
+
+/// As `resample`, but interpolating with a windowed sinc, so that a signal
+/// that fills the band keeps its shape.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "sample positions are small and positive"
+)]
+pub fn resample_finely(samples: &[i16], ratio: f64) -> Vec<i16> {
+    const HALF: i64 = 32;
+    let count = ((samples.len() - 1) as f64 / ratio) as usize;
+    (0..count)
+        .map(|n| {
+            let position = n as f64 * ratio;
+            let centre = position.floor() as i64;
+            let sum: f64 = (centre - HALF + 1..=centre + HALF)
+                .filter_map(|k| {
+                    let x = f64::from(*samples.get(usize::try_from(k).ok()?)?);
+                    let t = position - k as f64;
+                    let sinc = if t.abs() < 1e-12 {
+                        1.0
+                    } else {
+                        (std::f64::consts::PI * t).sin() / (std::f64::consts::PI * t)
+                    };
+                    let window = 0.5 + 0.5 * (std::f64::consts::PI * t / HALF as f64).cos();
+                    Some(x * sinc * window)
+                })
+                .sum();
+            clamp(sum)
+        })
+        .collect()
+}

@@ -152,11 +152,7 @@ impl Receiver {
     /// A receiver whose carrier detect goes off after `carrier_off_samples`
     /// below the threshold.
     pub(crate) fn new(carrier_hz: f64, carrier_off_samples: u32) -> Self {
-        Self::with_pulse(carrier_hz, carrier_off_samples, V22_PULSE)
-    }
-
-    /// Whose matched filter and symbol clock follow `pulse`.
-    pub(crate) fn with_pulse(carrier_hz: f64, carrier_off_samples: u32, pulse: Pulse) -> Self {
+        let pulse = V22_PULSE;
         let samples_per_symbol = SAMPLE_RATE / pulse.baud;
         #[expect(
             clippy::cast_possible_truncation,
