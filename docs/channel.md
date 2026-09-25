@@ -31,6 +31,10 @@ above.
 
 The transmitter still has to pace itself, 160 samples every 20 ms on the host
 clock, because the PBX and any ATA downstream do play out in real time.
+When the queue to the transport is full, as after a stall of the host, it
+makes no frame on that tick and sends later. A frame made and then dropped
+would take samples out of the signal with no gap in the RTP timestamps, and
+V.90 loses its data frame alignment on that.
 
 This holds only if nothing between the two ends retimes the stream. That is
 an open question.

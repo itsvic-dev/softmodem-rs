@@ -506,18 +506,23 @@ where
         let Some(line) = &mut self.line else {
             return Ok(());
         };
-        let samples = line.transmit(Instant::now().into_std());
-        if line.released() {
-            info!("error control ended the call");
-            return self.hang_up_with(ResultCode::NoCarrier).await;
-        }
-        match line.call.audio_out.try_send(samples) {
-            Ok(()) => {}
-            // Blocking here would stop this modem draining its own receive queue.
-            Err(TrySendError::Full(_)) => debug!("audio queue full, frame dropped"),
-            Err(TrySendError::Closed(_)) => {
-                info!("far end hung up");
+        // A frame made and then dropped cuts the signal, which V.90 does not survive.
+        if line.call.audio_out.capacity() == 0 {
+            debug!("audio queue full, frame held back");
+        } else {
+            let samples = line.transmit(Instant::now().into_std());
+            if line.released() {
+                info!("error control ended the call");
                 return self.hang_up_with(ResultCode::NoCarrier).await;
+            }
+            match line.call.audio_out.try_send(samples) {
+                Ok(()) => {}
+                // Blocking here would stop this modem draining its own receive queue.
+                Err(TrySendError::Full(_)) => debug!("audio queue full, frame dropped"),
+                Err(TrySendError::Closed(_)) => {
+                    info!("far end hung up");
+                    return self.hang_up_with(ResultCode::NoCarrier).await;
+                }
             }
         }
         if line.cleared() {
