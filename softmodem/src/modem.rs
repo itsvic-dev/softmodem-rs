@@ -20,7 +20,7 @@ use softmodem_transport::{Call, DialError, Incoming, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::line::{Line, Received, Setups};
 
@@ -169,6 +169,9 @@ where
     }
 
     async fn computer_sent(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if matches!(self.mode, Mode::Data { .. }) {
+            trace!(bytes = %Hex(bytes), "from the computer");
+        }
         for &byte in bytes {
             match &mut self.mode {
                 Mode::Data { escape } => {
@@ -398,6 +401,7 @@ where
                 Carrier::V90 => Modulation::V90,
             },
             automode: chosen.automode,
+            max_transmit: chosen.max_transmit,
         };
         let control = self.settings.error_control;
         let asked = self.settings.compression;
@@ -585,6 +589,7 @@ where
             self.enter_data(&received, bit_rate).await?;
         }
         if matches!(self.mode, Mode::Data { .. }) && !received.bytes.is_empty() {
+            trace!(bytes = %Hex(&received.bytes), "to the computer");
             self.write(&received.bytes).await?;
         }
         Ok(())
@@ -599,7 +604,12 @@ where
             Some((true, false)) => "V42B TD",
             _ => "NONE",
         };
-        info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}");
+        match self.line.as_ref().and_then(Line::transmit_rate) {
+            Some(up) if up != bit_rate => info!(
+                "CONNECT {bit_rate}, transmitting at {up}, error control {protocol}, compression {compression}"
+            ),
+            _ => info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}"),
+        }
         self.mode = Mode::Data {
             escape: EscapeDetector::new(Instant::now().into_std()),
         };
@@ -714,6 +724,20 @@ async fn receive(line: &mut Option<Line>) -> Option<Vec<i16>> {
     match line {
         Some(line) => line.call.audio_in.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+struct Hex<'a>(&'a [u8]);
+
+impl std::fmt::Display for Hex<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (n, byte) in self.0.iter().enumerate() {
+            if n > 0 {
+                f.write_str(" ")?;
+            }
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
     }
 }
 

@@ -39,34 +39,43 @@ impl Modulation {
     /// and V.90 the silence after CJ.
     #[must_use]
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
+        self.pump_up_to(role, None)
+    }
+
+    /// As [`Modulation::pump`], transmitting at `max_transmit` bit/s at most.
+    /// The V.90 analogue modem enables no faster upstream rate; the others
+    /// take no limit yet.
+    #[must_use]
+    pub fn pump_up_to(self, role: Role, max_transmit: Option<u32>) -> Box<dyn DataPump> {
         match (self, role) {
             (Self::V21, _) => Box::new(V21::new(role)),
             (Self::V22, _) => Box::new(V22::new(role)),
             (Self::V22bis, _) => Box::new(V22bis::new(role)),
             (Self::V34, _) => Box::new(V34::new(role)),
             (Self::V90, Role::Answer) => Box::new(Digital::new()),
-            (Self::V90, Role::Originate) => Box::new(Analogue::new()),
+            (Self::V90, Role::Originate) => Box::new(Analogue::up_to(max_transmit)),
         }
     }
 }
 
-/// The modulation for a call, and whether automode may fall back from it to
-/// the best one the far end also has.
+/// The modulation for a call, whether automode may fall back from it to the
+/// best one the far end also has, and the highest rate to transmit at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Offer {
     pub top: Modulation,
     pub automode: bool,
+    pub max_transmit: Option<u32>,
 }
 
 impl Offer {
     #[must_use]
     pub fn pump(self, role: Role) -> Box<dyn DataPump> {
         if self.automode {
-            crate::automode::pump(self.top, role)
+            crate::automode::pump_up_to(self.top, role, self.max_transmit)
         } else if matches!(self.top, Modulation::V34 | Modulation::V90) {
-            crate::automode::only(self.top, role)
+            crate::automode::only_up_to(self.top, role, self.max_transmit)
         } else {
-            self.top.pump(role)
+            self.top.pump_up_to(role, self.max_transmit)
         }
     }
 }
@@ -87,6 +96,12 @@ pub trait DataPump: Debug + Send {
     }
 
     fn bit_rate(&self) -> u32;
+
+    /// The rate this end transmits at, where it differs from the one it
+    /// receives at, as in V.90.
+    fn transmit_rate(&self) -> u32 {
+        self.bit_rate()
+    }
 
     /// A decoder for the start-stop characters this modulation carries.
     fn decoder(&self) -> Decoder;

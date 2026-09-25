@@ -174,12 +174,14 @@ impl ErrorControl {
     }
 }
 
-/// What `+MS` sets: the highest modulation to use, and whether automode may
-/// fall back from it.
+/// What `+MS` sets: the highest modulation to use, whether automode may
+/// fall back from it, and the highest rate to transmit at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Modulation {
     pub carrier: Carrier,
     pub automode: bool,
+    /// In bit/s, where `+MS` gave a `<max_tx_rate>` other than 0.
+    pub max_transmit: Option<u32>,
 }
 
 impl Default for Modulation {
@@ -187,6 +189,7 @@ impl Default for Modulation {
         Self {
             carrier: Carrier::V90,
             automode: true,
+            max_transmit: None,
         }
     }
 }
@@ -279,8 +282,16 @@ impl Settings {
                     Dcd::AlwaysOn
                 };
             }
-            Command::SetCarrier { carrier, automode } => {
-                self.modulation = Modulation { carrier, automode };
+            Command::SetCarrier {
+                carrier,
+                automode,
+                max_transmit,
+            } => {
+                self.modulation = Modulation {
+                    carrier,
+                    automode,
+                    max_transmit,
+                };
             }
             Command::SetErrorControl {
                 orig_rqst,
@@ -520,7 +531,8 @@ mod tests {
         }));
         assert!(settings.apply(&Command::SetCarrier {
             carrier: Carrier::V22,
-            automode: false
+            automode: false,
+            max_transmit: None
         }));
         assert!(!settings.apply(&Command::Answer));
         assert!(!settings.apply(&Command::ReadCarrier));
@@ -530,7 +542,8 @@ mod tests {
             settings.modulation,
             Modulation {
                 carrier: Carrier::V22,
-                automode: false
+                automode: false,
+                max_transmit: None
             }
         );
     }
@@ -541,7 +554,8 @@ mod tests {
             Settings::default().modulation,
             Modulation {
                 carrier: Carrier::V90,
-                automode: true
+                automode: true,
+                max_transmit: None
             }
         );
     }

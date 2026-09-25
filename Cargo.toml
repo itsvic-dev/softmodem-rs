@@ -35,7 +35,18 @@ hound = "3"
 rustix = { version = "1", features = ["fs", "pty", "termios"] }
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Until upstream retries an INVITE challenged with 407.
+[patch.crates-io]
+ezk-internal = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-sdp-types = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-sip-auth = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-sip-core = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-sip-types = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-sip-ua = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-stun = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
+ezk-stun-types = { git = "https://github.com/itsvic-dev/ezk", rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2" }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

@@ -14,7 +14,7 @@ use softmodem_dsp::v34::detect::{Heard, SDetector};
 use softmodem_dsp::v34::encoder::{Encoder, Settings};
 use softmodem_dsp::v34::framing::Framing;
 use softmodem_dsp::v34::modulator::{Modulator, SPAN};
-use softmodem_dsp::v34::mp::Trellis;
+use softmodem_dsp::v34::mp::{Asks, Trellis};
 use softmodem_dsp::v34::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use softmodem_dsp::v34::training::{self, PP_SYMBOLS, Points};
 use softmodem_dsp::v34::{NOMINAL_DBM0, SymbolRate};
@@ -38,10 +38,6 @@ const CLEAN: Line = Line {
     clock: 1.0,
 };
 
-fn nearest_odd(value: f64) -> f64 {
-    2.0 * ((value - 1.0) / 2.0).round() + 1.0
-}
-
 fn phase_3() -> Vec<Complex> {
     let mut sender = training::Sender::new(Role::Answer);
     (0..S)
@@ -56,10 +52,11 @@ fn phase_3() -> Vec<Complex> {
 fn transmitted(
     symbol_rate: SymbolRate,
     framing: Framing,
+    settings: Settings,
     known: &[Complex],
     line: &Line,
 ) -> (Vec<bool>, Vec<i16>) {
-    let mut encoder = Encoder::new(framing, Settings::default());
+    let mut encoder = Encoder::new(framing, settings);
     let scale = encoder.energy().sqrt();
     let mut noise = Noise(0x0123_4567_89AB_CDEF);
     let mut sent: Vec<bool> = Vec::new();
@@ -93,21 +90,19 @@ struct Receiver {
     scale: f64,
     first_s_bar: Option<usize>,
     count: usize,
-    frame: Vec<Complex>,
     received: Vec<bool>,
 }
 
 impl Receiver {
-    fn new(symbol_rate: SymbolRate, framing: Framing) -> Self {
+    fn new(symbol_rate: SymbolRate, framing: Framing, settings: Settings) -> Self {
         Self {
             front_end: FrontEnd::new(symbol_rate, false),
             detector: SDetector::default(),
             equalizer: Equalizer::default(),
-            decoder: Decoder::new(framing, Trellis::States16),
+            decoder: Decoder::new(framing, settings),
             scale: Encoder::new(framing, Settings::default()).energy().sqrt(),
             first_s_bar: None,
             count: 0,
-            frame: Vec::new(),
             received: Vec::new(),
         }
     }
@@ -151,21 +146,17 @@ impl Receiver {
     fn data(&mut self, z: Complex) {
         let scale = self.scale;
         let grid = (z.0 * scale, z.1 * scale);
-        self.equalizer
-            .adapt((nearest_odd(grid.0) / scale, nearest_odd(grid.1) / scale));
-        self.frame.push(grid);
-        if self.frame.len() == 8 {
-            let points = std::mem::take(&mut self.frame).try_into().unwrap();
-            self.received.extend(self.decoder.decode(points));
-        }
+        let target = self.decoder.push(grid, &mut self.received);
+        self.equalizer.adapt((target.0 / scale, target.1 / scale));
     }
 }
 
-fn call(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) -> (usize, usize) {
-    let framing = Framing::new(symbol_rate, bit_rate, false).unwrap();
+fn call(symbol_rate: SymbolRate, bit_rate: u32, asks: Asks, line: &Line) -> (usize, usize) {
+    let framing = Framing::new(symbol_rate, bit_rate, asks.expanded_shaping).unwrap();
     let known = phase_3();
-    let (sent, samples) = transmitted(symbol_rate, framing, &known, line);
-    let mut far = Receiver::new(symbol_rate, framing);
+    let settings = asks.settings();
+    let (sent, samples) = transmitted(symbol_rate, framing, settings, &known, line);
+    let mut far = Receiver::new(symbol_rate, framing, settings);
     far.receive(&samples, &known);
     let wrong = sent
         .iter()
@@ -176,11 +167,34 @@ fn call(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) -> (usize, usize) {
 }
 
 fn assert_clean(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) {
-    let (wrong, decided) = call(symbol_rate, bit_rate, line);
+    assert_clean_asking(symbol_rate, bit_rate, Asks::default(), line);
+}
+
+fn assert_clean_asking(symbol_rate: SymbolRate, bit_rate: u32, asks: Asks, line: &Line) {
+    let (wrong, decided) = call(symbol_rate, bit_rate, asks, line);
     assert!(
         decided > 1000 && wrong == 0,
-        "{symbol_rate:?} at {bit_rate} would corrupt data: {wrong} of {decided} bits wrong"
+        "{symbol_rate:?} at {bit_rate} with {asks:?} would corrupt data: {wrong} of {decided} bits wrong"
     );
+}
+
+// What the ISP's modem asked of this one's V.90 upstream, with coefficients of its size.
+const ALL_OF_IT: Asks = Asks {
+    trellis: Trellis::States16,
+    nonlinear: true,
+    expanded_shaping: true,
+    precoding: [(6000, -1500), (-2500, 800), (700, 300)],
+};
+
+#[test]
+fn carries_precoded_data_with_expanded_shaping_and_theta() {
+    let noisy = Line {
+        snr_db: Some(40.0),
+        clock: 1.0,
+    };
+    assert_clean_asking(SymbolRate::S3200, 28_800, ALL_OF_IT, &CLEAN);
+    assert_clean_asking(SymbolRate::S3200, 24_000, ALL_OF_IT, &noisy);
+    assert_clean_asking(SymbolRate::S3429, 33_600, ALL_OF_IT, &CLEAN);
 }
 
 #[test]

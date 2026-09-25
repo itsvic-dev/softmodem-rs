@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 
 use super::Codeword;
-use super::design::Levels;
+use super::design::{self, Levels, UCHORDS};
 use super::dil::{Descriptor, Dil};
 use super::encoder::{Decoder, FRAME, Mapping};
 use super::frames::Deframer;
@@ -32,6 +32,9 @@ const R_BAR_SYMBOLS: usize = 24;
 // Jd's fill and Jd′.
 const JD_PRIME_ZEROS: usize = 4 + JD_PRIME_BITS;
 const ED_FRAMES: usize = 2;
+// Data mode is measured a second at a time, and a Uchord only from enough of its symbols.
+const MEASURE_SYMBOLS: usize = 8000;
+const LEAST_MEASURED: u32 = 100;
 const B1D_FRAMES: usize = 48;
 
 /// What the receiver has heard that the transmitter acts on.
@@ -48,14 +51,23 @@ pub struct Events {
     pub jd_prime: bool,
     /// What DIL showed, once enough of it has come.
     pub levels: Option<Levels>,
+    /// Ri, which shows that the digital modem has ended DIL.
+    pub ri: bool,
     /// The Ri to R̄i transition, which ends CPt.
     pub r_bar: bool,
     pub mp: Option<Mp>,
     /// MP′ or Ed, which ends CP′.
     pub mp_ack: bool,
+    /// Ed, which shows that the digital modem has had CP′.
+    pub ed: bool,
     /// Rate renegotiations the digital modem has started or answered, by
     /// the R̄d of each.
     pub renegotiations: u32,
+    /// The RMS of how far data mode symbols stray from the levels DIL
+    /// showed, by Uchord, over the last second measured.
+    pub data_noise: Option<[Option<f64>; UCHORDS]>,
+    /// Seconds of data mode measured since data mode last began.
+    pub measurements: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +117,9 @@ pub struct Downstream {
     zero_frames: usize,
     skip_frames: usize,
     events: Events,
+    // Squared strays and their count in data mode, by Uchord, and the symbols measured.
+    strays: [(f64, u32); UCHORDS],
+    measured: usize,
 }
 
 impl Downstream {
@@ -141,6 +156,8 @@ impl Downstream {
             zero_frames: 0,
             skip_frames: 0,
             events: Events::default(),
+            strays: [(0.0, 0); UCHORDS],
+            measured: 0,
         }
     }
 
@@ -153,6 +170,11 @@ impl Downstream {
     /// which B1d and data use.
     pub fn set_mappings(&mut self, training: Option<Mapping>, data: Option<Mapping>) {
         self.training = training;
+        self.data = data;
+    }
+
+    /// The mapping of the CP that the next renegotiation asks for.
+    pub fn set_data_mapping(&mut self, data: Option<Mapping>) {
         self.data = data;
     }
 
@@ -282,7 +304,10 @@ impl Downstream {
         }
         let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
         match self.r_like([uinfo; FRAME]) {
-            Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
+            Some(true) => {
+                self.events.ri |= frames + 1 >= RI_FRAMES;
+                self.stage = Stage::Ri { frames: frames + 1 };
+            }
             Some(false) if frames >= RI_FRAMES => {
                 self.events.r_bar = true;
                 self.next = self.training.clone();
@@ -333,22 +358,44 @@ impl Downstream {
 
     fn levels(&self) -> Levels {
         let mut levels = Levels::table(self.law);
-        let (mut spread, mut count) = (0.0, 0.0);
+        let mut spread = [0.0; UCHORDS];
+        let mut freedom = [0.0; UCHORDS];
+        let (mut reference_spread, mut reference_freedom) = (0.0, 0.0);
         for (index, [negative, positive]) in self.stats.iter().enumerate() {
             if negative.count == 0 || positive.count == 0 {
                 continue;
             }
+            let ucode = index % usize::from(COUNT);
             let mean = |s: &Stat| s.sum / f64::from(s.count);
-            let variance = |s: &Stat| s.squares / f64::from(s.count) - mean(s).powi(2);
-            levels.levels[index / usize::from(COUNT)][index % usize::from(COUNT)] =
+            levels.levels[index / usize::from(COUNT)][ucode] =
                 (mean(positive) - mean(negative)) / 2.0;
-            spread += variance(positive).max(0.0) * f64::from(positive.count)
-                + variance(negative).max(0.0) * f64::from(negative.count);
-            count += f64::from(positive.count + negative.count);
+            for s in [negative, positive] {
+                let (squares, more) = (
+                    (s.squares - s.sum * mean(s)).max(0.0),
+                    f64::from(s.count - 1),
+                );
+                spread[ucode / 16] += squares;
+                freedom[ucode / 16] += more;
+                if ucode == usize::from(self.uinfo) {
+                    reference_spread += squares;
+                    reference_freedom += more;
+                }
+            }
         }
-        if count > 0.0 {
-            levels.noise = (spread / count).sqrt();
-        }
+        let noise: [Option<f64>; UCHORDS] =
+            std::array::from_fn(|c| (freedom[c] > 0.0).then(|| (spread[c] / freedom[c]).sqrt()));
+        let worst = noise.iter().flatten().copied().fold(0.0, f64::max);
+        // The reference runs through all of DIL, so its noise, in steps of its Uchord, bounds every Uchord's.
+        let reference = if reference_freedom > 0.0 {
+            (reference_spread / reference_freedom).sqrt()
+        } else {
+            0.0
+        };
+        let reference_step = design::step(usize::from(self.uinfo / 16), self.law);
+        levels.noise = std::array::from_fn(|c| {
+            let floor = reference * design::step(c, self.law) / reference_step;
+            noise[c].unwrap_or(worst).max(floor)
+        });
         levels
     }
 
@@ -384,7 +431,8 @@ impl Downstream {
         let Some(mapping) = self.decoder.as_ref().map(|d| d.mapping().clone()) else {
             return;
         };
-        if self.stage == Stage::Data && self.rd_frames[self.count % FRAME] > 0 {
+        // Data can look like one frame of Rd, so data mode holds only once several have come.
+        if self.stage == Stage::Data && self.rd_frames[self.count % FRAME] >= RI_FRAMES {
             return;
         }
         let codewords: [Codeword; FRAME] =
@@ -402,6 +450,7 @@ impl Downstream {
                 self.skip_frames -= 1;
             } else {
                 data.extend(bits);
+                self.measure(&samples, &codewords);
             }
             return;
         }
@@ -415,10 +464,37 @@ impl Downstream {
         self.zero_frames = if zero { self.zero_frames + 1 } else { 0 };
         if self.events.mp.is_some() && self.zero_frames == ED_FRAMES {
             self.events.mp_ack = true;
+            self.events.ed = true;
             self.stage = Stage::Data;
+            self.strays = [(0.0, 0); UCHORDS];
+            self.measured = 0;
+            self.events.data_noise = None;
+            self.events.measurements = 0;
             self.decoder = self.data.clone().map(Decoder::new);
             self.descrambler = Descrambler::with(Polynomial::V34_CALL);
             self.skip_frames = B1D_FRAMES;
+        }
+    }
+
+    // How far data mode symbols stray from the levels DIL showed, by Uchord, a second at a time.
+    fn measure(&mut self, samples: &[f64], codewords: &[Codeword; FRAME]) {
+        let Some(levels) = &self.events.levels else {
+            return;
+        };
+        for (interval, (x, codeword)) in samples.iter().zip(codewords).enumerate() {
+            let error = x.abs() - levels.levels[interval][usize::from(codeword.ucode)];
+            let (squares, count) = &mut self.strays[usize::from(codeword.ucode / 16)];
+            *squares += error * error;
+            *count += 1;
+        }
+        self.measured += FRAME;
+        if self.measured >= MEASURE_SYMBOLS {
+            self.events.data_noise = Some(self.strays.map(|(squares, count)| {
+                (count >= LEAST_MEASURED).then(|| (squares / f64::from(count)).sqrt())
+            }));
+            self.events.measurements += 1;
+            self.strays = [(0.0, 0); UCHORDS];
+            self.measured = 0;
         }
     }
 
@@ -464,7 +540,58 @@ impl Downstream {
     pub fn expect_renegotiation(&mut self) {
         self.events.mp = None;
         self.events.mp_ack = false;
+        self.events.ed = false;
         self.mp = mp::Deframer::default();
         self.zero_frames = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // DIL of `ucode` heard as `samples` in each interval, with each sign.
+    fn hear(downstream: &mut Downstream, ucode: u8, samples: &[f64]) {
+        for interval in 0..FRAME {
+            for positive in [false, true] {
+                let stat = &mut downstream.stats
+                    [interval * usize::from(COUNT) + usize::from(ucode)][usize::from(positive)];
+                for &sample in samples {
+                    let x = if positive { sample } else { -sample };
+                    stat.sum += x;
+                    stat.squares += x * x;
+                    stat.count += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_reference_that_strays_raises_the_noise_of_every_uchord() {
+        let uinfo = 75;
+        let mut downstream = Downstream::new(uinfo, Law::A, &design::descriptor(uinfo));
+        for u in 0..design::TRAINED {
+            let level = f64::from(ucode::linear(u, Law::A));
+            if u == uinfo {
+                let step = design::step(usize::from(u / 16), Law::A);
+                hear(
+                    &mut downstream,
+                    u,
+                    &[level - step, level, level + step, level],
+                );
+            } else {
+                hear(&mut downstream, u, &[level; 4]);
+            }
+        }
+        let noise = downstream.levels().noise;
+        let reference_step = design::step(usize::from(uinfo / 16), Law::A);
+        let reference = reference_step * (2.0f64 / 3.0).sqrt();
+        for (c, &n) in noise.iter().enumerate().take(UCHORDS - 1) {
+            let expected = reference * design::step(c, Law::A) / reference_step;
+            assert!(
+                (n - expected).abs() < 1e-9,
+                "Uchord {c}: noise {n}, not {expected}"
+            );
+        }
     }
 }

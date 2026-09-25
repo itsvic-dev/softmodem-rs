@@ -9,7 +9,16 @@ implementations.
 signalling. Dial and answer are a minimal exchange on the same socket. This is
 what two instances use during development. It is UDP and not TCP on purpose:
 TCP hides loss and reordering, and then the receive path goes untested
-without SIP. The wire can inject loss, reordering and delay.
+without SIP. The wire can inject loss, reordering, slips and stalls.
+
+It can also act as the path of a VoIP provider, as real calls through one
+showed it: `--delay` holds each frame back, `--conceal` sends a frame as
+silence, as a gateway conceals a lost packet, and `--noise` adds noise
+before the samples are coded, as a path that decodes and codes again.
+`--gateway-after` adds `--gateway-noise` to all that it sends once the far
+end has been quiet that long, as a gateway that took the call for voice
+again. On real calls that happened after about 6 s of quiet from the
+analogue modem, and stayed.
 
 **SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. As the
 media path is shared, SIP adds only signalling.
@@ -18,6 +27,12 @@ media path is shared, SIP adds only signalling.
   the registration alive. The Contact carries `;transport=tcp` and the
   registration's own address, so the PBX sends incoming INVITEs back over
   the same connection and nothing has to listen.
+- `--protocol udp` registers over UDP instead, for providers that speak
+  nothing else. The socket binds the local address that routes to the
+  registrar, as the Via, the Contact and the SDP carry it. Every 25 s a
+  CRLF keepalive goes to the registrar, to keep a NAT's binding open for
+  incoming INVITEs. Our Via has no `rport`, so behind NAT the provider must
+  send its responses back to the address they came from.
 - `ezk-sip-ua` runs without its `rtc` feature. Its `MediaBackend` trait is
   implemented here: the offer and answer hold PCMA only, and the audio runs
   on the shared RTP session. That session takes packets from any port on the

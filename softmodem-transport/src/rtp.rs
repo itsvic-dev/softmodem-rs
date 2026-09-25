@@ -4,6 +4,7 @@
 
 //! One call's A-law RTP stream on a UDP socket, shared by the transports.
 
+use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,6 +24,9 @@ pub(crate) const PCMA: u8 = 8;
 const SILENCE_TIMEOUT: Duration = Duration::from_secs(5);
 const REORDER_WINDOW: usize = 3;
 const BYE_REPEATS: usize = 3;
+const FRAME_MS: u128 = 20;
+// Below about -50 dBm0, a gateway counts the far end as quiet.
+const QUIET_RMS: f64 = 30.0;
 
 /// Damage done to outgoing packets, to exercise the far end's receive path.
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,6 +43,19 @@ pub struct Impairment {
     pub stall: f64,
     pub stall_for: Duration,
     pub seed: u64,
+    /// Held back before it goes, in whole frames, as a long path does.
+    pub delay: Duration,
+    /// Chance that a frame goes as silence, as a provider's gateway conceals
+    /// a packet it lost.
+    pub conceal: f64,
+    /// Most of the noise added to each sample before it is coded, as a
+    /// path that decodes and codes again.
+    pub noise: u16,
+    /// A gateway that gives up modem handling once the far end has been
+    /// quiet this long, and from then on adds `gateway_noise` to each
+    /// sample it sends.
+    pub gateway_after: Option<Duration>,
+    pub gateway_noise: u16,
 }
 
 /// How a call's setup and teardown travel alongside its audio.
@@ -71,6 +88,9 @@ impl Session {
             rng: fastrand::Rng::with_seed(self.impairment.seed),
             session: self,
             held_back: None,
+            delayed: VecDeque::new(),
+            quiet: Duration::ZERO,
+            gateway: false,
         };
         let task = tokio::spawn(async move {
             running.run(outgoing, incoming, stop).await;
@@ -90,6 +110,10 @@ struct Running {
     session: Session,
     rng: fastrand::Rng,
     held_back: Option<Vec<u8>>,
+    delayed: VecDeque<Vec<i16>>,
+    // How long the far end has been quiet, and whether the gateway has given up on the modem.
+    quiet: Duration,
+    gateway: bool,
 }
 
 impl Running {
@@ -118,6 +142,9 @@ impl Running {
                     if self.stalls_or_slips().await {
                         continue;
                     }
+                    let Some(samples) = self.impair_audio(samples) else {
+                        continue;
+                    };
                     let packet = RtpPacket {
                         pt: PCMA,
                         sequence_number: sequence,
@@ -175,6 +202,7 @@ impl Running {
                     let samples = packet.payload.iter().map(|&b| alaw::decode(b)).collect();
                     reorder.push(packet.sequence_number.0, packet.timestamp.0, samples, &mut frames);
                     for frame in frames.drain(..) {
+                        self.listen(&frame);
                         let _ = incoming.send(frame).await;
                     }
                 }
@@ -195,6 +223,50 @@ impl Running {
         match self.session.signalling {
             Signalling::Wire { .. } => from == self.session.peer,
             Signalling::Separate => from.ip() == self.session.peer.ip(),
+        }
+    }
+
+    // The frame to send now, after the damage a VoIP path does: noise, concealment and delay.
+    fn impair_audio(&mut self, mut samples: Vec<i16>) -> Option<Vec<i16>> {
+        let impairment = self.session.impairment;
+        let most = if self.gateway {
+            impairment.noise.saturating_add(impairment.gateway_noise)
+        } else {
+            impairment.noise
+        };
+        if most > 0 {
+            let most = i32::from(most);
+            for sample in &mut samples {
+                let sum = i32::from(*sample) + self.rng.i32(-most..=most);
+                *sample = i16::try_from(sum.clamp(-32_768, 32_767)).unwrap_or(0);
+            }
+        }
+        if impairment.conceal > 0.0 && self.rng.f64() < impairment.conceal {
+            samples.fill(0);
+        }
+        let held = usize::try_from(impairment.delay.as_millis() / FRAME_MS).unwrap_or(0);
+        self.delayed.push_back(samples);
+        (self.delayed.len() > held)
+            .then(|| self.delayed.pop_front())
+            .flatten()
+    }
+
+    // Heard audio, for a gateway that gives up once the far end has been quiet long enough.
+    #[expect(clippy::cast_precision_loss, reason = "a frame of samples")]
+    fn listen(&mut self, frame: &[i16]) {
+        let Some(after) = self.session.impairment.gateway_after else {
+            return;
+        };
+        let power =
+            frame.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>() / frame.len().max(1) as f64;
+        if power.sqrt() < QUIET_RMS {
+            self.quiet += Duration::from_secs_f64(frame.len() as f64 / 8000.0);
+        } else {
+            self.quiet = Duration::ZERO;
+        }
+        if !self.gateway && self.quiet >= after {
+            info!("the gateway gives up modem handling, as the far end went quiet");
+            self.gateway = true;
         }
     }
 

@@ -2,16 +2,18 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The data mode decoder: a Viterbi decoder over the trellis of § 9.6.3,
-//! then the inverse of the mapper, the differential encoder, the shell
-//! mapper and the parser. It takes points with no precoding and Θ = 0, as
-//! this modem's receiver asks for.
+//! The data mode decoder: the inverse of the non-linear encoder and the
+//! precoder's filter, a Viterbi decoder over the trellis of § 9.6.3 on the
+//! channel output y(n), then c(n) taken away again, and the inverse of the
+//! mapper, the differential encoder, the shell mapper and the parser.
 
 use std::collections::VecDeque;
 
 use super::constellation::{self, Point};
+use super::encoder::{Settings, average_energy};
 use super::framing::Framing;
 use super::mp::Trellis;
+use super::precoder::{Precoder, Whitener};
 use super::shell::ShellMapper;
 use super::trellis;
 use crate::passband::Complex;
@@ -73,16 +75,25 @@ pub struct Decoder {
     decided: Vec<[Point; 2]>,
     frames_out: usize,
     quadrant: u8,
+    whitener: Whitener,
+    precoder: Precoder,
+    frame: Vec<Complex>,
 }
 
 impl Decoder {
-    /// Starting with the first mapping frame of B1, in state 0.
+    /// Starting with the first mapping frame of B1, in state 0, for a far
+    /// transmitter asked for `settings`.
     #[must_use]
-    pub fn new(framing: Framing, trellis: Trellis) -> Self {
+    pub fn new(framing: Framing, settings: Settings) -> Self {
+        let trellis = settings.trellis;
         let mut metrics = vec![f64::INFINITY; trellis.states()];
         metrics[0] = 0.0;
+        let shell = ShellMapper::new(framing.rings);
+        let energy = settings.nonlinear.then(|| average_energy(&framing, &shell));
         Self {
-            shell: ShellMapper::new(framing.rings),
+            shell,
+            whitener: Whitener::new(settings.precoding, energy),
+            precoder: Precoder::new(settings.precoding, framing.precoder_modulo()),
             framing,
             trellis,
             metrics,
@@ -91,12 +102,26 @@ impl Decoder {
             decided: Vec::new(),
             frames_out: 0,
             quadrant: 0,
+            frame: Vec::with_capacity(8),
         }
     }
 
-    /// Takes the eight points of a mapping frame, in the units of figure 5,
-    /// and gives the bits of whole mapping frames decided so far.
-    pub fn decode(&mut self, points: [Complex; 8]) -> Vec<bool> {
+    /// Takes an equalized point, in the units of figure 5, adds the bits of
+    /// whole mapping frames decided so far to `bits`, and gives the point
+    /// the equalizer should have given.
+    pub fn push(&mut self, z: Complex, bits: &mut Vec<bool>) -> Complex {
+        let (y, target) = self.whitener.push(z);
+        self.frame.push(y);
+        if self.frame.len() == 8 {
+            let points: [Complex; 8] = std::mem::take(&mut self.frame)
+                .try_into()
+                .unwrap_or_default();
+            bits.extend(self.decode(points));
+        }
+        target
+    }
+
+    fn decode(&mut self, points: [Complex; 8]) -> Vec<bool> {
         let mut bits = Vec::new();
         for &pair in points.as_chunks::<2>().0 {
             self.step(pair);
@@ -207,8 +232,11 @@ impl Decoder {
         let mut rings = [0u8; 8];
         let mut groups = Vec::new();
         for (j, points) in self.decided.clone().into_iter().enumerate() {
-            let [(first, first_turns), (second, second_turns)] =
-                points.map(|point| constellation::label(point).unwrap_or((0, 0)));
+            let [(first, first_turns), (second, second_turns)] = points.map(|y| {
+                let c = self.precoder.c();
+                self.precoder.push(y);
+                constellation::label((y.0 - c.0, y.1 - c.1)).unwrap_or((0, 0))
+            });
             let i = (4 + first_turns - self.quadrant) % 4;
             self.quadrant = first_turns;
             let i1 = (4 + second_turns - first_turns) % 4 >= 2;
@@ -247,7 +275,8 @@ impl Decoder {
 
 #[cfg(test)]
 mod tests {
-    use super::super::encoder::{Encoder, Settings};
+    use super::super::encoder::Encoder;
+    use super::super::mp::Precoding;
     use super::super::{SymbolRate, rates};
     use super::*;
 
@@ -308,21 +337,74 @@ mod tests {
             trellis,
             ..Settings::default()
         };
+        round_trip(framing, settings, sigma)
+    }
+
+    fn round_trip(framing: Framing, settings: Settings, sigma: f64) -> (usize, usize) {
         let mut encoder = Encoder::new(framing, settings);
-        let mut decoder = Decoder::new(framing, trellis);
+        let mut decoder = Decoder::new(framing, settings);
         let mut noise = Noise(0x2545_F491_4F6C_DD1D);
         let mut sent: Vec<bool> = Vec::new();
         let mut received: Vec<bool> = Vec::new();
         for _ in 0..300 {
             let bits: Vec<bool> = (0..encoder.bits()).map(|_| noise.bit()).collect();
             sent.extend(&bits);
-            let points = encoder
-                .encode(&bits)
-                .map(|(re, im)| (re + sigma * noise.gaussian(), im + sigma * noise.gaussian()));
-            received.extend(decoder.decode(points));
+            for (re, im) in encoder.encode(&bits) {
+                let z = (re + sigma * noise.gaussian(), im + sigma * noise.gaussian());
+                decoder.push(z, &mut received);
+            }
         }
         let wrong = sent.iter().zip(&received).filter(|(a, b)| a != b).count();
         (wrong, received.len())
+    }
+
+    const PRECODING: Precoding = [(4096, -2048), (-1024, 512), (300, 200)];
+
+    #[test]
+    fn decodes_what_the_precoder_and_the_non_linear_encoder_send() {
+        for (symbol_rate, bit_rate, expanded) in [
+            (SymbolRate::S2400, 9_600, false),
+            (SymbolRate::S3000, 24_000, false),
+            (SymbolRate::S3200, 28_800, false),
+            (SymbolRate::S3200, 28_800, true),
+            (SymbolRate::S3429, 33_600, true),
+        ] {
+            let framing = Framing::new(symbol_rate, bit_rate, expanded).unwrap();
+            for trellis in [Trellis::States16, Trellis::States32, Trellis::States64] {
+                for (precoding, nonlinear) in [
+                    (PRECODING, false),
+                    (Precoding::default(), true),
+                    (PRECODING, true),
+                ] {
+                    let settings = Settings {
+                        trellis,
+                        nonlinear,
+                        precoding,
+                    };
+                    let (wrong, decided) = round_trip(framing, settings, 0.0);
+                    assert!(decided > 0);
+                    assert_eq!(
+                        wrong, 0,
+                        "{symbol_rate:?} at {bit_rate} with {settings:?} and expanded shaping {expanded} would lose data"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decodes_precoded_points_through_noise() {
+        let framing = Framing::new(SymbolRate::S3200, 24_000, false).unwrap();
+        let settings = Settings {
+            trellis: Trellis::States16,
+            nonlinear: true,
+            precoding: PRECODING,
+        };
+        let (wrong, decided) = round_trip(framing, settings, 0.2);
+        assert!(
+            wrong * 10_000 <= decided,
+            "precoding would lose {wrong} of {decided} bits"
+        );
     }
 
     #[test]

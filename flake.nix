@@ -83,6 +83,16 @@
               impairment = "--stall 0.005 --stall-for 500";
             }
           );
+          # A VoIP provider's path, as real calls met it: see "Wire" in docs/transport.md.
+          ppp-v90-voip = pkgs.testers.runNixOSTest (
+            import ./nix/tests/ppp.nix {
+              inherit softmodem;
+              label = "V90-voip";
+              modulation = "+MS=V90,0";
+              impairment = "--delay 140 --conceal 0.002 --seed 1";
+              ispImpairment = "--gateway-after 300 --gateway-noise 100";
+            }
+          );
           ppp-automode = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
               inherit softmodem;
@@ -143,6 +153,13 @@
                 later = 30;
                 way = "to-slmodemd";
               };
+            };
+            # slmodemd, as the analogue modem, on a VoIP provider's path like ppp-v90-voip's.
+            slmodemd-v90-voip = peer {
+              label = "V90-voip";
+              ours = "+MS=V90,0";
+              theirs = "+MS=90";
+              impairment = "--delay 140 --conceal 0.002 --seed 1 --gateway-after 300 --gateway-noise 100";
             };
             slmodemd-v34-retrain = peer {
               label = "V34-retrain";

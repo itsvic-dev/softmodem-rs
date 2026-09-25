@@ -8,19 +8,20 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use softmodem::{Modem, Role};
 use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
 use softmodem_terminal::settings::Settings;
 use softmodem_terminal::tcp::TcpPort;
-use softmodem_transport::sip::{Account, Sip};
+use softmodem_transport::sip::{Account, Protocol, Sip};
 use softmodem_transport::speaker::Speaker;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 mod password;
 
@@ -36,7 +37,7 @@ struct Cli {
 enum Command {
     /// Use a direct UDP wire to another softmodem as the phone line.
     Wire(WireArgs),
-    /// Register with a SIP registrar over TCP and use it as the phone line.
+    /// Register with a SIP registrar and use it as the phone line.
     #[command(
         after_help = "Without --password, --password-env or --password-file, the modem asks for the password on stdin."
     )]
@@ -45,16 +46,34 @@ enum Command {
 
 #[derive(Args)]
 struct SipArgs {
-    /// Host name of the registrar.
+    /// Host name of the registrar, with a port if not 5060.
     #[arg(long)]
     registrar: String,
     /// User name, which is also the number the modem answers on.
     #[arg(long)]
     user: String,
+    /// How SIP messages reach the registrar.
+    #[arg(long, value_enum, default_value_t = SipProtocol::Tcp)]
+    protocol: SipProtocol,
     #[command(flatten)]
     password: password::Source,
     #[command(flatten)]
     modem: ModemArgs,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SipProtocol {
+    Tcp,
+    Udp,
+}
+
+impl From<SipProtocol> for Protocol {
+    fn from(protocol: SipProtocol) -> Self {
+        match protocol {
+            SipProtocol::Tcp => Self::Tcp,
+            SipProtocol::Udp => Self::Udp,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -82,6 +101,20 @@ struct WireArgs {
     stall_for: u64,
     #[arg(long, default_value_t = 0)]
     seed: u64,
+    /// Extra delay each outgoing frame waits, in whole frames of 20 ms.
+    #[arg(long, value_name = "MS", default_value_t = 0)]
+    delay: u64,
+    /// Chance that an outgoing frame goes as silence, as a provider's gateway conceals a lost packet.
+    #[arg(long, default_value_t = 0.0)]
+    conceal: f64,
+    /// Most of the noise added to each outgoing sample before it is coded.
+    #[arg(long, value_name = "AMPLITUDE", default_value_t = 0)]
+    noise: u16,
+    /// Once the far end has been quiet this long, add --gateway-noise from then on, as a gateway that gives up on the modem.
+    #[arg(long, value_name = "MS")]
+    gateway_after: Option<u64>,
+    #[arg(long, value_name = "AMPLITUDE", default_value_t = 100)]
+    gateway_noise: u16,
     #[command(flatten)]
     modem: ModemArgs,
 }
@@ -110,6 +143,9 @@ struct ModemArgs {
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .with_writer(std::io::stderr)
         .init();
 
@@ -130,6 +166,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 stall: args.stall,
                 stall_for: Duration::from_millis(args.stall_for),
                 seed: args.seed,
+                delay: Duration::from_millis(args.delay),
+                conceal: args.conceal,
+                noise: args.noise,
+                gateway_after: args.gateway_after.map(Duration::from_millis),
+                gateway_noise: args.gateway_noise,
             };
             let wire = Wire::bind(args.local, args.peer, impairment).await?;
             serve(wire, args.modem).await
@@ -139,6 +180,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 registrar: args.registrar,
                 user: args.user,
                 password: args.password.read()?,
+                protocol: args.protocol.into(),
             })
             .await
             .context("registering")?;

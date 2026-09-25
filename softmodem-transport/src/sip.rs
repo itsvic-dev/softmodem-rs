@@ -2,14 +2,15 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Calls through a SIP registrar over TCP, as one of its users. Audio is
-//! PCMA only, on the same RTP session as the wire, with no playout clock.
+//! Calls through a SIP registrar over TCP or UDP, as one of its users. Audio
+//! is PCMA only, on the same RTP session as the wire, with no playout clock.
 
 use std::fmt;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
+use std::time::Duration;
 
 use bytesstr::BytesStr;
 use ezk_sdp_types::{MediaType, SessionDescription, TaggedAddress};
@@ -32,13 +33,31 @@ use tracing::{info, warn};
 use crate::rtp::{Impairment, PCMA, Session, Signalling};
 use crate::{Call, DialError, Incoming, Transport};
 
+/// How SIP messages reach the registrar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Protocol {
+    #[default]
+    Tcp,
+    Udp,
+}
+
+impl Protocol {
+    fn param(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+        }
+    }
+}
+
 /// A user's account on a registrar.
 #[derive(Clone)]
 pub struct Account {
-    /// Host name or address of the registrar, reached over TCP on 5060.
+    /// Host name or address of the registrar, on 5060 unless it has a port.
     pub registrar: String,
     pub user: String,
     pub password: String,
+    pub protocol: Protocol,
 }
 
 impl fmt::Debug for Account {
@@ -46,9 +65,13 @@ impl fmt::Debug for Account {
         f.debug_struct("Account")
             .field("registrar", &self.registrar)
             .field("user", &self.user)
+            .field("protocol", &self.protocol)
             .finish_non_exhaustive()
     }
 }
+
+// Often enough to keep a NAT's UDP binding open, so INVITEs still get in.
+const KEEPALIVE: Duration = Duration::from_secs(25);
 
 pub struct Sip {
     registration: Arc<Registration>,
@@ -159,14 +182,20 @@ impl Sip {
             calls_up: calls_up.clone(),
         });
         builder.user_agent(format!("softmodem/{}", env!("CARGO_PKG_VERSION")));
-        let endpoint = builder.build();
 
-        let registrar: SipUri = format!("sip:{};transport=tcp", account.registrar)
+        let param = account.protocol.param();
+        let registrar: SipUri = format!("sip:{};transport={param}", account.registrar)
             .parse()
             .map_err(other)?;
-        let (transport, _) = endpoint.select_transport(&registrar).await.map_err(other)?;
+        if account.protocol == Protocol::Udp {
+            let ip = local_ip_toward(&registrar).await?;
+            builder.bind_udp(SocketAddr::new(ip, 0)).await?;
+        }
+        let endpoint = builder.build();
+
+        let (transport, server) = endpoint.select_transport(&registrar).await.map_err(other)?;
         let bound = transport.bound();
-        let ours: SipUri = format!("sip:{}@{bound};transport=tcp", account.user)
+        let ours: SipUri = format!("sip:{}@{bound};transport={param}", account.user)
             .parse()
             .map_err(other)?;
         let _ = contact.set(Contact::new(NameAddr::uri(ours.clone())));
@@ -185,10 +214,19 @@ impl Sip {
         )
         .await
         .map_err(other)?;
-        info!(user = account.user, registrar = account.registrar, %bound, "registered");
+        info!(user = account.user, registrar = account.registrar, protocol = param, %bound, "registered");
+
+        let registration = Arc::new(registration);
+        if transport.is_udp() {
+            tokio::spawn(keep_alive(
+                Arc::downgrade(&registration),
+                transport.clone(),
+                server,
+            ));
+        }
 
         Ok(Self {
-            registration: Arc::new(registration),
+            registration,
             credentials,
             local_ip: bound.ip(),
             invites,
@@ -201,6 +239,36 @@ impl Sip {
 
     fn authenticator(&self) -> DigestAuthenticator {
         DigestAuthenticator::new(self.credentials.clone())
+    }
+}
+
+// An unspecified address is useless in the Via, the Contact and the SDP.
+async fn local_ip_toward(registrar: &SipUri) -> io::Result<IpAddr> {
+    let host = &registrar.host_port.host;
+    let port = registrar.host_port.port.unwrap_or(5060);
+    let far = tokio::net::lookup_host(format!("{host}:{port}"))
+        .await?
+        .next()
+        .ok_or_else(|| other(format!("{host} has no address")))?;
+    let any: IpAddr = if far.is_ipv4() {
+        Ipv4Addr::UNSPECIFIED.into()
+    } else {
+        Ipv6Addr::UNSPECIFIED.into()
+    };
+    let probe = UdpSocket::bind(SocketAddr::new(any, 0)).await?;
+    probe.connect(far).await?;
+    Ok(probe.local_addr()?.ip())
+}
+
+async fn keep_alive(registration: Weak<Registration>, transport: TpHandle, server: SocketAddr) {
+    loop {
+        tokio::time::sleep(KEEPALIVE).await;
+        if registration.strong_count() == 0 {
+            return;
+        }
+        if let Err(error) = transport.send(b"\r\n\r\n", server).await {
+            warn!(%error, "SIP keepalive failed");
+        }
     }
 }
 

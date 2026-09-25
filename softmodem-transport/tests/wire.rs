@@ -115,6 +115,96 @@ async fn carries_frames_in_order_and_ends_on_hang_up() {
 }
 
 #[tokio::test]
+async fn delays_in_whole_frames_and_loses_the_held_ones_at_hang_up() {
+    let impairment = Impairment {
+        delay: Duration::from_millis(100),
+        ..Impairment::default()
+    };
+    let (outgoing, mut incoming) = connect(impairment).await;
+    for n in 0..10 {
+        outgoing.audio_out.send(frame(n)).await.unwrap();
+    }
+    drop(outgoing);
+    let expected: Vec<_> = (0..5).map(frame).collect();
+    assert_eq!(receive_all(&mut incoming).await, expected);
+}
+
+#[tokio::test]
+async fn conceals_frames_as_silence() {
+    let impairment = Impairment {
+        conceal: 1.0,
+        ..Impairment::default()
+    };
+    let (outgoing, mut incoming) = connect(impairment).await;
+    for n in 1..6 {
+        outgoing.audio_out.send(frame(n)).await.unwrap();
+    }
+    drop(outgoing);
+    let silence = alaw::decode(alaw::encode(0));
+    let received = receive_all(&mut incoming).await;
+    assert_eq!(received.len(), 5);
+    assert!(received.iter().flatten().all(|&s| s == silence));
+}
+
+#[tokio::test]
+async fn adds_noise_before_coding() {
+    let impairment = Impairment {
+        noise: 50,
+        seed: 3,
+        ..Impairment::default()
+    };
+    let (outgoing, mut incoming) = connect(impairment).await;
+    for n in 1..11 {
+        outgoing.audio_out.send(frame(n)).await.unwrap();
+    }
+    drop(outgoing);
+    let received = receive_all(&mut incoming).await;
+    let pairs: Vec<(i16, i16)> = (1..11)
+        .map(frame)
+        .zip(&received)
+        .flat_map(|(sent, got)| sent.into_iter().zip(got.iter().copied()))
+        .collect();
+    // 50 of noise, and at most half of the A-law step of 64 at these levels.
+    assert!(
+        pairs
+            .iter()
+            .all(|&(sent, got)| (sent - got).abs() <= 50 + 32)
+    );
+    assert!(pairs.iter().any(|&(sent, got)| sent != got));
+}
+
+#[tokio::test]
+async fn a_gateway_adds_noise_once_the_far_end_has_been_quiet() {
+    let impairment = Impairment {
+        gateway_after: Some(Duration::from_millis(60)),
+        gateway_noise: 200,
+        seed: 5,
+        ..Impairment::default()
+    };
+    let (outgoing, mut incoming) = connect(impairment).await;
+    outgoing.audio_out.send(frame(10)).await.unwrap();
+    let before = timeout(Duration::from_secs(2), incoming.audio_in.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(before, frame(10));
+    for _ in 0..5 {
+        incoming
+            .audio_out
+            .send(vec![0; FRAME_SAMPLES])
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    outgoing.audio_out.send(frame(10)).await.unwrap();
+    let after = timeout(Duration::from_secs(2), incoming.audio_in.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(after, frame(10), "the gateway left the frame alone");
+}
+
+#[tokio::test]
 async fn fills_lost_packets_with_silence_and_undoes_reordering() {
     let impairment = Impairment {
         loss: 0.1,

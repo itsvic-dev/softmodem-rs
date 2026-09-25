@@ -16,18 +16,27 @@ const POWER_LIMITS: [f64; 32] = [
     8028.0, 7580.0, 7156.0, 6756.0, 6380.0, 6020.0, 5684.0, 5368.0, 5068.0, 4784.0, 4516.0, 4264.0,
     4024.0, 3800.0, 3588.0, 3388.0, 3196.0, 3020.0, 2852.0, 2692.0, 2540.0,
 ];
-// SP, the most table 12 allows.
-const DIL_SIGN_BITS: usize = 128;
-// H1 to H8: segments of 120 symbols, shorter for the loud Uchords, down to 12 at full scale.
-const DIL_LENGTHS: [u8; 8] = [19, 19, 19, 19, 19, 9, 3, 1];
+// SP: five blocks of a training frame, a reference frame, the training frame inverted and a reference frame.
+const DIL_SIGN_BITS: usize = 120;
+// TP: a frame of training symbols, then a frame of the reference.
+const DIL_PATTERN: [bool; 2 * FRAME] = [
+    true, true, true, true, true, true, false, false, false, false, false, false,
+];
+/// Uchords, the eight groups of 16 Ucodes.
+pub const UCHORDS: usize = 8;
+// H1 to H8: segments of 240 symbols, half of them training.
+const DIL_LENGTH: u8 = 39;
+/// DIL trains the Ucodes below this one, as CP can hardly use louder ones
+/// within the power limits of table 15.
+pub const TRAINED: u8 = 112;
 // Levels this many noise deviations apart leave symbol errors below 10⁻⁷.
 const SPACING_SIGMAS: f64 = 11.0;
 // Where DIL showed no noise at all, half the smallest A-law step.
 const LEAST_SPACING: f64 = 8.0;
 // Data mode rates, as D, from 56 000 bit/s down to 28 000.
 const DATA_BITS: std::ops::RangeInclusive<usize> = 21..=42;
-// CPt: 32 000 bit/s on 8 levels.
-const TRAINING_BITS: usize = 24;
+// CPt: 32 000 bit/s on 8 levels, or down to 16 000 on 2 where the noise leaves no room for 8.
+const TRAINING_BITS_RANGE: std::ops::RangeInclusive<usize> = 12..=24;
 
 /// The most that the average power may be, squared, for the highest digital
 /// modem power in bits 33:37 of INFO0d.
@@ -62,7 +71,7 @@ pub fn average_power(sets: &[Vec<f64>; FRAME], modulus_bits: usize) -> f64 {
     sum / (6.0 * total as f64)
 }
 
-// Pseudo-random from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, the second frame the first inverted for segments of 12.
+// Pseudo-random from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, each second training frame the first inverted.
 fn dil_signs() -> Vec<bool> {
     let mut state: u16 = 0xACE1;
     let mut signs: Vec<bool> = (0..DIL_SIGN_BITS)
@@ -72,29 +81,37 @@ fn dil_signs() -> Vec<bool> {
             bit == 1
         })
         .collect();
-    for k in FRAME..2 * FRAME {
-        signs[k] = !signs[k - FRAME];
+    for block in (0..DIL_SIGN_BITS).step_by(4 * FRAME) {
+        for k in block + 2 * FRAME..block + 3 * FRAME {
+            signs[k] = !signs[k - 2 * FRAME];
+        }
     }
     signs
 }
 
-/// The DIL this modem asks for: every Ucode, with both signs in each data
-/// frame interval. The Ucodes go from UINFO up to 127, down to 0 and back
-/// up to UINFO, so the level never jumps, and TRN1d before it and Ri after
-/// it are near UINFO too. The loud Uchords have short segments.
+/// The DIL this modem asks for: each Ucode below [`TRAINED`] once, in a
+/// segment of 240 symbols that alternates a frame of it with a frame of
+/// UINFO, the reference. So each data frame interval has each sign of the
+/// Ucode ten times, and the reference, heard all through DIL, shows a path
+/// that changes while it lasts. The Ucodes go from UINFO up, then from
+/// below UINFO down.
 #[must_use]
 pub fn descriptor(uinfo: u8) -> Descriptor {
-    let uinfo = uinfo.clamp(1, COUNT - 1);
+    let uinfo = uinfo.clamp(1, TRAINED - 1);
     Descriptor {
         signs: dil_signs(),
-        pattern: vec![true],
-        lengths: DIL_LENGTHS,
-        references: [uinfo; 8],
-        training: (uinfo..COUNT)
-            .chain((0..COUNT - 1).rev())
-            .chain(1..uinfo)
-            .collect(),
+        pattern: DIL_PATTERN.to_vec(),
+        lengths: [DIL_LENGTH; UCHORDS],
+        references: [uinfo; UCHORDS],
+        training: (uinfo..TRAINED).chain((0..uinfo).rev()).collect(),
     }
+}
+
+/// The step between two neighbouring Ucodes of `uchord`, on the grid of table 1.
+#[must_use]
+pub fn step(uchord: usize, law: Law) -> f64 {
+    let first = u8::try_from(uchord * 16).unwrap_or(0).min(COUNT - 2);
+    f64::from(ucode::linear(first + 1, law) - ucode::linear(first, law))
 }
 
 /// What DIL showed: the level of each Ucode in each interval, and the noise.
@@ -102,8 +119,9 @@ pub fn descriptor(uinfo: u8) -> Descriptor {
 pub struct Levels {
     /// The received magnitude of each positive Ucode, by interval.
     pub levels: [[f64; COUNT as usize]; FRAME],
-    /// The RMS of the noise around those levels.
-    pub noise: f64,
+    /// The RMS of the noise around those levels, by Uchord, as a path may
+    /// add more to some levels than to others.
+    pub noise: [f64; UCHORDS],
 }
 
 impl Levels {
@@ -115,20 +133,31 @@ impl Levels {
             std::array::from_fn(|u| f64::from(ucode::linear(u8::try_from(u).unwrap_or(0), law)));
         Self {
             levels: [row; FRAME],
-            noise: 0.0,
+            noise: [0.0; UCHORDS],
         }
+    }
+
+    // Half the room a level needs from its neighbour, for the noise of its Uchord.
+    fn margin(&self, ucode: u8) -> f64 {
+        SPACING_SIGMAS / 2.0 * self.noise[usize::from(ucode / 16).min(UCHORDS - 1)]
     }
 }
 
-// `count` levels from the bottom, `spacing` apart, with room for the other sign below the first.
-fn pick(levels: &[f64; COUNT as usize], count: usize, spacing: f64) -> Option<Vec<u8>> {
+// `count` levels from the bottom, as far apart as `spacing` and their noise ask, the first clear of its other sign.
+fn pick(levels: &Levels, interval: usize, count: usize, spacing: f64) -> Option<Vec<u8>> {
+    let row = &levels.levels[interval];
     let mut chosen: Vec<u8> = Vec::with_capacity(count);
-    let mut floor = spacing / 2.0;
-    for ucode in 0..COUNT {
-        let level = levels[usize::from(ucode)];
-        if level >= floor {
+    for ucode in 0..TRAINED {
+        let level = row[usize::from(ucode)];
+        let room = match chosen.last() {
+            None => 2.0 * level >= spacing.max(2.0 * levels.margin(ucode)),
+            Some(&last) => {
+                let needed = spacing.max(levels.margin(last) + levels.margin(ucode));
+                level - row[usize::from(last)] >= needed
+            }
+        };
+        if room {
             chosen.push(ucode);
-            floor = level + spacing;
             if chosen.len() == count {
                 return Some(chosen);
             }
@@ -155,10 +184,10 @@ fn levels_for(modulus_bits: usize) -> usize {
 fn constellations(levels: &Levels, bits: usize, law: Law, limit: f64) -> Option<[Vec<u8>; FRAME]> {
     let modulus_bits = bits.checked_sub(FRAME)?;
     let count = levels_for(modulus_bits);
-    let least = (SPACING_SIGMAS * levels.noise).max(LEAST_SPACING);
+    let least = LEAST_SPACING;
     let fits = |spacing: f64| -> Option<[Vec<u8>; FRAME]> {
         let sets: [Option<Vec<u8>>; FRAME] =
-            std::array::from_fn(|i| pick(&levels.levels[i], count, spacing));
+            std::array::from_fn(|i| pick(levels, i, count, spacing));
         let sets: [Vec<u8>; FRAME] = sets.map(Option::unwrap_or_default);
         if sets.iter().any(|set| set.len() < count) {
             return None;
@@ -218,22 +247,49 @@ fn cp(sets: &[Vec<u8>; FRAME], bits: usize, training: bool, law: Law, upstream_r
     }
 }
 
-/// CPt: 8 levels in each interval, as far apart as the power limit allows.
+// The highest D of `bits` whose levels fit the noise, or else the lowest, as far apart as the power limit allows.
+fn highest(
+    levels: &Levels,
+    bits: std::ops::RangeInclusive<usize>,
+    training: bool,
+    law: Law,
+    max_power: u8,
+    upstream_rates: u16,
+) -> Option<Cp> {
+    let limit = power_limit(max_power);
+    let lowest = *bits.start();
+    bits.rev()
+        .find_map(|d| constellations(levels, d, law, limit).map(|sets| (sets, d)))
+        .or_else(|| {
+            let quiet = Levels {
+                noise: [0.0; UCHORDS],
+                ..levels.clone()
+            };
+            constellations(&quiet, lowest, law, limit).map(|sets| (sets, lowest))
+        })
+        .map(|(sets, d)| cp(&sets, d, training, law, upstream_rates))
+}
+
+/// CPt: 8 levels in each interval, as far apart as the power limit allows,
+/// or fewer where the noise leaves no room for 8.
 #[must_use]
 pub fn training(levels: &Levels, law: Law, max_power: u8, upstream_rates: u16) -> Option<Cp> {
-    let sets = constellations(levels, TRAINING_BITS, law, power_limit(max_power))?;
-    Some(cp(&sets, TRAINING_BITS, true, law, upstream_rates))
+    highest(
+        levels,
+        TRAINING_BITS_RANGE,
+        true,
+        law,
+        max_power,
+        upstream_rates,
+    )
 }
 
 /// CP: the highest rate whose levels are far enough apart for the noise,
-/// within the power limit.
+/// within the power limit. Where even 28 000 bit/s is too fast for the
+/// noise, 28 000 bit/s on levels as far apart as the power limit allows.
 #[must_use]
 pub fn data(levels: &Levels, law: Law, max_power: u8, upstream_rates: u16) -> Option<Cp> {
-    let limit = power_limit(max_power);
-    DATA_BITS.rev().find_map(|bits| {
-        let sets = constellations(levels, bits, law, limit)?;
-        Some(cp(&sets, bits, false, law, upstream_rates))
-    })
+    highest(levels, DATA_BITS, false, law, max_power, upstream_rates)
 }
 
 #[cfg(test)]
@@ -282,11 +338,33 @@ mod tests {
     #[test]
     fn falls_back_as_the_noise_grows() {
         let mut levels = Levels::table(Law::A);
-        levels.noise = 40.0;
+        levels.noise = [40.0; UCHORDS];
         let noisy = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
         assert!((28_000..56_000).contains(&noisy.bit_rate()));
-        levels.noise = 5000.0;
-        assert!(data(&levels, Law::A, 23, 0x1FFF).is_none());
+        levels.noise = [5000.0; UCHORDS];
+        let deaf = data(&levels, Law::A, 23, 0x1FFF).expect("the lowest CP");
+        assert_eq!(deaf.bit_rate(), 28_000);
+        let cpt = training(&levels, Law::A, 23, 0x1FFF).expect("the lowest CPt");
+        assert_eq!(cpt.bit_rate(), 16_000);
+    }
+
+    #[test]
+    fn spaces_each_level_for_the_noise_of_its_uchord() {
+        let mut levels = Levels::table(Law::A);
+        levels.noise = [80.0; UCHORDS];
+        let everywhere = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
+        levels.noise = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 80.0, 80.0];
+        let loud = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
+        assert!(loud.bit_rate() > everywhere.bit_rate());
+        let mapping = Mapping::from_cp(&loud).expect("CP carries its rate");
+        for set in &mapping.sets {
+            let mut ucodes = set.clone();
+            ucodes.sort_unstable();
+            for pair in ucodes.windows(2).filter(|pair| pair[0] >= 96) {
+                let gap = ucode::linear(pair[1], Law::A) - ucode::linear(pair[0], Law::A);
+                assert!(f64::from(gap) >= SPACING_SIGMAS * 80.0);
+            }
+        }
     }
 
     #[test]
@@ -297,42 +375,42 @@ mod tests {
     }
 
     #[test]
-    fn asks_for_each_ucode_with_both_signs_in_each_interval() {
-        let descriptor = descriptor(75);
-        assert!(descriptor.training.len() <= 255);
-        let mut ucodes = descriptor.training.clone();
+    fn trains_each_ucode_below_the_loudest_once_from_uinfo() {
+        let training = descriptor(75).training;
+        assert_eq!((training[0], *training.last().unwrap_or(&0)), (75, 0));
+        let mut ucodes = training.clone();
         ucodes.sort_unstable();
-        ucodes.dedup();
-        assert_eq!(ucodes.len(), usize::from(COUNT));
-        for h in DIL_LENGTHS {
-            let length = (usize::from(h) + 1) * FRAME;
-            for interval in 0..FRAME {
-                let signs: Vec<bool> = (interval..length)
-                    .step_by(FRAME)
-                    .map(|k| descriptor.signs[k % descriptor.signs.len()])
-                    .collect();
-                assert!(signs.contains(&true) && signs.contains(&false));
-            }
+        assert_eq!(ucodes, (0..TRAINED).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn gives_each_interval_each_sign_ten_times_between_references() {
+        let descriptor = descriptor(75);
+        let length = (usize::from(descriptor.lengths[0]) + 1) * FRAME;
+        assert!(
+            descriptor
+                .lengths
+                .iter()
+                .all(|&h| h == descriptor.lengths[0])
+        );
+        let pattern = |k: usize| descriptor.pattern[k % descriptor.pattern.len()];
+        let references = (0..length).filter(|&k| !pattern(k)).count();
+        assert_eq!(references, length / 2);
+        for interval in 0..FRAME {
+            let signs: Vec<bool> = (interval..length)
+                .step_by(FRAME)
+                .filter(|&k| pattern(k))
+                .map(|k| descriptor.signs[k % descriptor.signs.len()])
+                .collect();
+            let positive = signs.iter().filter(|&&sign| sign).count();
+            assert_eq!((positive, signs.len() - positive), (10, 10));
         }
     }
 
     #[test]
-    fn moves_through_the_ucodes_one_step_at_a_time() {
-        let training = descriptor(75).training;
-        assert_eq!((training[0], *training.last().unwrap_or(&0)), (75, 74));
-        assert!(training.windows(2).all(|w| w[0].abs_diff(w[1]) <= 1));
-    }
-
-    #[test]
-    fn keeps_the_loud_part_short() {
-        let descriptor = descriptor(75);
-        let length = |u: u8| (usize::from(descriptor.lengths[usize::from(u / 16)]) + 1) * FRAME;
-        let loud: usize = descriptor
-            .training
-            .iter()
-            .filter(|&&u| u >= 112)
-            .map(|&u| length(u))
-            .sum();
-        assert!(loud <= 400, "{loud} symbols of DIL near full scale");
+    fn leaves_the_loudest_ucodes_out_of_cp() {
+        let cp = data(&Levels::table(Law::A), Law::A, 0, 0x1FFF).expect("a CP");
+        let mapping = Mapping::from_cp(&cp).expect("CP carries its rate");
+        assert!(mapping.sets.iter().flatten().all(|&u| u < TRAINED));
     }
 }

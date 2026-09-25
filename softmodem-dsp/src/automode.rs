@@ -33,10 +33,17 @@ const V21_MARK_HZ: f64 = 1650.0;
 /// `top`, and then carries the call on it.
 #[must_use]
 pub fn pump(top: Modulation, role: Role) -> Box<dyn DataPump> {
+    pump_up_to(top, role, None)
+}
+
+/// As [`pump`], transmitting at `max_transmit` bit/s at most.
+#[must_use]
+pub fn pump_up_to(top: Modulation, role: Role, max_transmit: Option<u32>) -> Box<dyn DataPump> {
     started(
         Offered {
             top,
             fallback: true,
+            max_transmit,
         },
         role,
     )
@@ -46,10 +53,17 @@ pub fn pump(top: Modulation, role: Role) -> Box<dyn DataPump> {
 /// is V.8.
 #[must_use]
 pub fn only(top: Modulation, role: Role) -> Box<dyn DataPump> {
+    only_up_to(top, role, None)
+}
+
+/// As [`only`], transmitting at `max_transmit` bit/s at most.
+#[must_use]
+pub fn only_up_to(top: Modulation, role: Role, max_transmit: Option<u32>) -> Box<dyn DataPump> {
     started(
         Offered {
             top,
             fallback: false,
+            max_transmit,
         },
         role,
     )
@@ -72,6 +86,7 @@ fn gap(modes: Modes) -> usize {
 struct Offered {
     top: Modulation,
     fallback: bool,
+    max_transmit: Option<u32>,
 }
 
 impl Offered {
@@ -113,7 +128,7 @@ impl Offered {
 
     fn chosen(self, common: Modes, role: Role) -> Box<dyn DataPump> {
         if common.v90.any() {
-            Modulation::V90.pump(role)
+            Modulation::V90.pump_up_to(role, self.max_transmit)
         } else if common.v34 {
             Modulation::V34.pump(role)
         } else if common.v22bis {
@@ -313,6 +328,10 @@ impl DataPump for Answer {
 
     fn bit_rate(&self) -> u32 {
         self.pump().map_or(0, DataPump::bit_rate)
+    }
+
+    fn transmit_rate(&self) -> u32 {
+        self.pump().map_or(0, DataPump::transmit_rate)
     }
 
     fn decoder(&self) -> Decoder {
@@ -534,6 +553,10 @@ impl DataPump for Call {
 
     fn bit_rate(&self) -> u32 {
         self.pump().map_or(0, DataPump::bit_rate)
+    }
+
+    fn transmit_rate(&self) -> u32 {
+        self.pump().map_or(0, DataPump::transmit_rate)
     }
 
     fn decoder(&self) -> Decoder {
@@ -919,6 +942,7 @@ mod tests {
             Offered {
                 top: Modulation::V22bis,
                 fallback: true,
+                max_transmit: None,
             }
             .modes(Role::Originate),
         );

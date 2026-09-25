@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "aho-corasick"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "alsa"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -463,10 +472,8 @@ dependencies = [
 [[package]]
 name = "ezk-internal"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a44bf5d896dc281c222e438fbfd927cacda6e95042bc6c7a338943e74185465"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
- "anyhow",
  "nom",
 ]
 
@@ -487,8 +494,7 @@ dependencies = [
 [[package]]
 name = "ezk-sdp-types"
 version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c122e3817bba68a867526c03e1616ebbcdaafc38b4d7fbaf87061f0e055e322"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "bytes",
  "bytesstr",
@@ -500,8 +506,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-auth"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "348807d452b54cf2c0bbc92edad65a4e2fdc82aedea937eef78d73c7c5ee7ba1"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "bytesstr",
  "ezk-sip-types",
@@ -515,8 +520,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-core"
 version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "218f5e29183998f5ec38ce5f1371fae7e069d9873c235f96e42a9e0a06403613"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -541,8 +545,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-types"
 version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7b5dad1c6e05c13ab69ed6a08262cecab2447493acc39875f1c76f0be377587"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -557,8 +560,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-ua"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5024c2fc46e8b00ffe3ad1715a94d40ef1a507571325fa61b8c17aef55d1ae2"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -579,8 +581,7 @@ dependencies = [
 [[package]]
 name = "ezk-stun"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c75092d4b0a530bbbc035dc85ee1740dd1a62ee51876bbab0fa5e31cca91dcba"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "async-trait",
  "ezk-stun-types",
@@ -592,8 +593,7 @@ dependencies = [
 [[package]]
 name = "ezk-stun-types"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c32424dfb0c816374cd8deb6fbd6e3b947d5fe5f9375f478944da80f506b5fbb"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "bitfield",
  "byteorder",
@@ -1083,6 +1083,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
+name = "matchers"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
+dependencies = [
+ "regex-automata",
+]
+
+[[package]]
 name = "md5"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1514,6 +1523,23 @@ checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
+
+[[package]]
+name = "regex-automata"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "resolv-conf"
@@ -2107,10 +2133,14 @@ version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
 dependencies = [
+ "matchers",
  "nu-ansi-term",
+ "once_cell",
+ "regex-automata",
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "tracing",
  "tracing-core",
  "tracing-log",
 ]

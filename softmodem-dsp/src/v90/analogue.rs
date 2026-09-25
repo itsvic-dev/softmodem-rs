@@ -8,9 +8,11 @@ use std::collections::VecDeque;
 
 use super::RETRAIN_TONE;
 use super::cp::Cp;
-use super::design::{self, Levels};
+use super::design::{self, Levels, UCHORDS};
 use super::downstream::{Downstream, Events};
-use super::encoder::Mapping;
+use super::encoder::{FRAME, Mapping};
+use super::jd::Jd;
+use super::ucode::COUNT;
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
@@ -29,6 +31,43 @@ const S_BAR_SYMBOLS: usize = 16;
 const TRN_SYMBOLS: usize = 1024;
 // § 9.3.2.1: 70 ± 5 ms of silence after INFO1a.
 const SILENCE_MS: f64 = 70.0;
+// CP′ until Ed, or this long: one CP′ and E fit in a lost RTP packet.
+const CP_ACK_SECONDS: f64 = 0.2;
+// Past a round trip, the time the digital modem takes from S̄ to enough Ri.
+const RI_MARGIN_SECONDS: f64 = 0.5;
+// § 9.3.2.4: Sd and S̄d within 1.5 s of the start of Ja; Ed and B1d within 1 s of E.
+const SD_MOST_SECONDS: f64 = 1.5;
+const ED_MOST_SECONDS: f64 = 1.0;
+// The margin monitor judges nothing in the first 2 s of data mode.
+const SETTLE_MEASUREMENTS: u32 = 2;
+// Strays past this part of the gap to the next level make errors of about 4 in 10 000.
+const UNRELIABLE: f64 = 0.15;
+
+// The smallest gap in each Uchord between two neighbouring levels of `cp`, at the levels DIL showed.
+fn gaps(cp: &Cp, levels: &Levels) -> [f64; UCHORDS] {
+    let mut gaps = [f64::INFINITY; UCHORDS];
+    for interval in 0..FRAME {
+        let mut ucodes: Vec<u8> = (0..COUNT)
+            .filter(|&u| cp.constellation(interval) >> u & 1 == 1)
+            .collect();
+        ucodes.sort_unstable();
+        for pair in ucodes.windows(2) {
+            let row = &levels.levels[interval];
+            let gap = row[usize::from(pair[1])] - row[usize::from(pair[0])];
+            let uchord = usize::from(pair[0] / 16);
+            gaps[uchord] = gaps[uchord].min(gap);
+        }
+    }
+    gaps
+}
+
+fn sixteen(sixteen: bool) -> Points {
+    if sixteen {
+        Points::Sixteen
+    } else {
+        Points::Four
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Send {
@@ -38,7 +77,7 @@ enum Send {
     Quiet,
     /// S, until Jd′.
     S,
-    /// Silence through DIL, until it has shown the levels.
+    /// SCR through DIL, until it has shown the levels.
     Dil,
     /// CPt, until R̄i.
     Cpt,
@@ -54,13 +93,23 @@ enum Send {
 #[derive(Debug)]
 struct Upstream {
     outcome: PcmOutcome,
+    max_transmit: Option<u32>,
     send: Send,
     queue: VecDeque<Complex>,
     training: training::Sender,
     ja: Vec<bool>,
+    jd: Option<Jd>,
+    /// For CPt, CP and E, as Jd asks for phase 4 or a renegotiation (§ 8.5.2).
+    points: Points,
     cpt: Option<Cp>,
     cp: Option<Cp>,
-    acks: usize,
+    /// Symbols of CP′ sent.
+    acked: f64,
+    /// What it sends, and for how many symbols it has sent it.
+    counted: Send,
+    in_send: usize,
+    /// Symbols of CPt sent since the last S̄.
+    cpt_sent: f64,
     encoder: Option<Encoder>,
     scale: f64,
     scrambler: Scrambler,
@@ -82,7 +131,7 @@ impl Upstream {
         clippy::cast_sign_loss,
         reason = "70 ms of symbols"
     )]
-    fn new(outcome: PcmOutcome) -> Self {
+    fn new(outcome: PcmOutcome, max_transmit: Option<u32>) -> Self {
         let baud = outcome.upstream.symbol_rate.baud();
         let silence = (SILENCE_MS / 1000.0 * baud) as usize;
         let mut training = training::Sender::new(Role::Answer);
@@ -93,13 +142,19 @@ impl Upstream {
         queue.extend((0..TRN_SYMBOLS).map(|_| training.trn(Points::Four)));
         Self {
             outcome,
+            max_transmit,
             send: Send::Ja,
             queue,
             training,
             ja: design::descriptor(outcome.uinfo).frame(),
+            jd: None,
+            points: Points::Four,
             cpt: None,
             cp: None,
-            acks: 0,
+            acked: 0.0,
+            counted: Send::Ja,
+            in_send: 0,
+            cpt_sent: 0.0,
             encoder: None,
             scale: 1.0,
             scrambler: Scrambler::with(Polynomial::V34_ANSWER),
@@ -115,13 +170,23 @@ impl Upstream {
 
     // The rates its transmitter has at its symbol rate, bit n for (n + 1) · 2400 bit/s.
     fn own_rates(&self) -> u16 {
-        rates::mask(self.outcome.upstream.symbol_rate, 14)
+        let allowed = self.max_transmit.map_or(u16::MAX, |most| {
+            (0..14)
+                .filter(|n| (n + 1) * 2400 <= most)
+                .fold(0, |mask, n| mask | 1 << n)
+        });
+        rates::mask(self.outcome.upstream.symbol_rate, 14) & allowed
     }
 
     fn next(&mut self, events: &Events) -> Complex {
         while self.queue.is_empty() {
             self.refill(events);
         }
+        if self.send != self.counted {
+            self.counted = self.send;
+            self.in_send = 0;
+        }
+        self.in_send += 1;
         self.queue.pop_front().unwrap_or((0.0, 0.0))
     }
 
@@ -131,6 +196,9 @@ impl Upstream {
             self.renegotiations = events.renegotiations;
             self.renegotiate |= self.send == Send::Data;
         }
+        if self.jd.is_none() {
+            self.jd = events.jd;
+        }
         match self.send {
             Send::Ja if events.sd => self.send = Send::Quiet,
             Send::Ja => {
@@ -138,7 +206,12 @@ impl Upstream {
                 self.queue.extend(ja);
             }
             Send::Quiet if events.jd.is_some() => self.send = Send::S,
-            Send::Quiet | Send::Dil if events.levels.is_none() => self.queue.push_back((0.0, 0.0)),
+            Send::Quiet if events.levels.is_none() => self.queue.push_back((0.0, 0.0)),
+            // § 9.3.2.9: SCR, not silence, so that DIL meets the line as data mode will.
+            Send::Dil if events.levels.is_none() => {
+                let scr = self.training.sequence(&[true; 2], Points::Four);
+                self.queue.extend(scr);
+            }
             Send::Quiet => self.send = Send::S,
             Send::S if events.jd_prime => {
                 self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
@@ -147,12 +220,15 @@ impl Upstream {
             Send::S => self.queue.extend((0..2).map(training::s)),
             Send::Dil => self.design(events.levels.as_ref()),
             Send::Cpt if events.r_bar => self.send = Send::Cp,
+            Send::Cpt if !events.ri && self.cpt_sent >= self.ri_wait() => self.end_dil(),
             Send::Cpt => {
                 let frame = self.cpt.as_ref().map(Cp::frame).unwrap_or_default();
-                self.queue
-                    .extend(self.training.sequence(&frame, Points::Four));
+                let symbols = self.training.sequence(&frame, self.points);
+                self.cpt_sent += f64::from(u32::try_from(symbols.len()).unwrap_or(u32::MAX));
+                self.queue.extend(symbols);
                 if frame.is_empty() {
                     self.queue.push_back((0.0, 0.0));
+                    self.cpt_sent += 1.0;
                 }
             }
             Send::Cp => self.cp(events),
@@ -168,7 +244,8 @@ impl Upstream {
         self.queue.extend((0..S_SYMBOLS).map(training::s));
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(Role::Answer);
-        self.acks = 0;
+        self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points_renegotiating));
+        self.acked = 0.0;
         self.b1_sent = false;
         self.send = Send::Cp;
     }
@@ -183,16 +260,31 @@ impl Upstream {
         let rates = self.own_rates() >> 1;
         self.cpt = design::training(levels, law, max_power, rates);
         self.cp = design::data(levels, law, max_power, rates);
+        self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points));
+        self.send = Send::Cpt;
+        self.end_dil();
+    }
+
+    // S and S̄, again until Ri comes, as a lost S̄ leaves the digital modem in DIL.
+    fn end_dil(&mut self) {
         self.queue.extend((0..S_SYMBOLS).map(training::s));
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(Role::Answer);
-        self.send = Send::Cpt;
+        self.cpt_sent = 0.0;
+    }
+
+    // CPt symbols to wait for Ri after S̄: a round trip and some.
+    #[expect(clippy::cast_precision_loss, reason = "a round trip in samples")]
+    fn ri_wait(&self) -> f64 {
+        let round_trip = self.outcome.round_trip as f64 / 8000.0;
+        self.outcome.upstream.symbol_rate.baud() * (round_trip + RI_MARGIN_SECONDS)
     }
 
     // § 9.4.2.3 and § 9.4.2.4: CP until MP, CP′ until MP′ or Ed, then E.
     fn cp(&mut self, events: &Events) {
-        if self.acks > 0 && events.mp_ack {
-            let e = self.training.sequence(&[true; E_ONES], Points::Four);
+        let enough = self.acked >= self.outcome.upstream.symbol_rate.baud() * CP_ACK_SECONDS;
+        if self.acked > 0.0 && events.mp_ack && (events.ed || enough) {
+            let e = self.training.sequence(&[true; E_ONES], self.points);
             self.queue.extend(e);
             // § 9.7: after a rate sequence of 0 bit/s from either end, the call is over.
             let far_clears = events.mp.is_some_and(|mp| mp.max_answer_to_call == 0);
@@ -208,7 +300,6 @@ impl Upstream {
             return;
         };
         let acknowledge = events.mp.is_some();
-        self.acks += usize::from(acknowledge);
         let mut cp = Cp {
             acknowledge,
             ..cp.clone()
@@ -216,9 +307,11 @@ impl Upstream {
         if self.clearing {
             cp.rate = 0;
         }
-        let frame = cp.frame();
-        self.queue
-            .extend(self.training.sequence(&frame, Points::Four));
+        let symbols = self.training.sequence(&cp.frame(), self.points);
+        if acknowledge {
+            self.acked += f64::from(u32::try_from(symbols.len()).unwrap_or(u32::MAX));
+        }
+        self.queue.extend(symbols);
     }
 
     // § 9.4.2.4: the highest rate both enable, up to the maximum in MP.
@@ -282,6 +375,8 @@ impl Upstream {
 /// The analogue modem, from phase 2 on.
 #[derive(Debug)]
 pub struct Analogue {
+    /// The fastest upstream rate it enables, in bit/s.
+    max_transmit: Option<u32>,
     phase2: Phase2,
     modulator: Option<Modulator>,
     upstream: Option<Upstream>,
@@ -293,6 +388,8 @@ pub struct Analogue {
     tone_heard: usize,
     /// The bit rate before a retrain, until the retrain sets a new one.
     retrained_from: u32,
+    /// Seconds of data mode that the margin monitor has judged.
+    judged: u32,
 }
 
 impl Default for Analogue {
@@ -304,7 +401,15 @@ impl Default for Analogue {
 impl Analogue {
     #[must_use]
     pub fn new() -> Self {
+        Self::up_to(None)
+    }
+
+    /// An analogue modem that enables no upstream rate above `max_transmit`
+    /// bit/s, so that the digital modem cannot ask for one.
+    #[must_use]
+    pub fn up_to(max_transmit: Option<u32>) -> Self {
         Self {
+            max_transmit,
             phase2: Phase2::analogue(),
             modulator: None,
             upstream: None,
@@ -312,9 +417,27 @@ impl Analogue {
             outcome: None,
             online: false,
             retrain_tone: tones::Detector::new(Role::Originate),
+            judged: 0,
             tone_heard: 0,
             retrained_from: 0,
         }
+    }
+
+    /// The upstream rate in data mode, in bit/s, which the digital modem's
+    /// MP set, or 0 before data mode.
+    #[must_use]
+    pub fn upstream_bit_rate(&self) -> u32 {
+        self.upstream
+            .as_ref()
+            .map_or(0, |up| u32::from(up.rate) * 2400)
+    }
+
+    /// Whether it has ended DIL and not yet reached data mode.
+    #[cfg(test)]
+    pub(crate) fn in_phase_4(&self) -> bool {
+        self.upstream
+            .as_ref()
+            .is_some_and(|up| matches!(up.send, Send::Cpt | Send::Cp))
     }
 
     // § 9.5.2: phase 2 again from the tones, with the far INFO0d kept.
@@ -330,8 +453,9 @@ impl Analogue {
         self.tone_heard = 0;
     }
 
+    // § 9.3.2 and § 9.4.2: from phase 3 on, tone B starts a retrain.
     fn far_retrains(&mut self, input: &[i16]) -> bool {
-        if !self.connected() {
+        if self.upstream.is_none() {
             self.tone_heard = 0;
             return false;
         }
@@ -357,6 +481,83 @@ impl Analogue {
         downstream.expect_renegotiation();
     }
 
+    // Each second of data mode, the CP that the strays measured allow, which renegotiates if its rate is lower.
+    fn watch_margin(&mut self) {
+        let (Some(upstream), Some(downstream), Some(outcome)) =
+            (&self.upstream, &self.downstream, &self.outcome)
+        else {
+            return;
+        };
+        let events = downstream.events();
+        if events.measurements == self.judged {
+            return;
+        }
+        self.judged = events.measurements;
+        if !self.connected() || events.measurements < SETTLE_MEASUREMENTS {
+            return;
+        }
+        let (Some(measured), Some(dil)) = (events.data_noise, &events.levels) else {
+            return;
+        };
+        let gaps = upstream
+            .cp
+            .as_ref()
+            .map_or([f64::INFINITY; UCHORDS], |cp| gaps(cp, dil));
+        // Symbols that often land nearer another level stray less than the path makes them.
+        let worst = measured
+            .iter()
+            .zip(gaps)
+            .filter_map(|(strays, gap)| {
+                strays.map(|s| if s > UNRELIABLE * gap { s.max(gap) } else { s })
+            })
+            .fold(0.0, f64::max);
+        let mut levels = dil.clone();
+        for noise in &mut levels.noise {
+            *noise = noise.max(worst);
+        }
+        let rates = upstream.own_rates() >> 1;
+        let (law, max_power) = (outcome.digital.law, outcome.digital.max_power);
+        let running = upstream.cp.as_ref().map_or(0, Cp::bit_rate);
+        if let Some(cp) =
+            design::data(&levels, law, max_power, rates).filter(|cp| cp.bit_rate() < running)
+        {
+            self.renegotiate_to(cp);
+        }
+    }
+
+    // § 9.3.2.4, and a lost Ed: a retrain where a signal that the far end sends once went missing.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "symbol counts and a round trip in samples"
+    )]
+    fn watch_start_up(&mut self) {
+        let (Some(upstream), Some(downstream), Some(outcome)) =
+            (&self.upstream, &self.downstream, &self.outcome)
+        else {
+            return;
+        };
+        let waited = upstream.in_send as f64 / outcome.upstream.symbol_rate.baud();
+        let round_trip = outcome.round_trip as f64 / 8000.0;
+        let lost = match upstream.send {
+            Send::Ja => waited >= SD_MOST_SECONDS + round_trip,
+            Send::Data => !downstream.in_data() && waited >= ED_MOST_SECONDS + round_trip,
+            _ => false,
+        };
+        if lost {
+            self.restart();
+        }
+    }
+
+    // A rate renegotiation that asks for `cp` in data mode.
+    fn renegotiate_to(&mut self, cp: Cp) {
+        let mapping = Mapping::from_cp(&cp);
+        if let (Some(upstream), Some(downstream)) = (&mut self.upstream, &mut self.downstream) {
+            upstream.cp = Some(cp);
+            downstream.set_data_mapping(mapping);
+        }
+        self.start_renegotiation(false);
+    }
+
     fn start(&mut self, outcome: PcmOutcome) {
         let up = outcome.upstream;
         self.modulator = Some(Modulator::new(
@@ -371,7 +572,7 @@ impl Analogue {
             outcome.digital.law,
             &descriptor,
         ));
-        self.upstream = Some(Upstream::new(outcome));
+        self.upstream = Some(Upstream::new(outcome, self.max_transmit));
         self.outcome = Some(outcome);
     }
 }
@@ -386,6 +587,10 @@ impl DataPump for Analogue {
             .as_ref()
             .and_then(|up| up.cp.as_ref())
             .map_or(self.retrained_from, Cp::bit_rate)
+    }
+
+    fn transmit_rate(&self) -> u32 {
+        self.upstream_bit_rate()
     }
 
     fn decoder(&self) -> Characters {
@@ -433,6 +638,8 @@ impl DataPump for Analogue {
         };
         downstream.receive(input, bits);
         self.online |= self.connected();
+        self.watch_margin();
+        self.watch_start_up();
     }
 
     fn retrain(&mut self) {

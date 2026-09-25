@@ -8,6 +8,8 @@
   modulation ? "+MS=V21,0",
   # Wire options for both ends, such as --stall, to meet what a real line does.
   impairment ? "",
+  # More for the ISP's end only, such as --gateway-after on what it sends to the caller.
+  ispImpairment ? "",
 }:
 
 let
@@ -37,7 +39,7 @@ in
         environment.systemPackages = [ softmodem ];
 
         # Quiet, so that RING and CONNECT do not reach pppd as line noise.
-        systemd.services.softmodem = modemService "--init ATE0Q1S0=1${modulation}";
+        systemd.services.softmodem = modemService "${ispImpairment} --init ATE0Q1S0=1${modulation}";
 
         systemd.services.pppd = {
           wantedBy = [ "multi-user.target" ];

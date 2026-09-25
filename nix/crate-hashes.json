@@ -1,0 +1,10 @@
+{
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-internal@0.2.0": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-sdp-types@0.6.1": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-sip-auth@0.5.0": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-sip-core@0.9.2": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-sip-types@0.6.5": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-sip-ua@0.9.1": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-stun-types@0.3.0": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l",
+  "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#ezk-stun@0.4.0": "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l"
+}

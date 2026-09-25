@@ -4,12 +4,13 @@
 
 //! Calls through a real SIP registrar. Ignored unless asked for, and then
 //! needs `SOFTMODEM_PBX`, `USER1`, `USER1_PASS`, `USER2` and `USER2_PASS`.
+//! With `SOFTMODEM_PBX_UDP` set, SIP goes over UDP, not TCP.
 
 use std::time::Duration;
 
 use softmodem::{Modem, profile};
 use softmodem_terminal::port::Plain;
-use softmodem_transport::sip::{Account, Sip};
+use softmodem_transport::sip::{Account, Protocol, Sip};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
 use tokio::time::{sleep, timeout};
 
@@ -69,6 +70,11 @@ async fn modem(user: &str, password: &str, init: &str) -> Computer {
         registrar: var("SOFTMODEM_PBX"),
         user: var(user),
         password: var(password),
+        protocol: if std::env::var_os("SOFTMODEM_PBX_UDP").is_some() {
+            Protocol::Udp
+        } else {
+            Protocol::Tcp
+        },
     })
     .await
     .expect("registering");

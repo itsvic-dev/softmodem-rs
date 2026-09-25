@@ -11,12 +11,12 @@ use super::dil::Dil;
 use super::encoder::{Encoder, FRAME, Mapping};
 use super::jd::{ALL_RATES, Jd};
 use super::training::{self, JD_PRIME_BITS, R_BAR_SYMBOLS, RI_SYMBOLS, Signs, TRN1D_SYMBOLS};
-use super::upstream::{self, Events, Upstream};
+use super::upstream::{Events, Upstream};
 use super::{Codeword, RETRAIN_TONE};
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
 use crate::uart::Decoder as Characters;
-use crate::v34::mp::Mp;
+use crate::v34::mp::{Asks, Mp};
 use crate::v34::phase2::{PcmOutcome, Phase2};
 use crate::v34::{rates, tones};
 
@@ -58,6 +58,7 @@ enum Send {
 )]
 struct Downstream {
     outcome: PcmOutcome,
+    jd: Jd,
     send: Send,
     queue: VecDeque<Codeword>,
     signs: Signs,
@@ -88,9 +89,10 @@ struct Downstream {
 }
 
 impl Downstream {
-    fn new(outcome: PcmOutcome) -> Self {
+    fn new(outcome: PcmOutcome, jd: Jd) -> Self {
         Self {
             outcome,
+            jd,
             send: Send::Quiet,
             queue: VecDeque::new(),
             signs: Signs::new(outcome.uinfo),
@@ -111,15 +113,6 @@ impl Downstream {
             renegotiate: false,
             clearing: false,
             silence: false,
-        }
-    }
-
-    fn jd() -> Jd {
-        Jd {
-            rates: ALL_RATES,
-            sixteen_points: false,
-            sixteen_points_renegotiating: false,
-            lookahead: LOOKAHEAD,
         }
     }
 
@@ -163,7 +156,7 @@ impl Downstream {
                 };
             }
             Send::Jd => {
-                let frame = Self::jd().frame();
+                let frame = self.jd.frame();
                 self.queue.extend(self.signs.sequence(&frame));
             }
             Send::Dil => match &mut self.dil {
@@ -352,6 +345,7 @@ impl Downstream {
 /// The digital modem, from phase 2 on.
 #[derive(Debug)]
 pub struct Digital {
+    jd: Jd,
     phase2: Phase2,
     outcome: Option<PcmOutcome>,
     downstream: Option<Downstream>,
@@ -362,6 +356,7 @@ pub struct Digital {
     tone_heard: usize,
     /// The bit rate before a retrain, until the retrain sets a new one.
     retrained_from: u32,
+    asks: Asks,
 }
 
 impl Default for Digital {
@@ -374,6 +369,12 @@ impl Digital {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            jd: Jd {
+                rates: ALL_RATES,
+                sixteen_points: false,
+                sixteen_points_renegotiating: false,
+                lookahead: LOOKAHEAD,
+            },
             phase2: Phase2::digital(),
             outcome: None,
             downstream: None,
@@ -382,7 +383,24 @@ impl Digital {
             retrain_tone: tones::Detector::new(Role::Answer),
             tone_heard: 0,
             retrained_from: 0,
+            asks: Asks::default(),
         }
+    }
+
+    /// Asking the analogue modem's transmitter for `asks` in MP.
+    #[must_use]
+    pub fn asking(mut self, asks: Asks) -> Self {
+        self.asks = asks;
+        self
+    }
+
+    /// As a digital modem that has CP and E sent on 16 points, as many do.
+    #[cfg(test)]
+    pub(crate) fn asking_sixteen_points() -> Self {
+        let mut digital = Self::new();
+        digital.jd.sixteen_points = true;
+        digital.jd.sixteen_points_renegotiating = true;
+        digital
     }
 
     // § 9.5.1: phase 2 again from the tones, with the far INFO0a kept.
@@ -397,8 +415,9 @@ impl Digital {
         self.tone_heard = 0;
     }
 
+    // § 9.3.1 and § 9.4.1: from phase 3 on, tone A starts a retrain.
     fn far_retrains(&mut self, input: &[i16]) -> bool {
-        if !self.connected() {
+        if self.upstream.is_none() {
             self.tone_heard = 0;
             return false;
         }
@@ -433,17 +452,17 @@ impl Digital {
             .events()
             .trained
             .unwrap_or(outcome.upstream.max_rate);
-        Mp {
+        self.asks.ask(Mp {
             max_answer_to_call: trained.min(14),
             rates: rates::mask(upstream.symbol_rate(), 14) & !1,
-            trellis: upstream::TRELLIS,
             ..Mp::default()
-        }
+        })
     }
 
     // § 9.4.2.4: the highest rate both enable, up to the maximum in MP.
     fn agree_upstream(&mut self) {
         let mp = self.mp();
+        let asks = self.asks;
         let Some(upstream) = &mut self.upstream else {
             return;
         };
@@ -459,7 +478,7 @@ impl Digital {
             .find(|&n| both >> (n - 1) & 1 == 1)
             .unwrap_or(0);
         if rate > 0 {
-            upstream.start_data(u32::from(rate) * 2400);
+            upstream.start_data(u32::from(rate) * 2400, asks);
         }
     }
 }
@@ -510,8 +529,8 @@ impl DataPump for Digital {
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.pcm_outcome().filter(|_| self.phase2.done()) {
                 self.outcome = Some(outcome);
-                self.upstream = Some(Upstream::new(&outcome.upstream));
-                self.downstream = Some(Downstream::new(outcome));
+                self.upstream = Some(Upstream::new(&outcome.upstream, &self.jd));
+                self.downstream = Some(Downstream::new(outcome, self.jd));
             }
             return;
         };

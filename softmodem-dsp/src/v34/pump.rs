@@ -12,7 +12,7 @@ use super::detect::{Heard, SDetector};
 use super::encoder::{Encoder, Settings};
 use super::framing::Framing;
 use super::modulator::Modulator;
-use super::mp::{self, Mp, Trellis};
+use super::mp::{self, Asks, Mp};
 use super::phase2::{Outcome, Phase2};
 use super::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use super::training::{self, J_4, J_16, J_PRIME, PP_SYMBOLS, Points};
@@ -52,9 +52,6 @@ const fn code(pattern: &str) -> u32 {
     }
     value
 }
-// What this end's receiver asks the far transmitter for, in MP.
-const TRELLIS: Trellis = Trellis::States16;
-const EXPANDED: bool = false;
 const CARRIER_DBM0: f64 = -43.0;
 
 fn polynomial(role: Role) -> Polynomial {
@@ -387,7 +384,7 @@ struct Sink {
     trn_error: f64,
     decoder: Option<Decoder>,
     scale: f64,
-    frame: Vec<Complex>,
+    symbols: usize,
     data_descrambler: Descrambler,
     skip_bits: usize,
 }
@@ -414,7 +411,7 @@ impl Sink {
             trn_error: 0.0,
             decoder: None,
             scale: 1.0,
-            frame: Vec::new(),
+            symbols: 0,
             data_descrambler: Descrambler::with(polynomial(far)),
             skip_bits: 0,
         }
@@ -495,7 +492,7 @@ impl Sink {
         self.trn_error = 0.0;
         self.deframer = mp::Deframer::default();
         self.decoder = None;
-        self.frame.clear();
+        self.symbols = 0;
         far.trn = false;
         far.trained = None;
         far.mp = None;
@@ -592,32 +589,27 @@ impl Sink {
         }
     }
 
-    fn start_data(&mut self, framing: Framing) {
+    fn start_data(&mut self, framing: Framing, asked: Settings) {
         self.scale = Encoder::new(framing, Settings::default()).energy().sqrt();
-        self.decoder = Some(Decoder::new(framing, TRELLIS));
+        self.decoder = Some(Decoder::new(framing, asked));
         self.data_descrambler = Descrambler::with(polynomial(self.far_role));
         self.skip_bits = framing.p * framing.b - (framing.p - framing.r);
     }
 
     fn data(&mut self, z: Complex, data: &mut Vec<bool>) {
-        if self.frame.is_empty() && self.skip_bits > 0 {
+        if self.symbols.is_multiple_of(8) && self.skip_bits > 0 {
             self.front_end.track(Tracking::Data);
         }
+        self.symbols += 1;
         let scale = self.scale;
         let grid = (z.0 * scale, z.1 * scale);
-        self.equalizer
-            .adapt((nearest_odd(grid.0) / scale, nearest_odd(grid.1) / scale));
-        self.frame.push(grid);
-        if self.frame.len() < 8 {
-            return;
-        }
-        let points: [Complex; 8] = std::mem::take(&mut self.frame)
-            .try_into()
-            .unwrap_or_default();
-        let Some(decoder) = &mut self.decoder else {
-            return;
+        let mut bits = Vec::new();
+        let target = match &mut self.decoder {
+            Some(decoder) => decoder.push(grid, &mut bits),
+            None => (nearest_odd(grid.0), nearest_odd(grid.1)),
         };
-        for bit in decoder.decode(points) {
+        self.equalizer.adapt((target.0 / scale, target.1 / scale));
+        for bit in bits {
             let bit = self.data_descrambler.descramble(bit);
             if self.skip_bits > 0 {
                 self.skip_bits -= 1;
@@ -743,6 +735,7 @@ pub struct V34 {
     retrain_tone: tones::Detector,
     tone_heard: usize,
     monitor: Monitor,
+    asks: Asks,
 }
 
 impl V34 {
@@ -763,7 +756,15 @@ impl V34 {
             retrain_tone: tones::Detector::new(other(role)),
             tone_heard: 0,
             monitor: Monitor::default(),
+            asks: Asks::default(),
         }
+    }
+
+    /// Asking the far transmitter for `asks` in MP.
+    #[must_use]
+    pub fn asking(mut self, asks: Asks) -> Self {
+        self.asks = asks;
+        self
     }
 
     // § 11.5 and § 11.6 leave it to each end when to retrain or renegotiate.
@@ -844,14 +845,12 @@ impl V34 {
             Role::Originate => (14, receive_max),
             Role::Answer => (receive_max, 14),
         };
-        let mp = Mp {
+        let mp = self.asks.ask(Mp {
             max_call_to_answer: call_to_answer,
             max_answer_to_call: answer_to_call,
             rates: rates::mask(transmit.symbol_rate, 14),
-            trellis: TRELLIS,
-            expanded_shaping: EXPANDED,
             ..Mp::default()
-        };
+        });
         self.source = Some(Source::new(self.role, silence, mp));
         self.sink = Some(Sink::new(self.role, &outcome));
         self.outcome = Some(outcome);
@@ -880,7 +879,11 @@ impl V34 {
         let bit_rate = u32::from(rate) * 2400;
         let (Some(transmit), Some(receive)) = (
             Framing::new(outcome.transmit.symbol_rate, bit_rate, far.expanded_shaping),
-            Framing::new(outcome.receive.symbol_rate, bit_rate, EXPANDED),
+            Framing::new(
+                outcome.receive.symbol_rate,
+                bit_rate,
+                self.asks.expanded_shaping,
+            ),
         ) else {
             return;
         };
@@ -894,7 +897,7 @@ impl V34 {
         source.encoder = Some(encoder);
         source.scrambler = Scrambler::with(polynomial(self.role));
         source.b1_frames = transmit.p;
-        sink.start_data(receive);
+        sink.start_data(receive, self.asks.settings());
         self.rate = rate;
     }
 }
@@ -1442,6 +1445,37 @@ mod tests {
         let (at_caller, at_answerer) = exchange(&mut caller, &mut answerer, 60);
         let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
         assert!(found(&at_answerer), "the answerer lost the caller's data");
+        assert!(found(&at_caller), "the caller lost the answerer's data");
+    }
+
+    #[test]
+    fn two_ends_that_ask_for_all_of_mp_carry_data_both_ways() {
+        let asks = Asks {
+            trellis: mp::Trellis::States64,
+            nonlinear: true,
+            expanded_shaping: true,
+            precoding: [(6000, -1500), (-2500, 800), (700, 300)],
+        };
+        let mut caller = V34::new(Role::Originate).asking(asks);
+        let mut answerer = V34::new(Role::Answer).asking(Asks {
+            trellis: mp::Trellis::States32,
+            ..asks
+        });
+        let up = (0..400).find(|_| {
+            exchange_over(&mut caller, &mut answerer, 1, alaw);
+            caller.connected() && answerer.connected()
+        });
+        assert!(up.is_some(), "no V.34 connection asking for all of MP");
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_over(&mut caller, &mut answerer, 60, alaw);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer),
+            "the answerer lost the caller's data at {}",
+            caller.bit_rate()
+        );
         assert!(found(&at_caller), "the caller lost the answerer's data");
     }
 }
