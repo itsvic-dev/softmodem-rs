@@ -47,7 +47,7 @@ enum Send {
     Quiet,
     /// S, until Jd′.
     S,
-    /// Silence through DIL, until it has shown the levels.
+    /// SCR through DIL, until it has shown the levels.
     Dil,
     /// CPt, until R̄i.
     Cpt,
@@ -155,7 +155,12 @@ impl Upstream {
                 self.queue.extend(ja);
             }
             Send::Quiet if events.jd.is_some() => self.send = Send::S,
-            Send::Quiet | Send::Dil if events.levels.is_none() => self.queue.push_back((0.0, 0.0)),
+            Send::Quiet if events.levels.is_none() => self.queue.push_back((0.0, 0.0)),
+            // § 9.3.2.9: SCR, not silence, so that DIL meets the line as data mode will.
+            Send::Dil if events.levels.is_none() => {
+                let scr = self.training.sequence(&[true; 2], Points::Four);
+                self.queue.extend(scr);
+            }
             Send::Quiet => self.send = Send::S,
             Send::S if events.jd_prime => {
                 self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
