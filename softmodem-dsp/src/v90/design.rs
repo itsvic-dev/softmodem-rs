@@ -12,10 +12,9 @@ const POWER_LIMITS: [f64; 32] = [
     8504.0, 8028.0, 7580.0, 7156.0, 6756.0, 6380.0, 6020.0, 5684.0, 5368.0, 5068.0, 4784.0,
     4516.0, 4264.0, 4024.0, 3800.0, 3588.0, 3388.0, 3196.0, 3020.0, 2852.0, 2692.0, 2540.0,
 ];
-// A segment of 12 gives each data frame interval both signs of its Ucode.
-const DIL_SIGNS: [bool; 12] = [
-    true, false, true, false, true, false, false, true, false, true, false, true,
-];
+// SP, the most table 12 allows, and H for segments of 120 symbols.
+const DIL_SIGN_BITS: usize = 128;
+const DIL_LENGTH: u8 = 19;
 // Levels this many noise deviations apart leave symbol errors below 10⁻⁷.
 const SPACING_SIGMAS: f64 = 11.0;
 // Where DIL showed no noise at all, half the smallest A-law step.
@@ -58,16 +57,35 @@ pub fn average_power(sets: &[Vec<f64>; FRAME], modulus_bits: usize) -> f64 {
     sum / (6.0 * total as f64)
 }
 
-/// The DIL this modem asks for: every Ucode once, each in a segment of 12
-/// that gives each data frame interval both of its signs.
+// Pseudo-random signs from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, so that DIL has no strong tones.
+fn dil_signs() -> Vec<bool> {
+    let mut state: u16 = 0xACE1;
+    (0..DIL_SIGN_BITS)
+        .map(|_| {
+            let bit = (state ^ state >> 2 ^ state >> 3 ^ state >> 5) & 1;
+            state = state >> 1 | bit << 15;
+            bit == 1
+        })
+        .collect()
+}
+
+/// The DIL this modem asks for: every Ucode in segments of 120 symbols, with
+/// both signs in each data frame interval. The Ucodes go from UINFO down to
+/// 0, up to 127 and back toward UINFO, so the level never jumps, and TRN1d
+/// before it and Ri after it are near UINFO too.
 #[must_use]
 pub fn descriptor(uinfo: u8) -> Descriptor {
+    let uinfo = uinfo.min(COUNT - 2);
     Descriptor {
-        signs: DIL_SIGNS.to_vec(),
+        signs: dil_signs(),
         pattern: vec![true],
-        lengths: [1; 8],
+        lengths: [DIL_LENGTH; 8],
         references: [uinfo; 8],
-        training: (0..COUNT).collect(),
+        training: (0..=uinfo)
+            .rev()
+            .chain(1..COUNT)
+            .chain((uinfo + 1..COUNT - 1).rev())
+            .collect(),
     }
 }
 
@@ -274,9 +292,25 @@ mod tests {
     #[test]
     fn asks_for_each_ucode_with_both_signs_in_each_interval() {
         let descriptor = descriptor(75);
-        assert_eq!(descriptor.training.len(), 128);
+        assert!(descriptor.training.len() <= 255);
+        let mut ucodes = descriptor.training.clone();
+        ucodes.sort_unstable();
+        ucodes.dedup();
+        assert_eq!(ucodes.len(), usize::from(COUNT));
+        let length = (usize::from(DIL_LENGTH) + 1) * FRAME;
         for interval in 0..FRAME {
-            assert_ne!(DIL_SIGNS[interval], DIL_SIGNS[interval + FRAME]);
+            let signs: Vec<bool> = (interval..length)
+                .step_by(FRAME)
+                .map(|k| descriptor.signs[k % descriptor.signs.len()])
+                .collect();
+            assert!(signs.contains(&true) && signs.contains(&false));
         }
+    }
+
+    #[test]
+    fn moves_through_the_ucodes_one_step_at_a_time() {
+        let training = descriptor(75).training;
+        assert_eq!((training[0], *training.last().unwrap_or(&0)), (75, 76));
+        assert!(training.windows(2).all(|w| w[0].abs_diff(w[1]) <= 1));
     }
 }

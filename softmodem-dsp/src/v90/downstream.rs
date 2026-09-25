@@ -21,7 +21,7 @@ const SD_FRAMES: usize = 8;
 const SMALL: f64 = 0.25;
 const SPREAD: f64 = 1.3;
 // Passes of the whole DIL to learn from.
-const DIL_PASSES: usize = 2;
+const DIL_PASSES: usize = 1;
 // Frames of Ri before R̄i counts.
 const RI_FRAMES: usize = 4;
 const R_BAR_SYMBOLS: usize = 24;
