@@ -63,7 +63,9 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `checks.aarch64-linux.slmodemd-v22bis`, `slmodemd-v34` and
   `slmodemd-v90` call this modem from slmodemd in an x86-64 guest under
   TCG, and pass text both ways. In `slmodemd-v90` slmodemd is the V.90
-  analogue modem, so it checks this modem's digital side. `result/dumps/softmodem/` has the call as one stereo WAV,
+  analogue modem, so it checks this modem's digital side, and
+  `slmodemd-v90-renegotiate` adds noise toward slmodemd, which makes it
+  renegotiate with silence. `result/dumps/softmodem/` has the call as one stereo WAV,
   slmodemd on the left. `slmodemd-v34-retrain` retrains from ATO1, and
   `slmodemd-v34-noise` adds noise that makes slmodemd retrain, and
   `slmodemd-v34-renegotiate` noise toward this modem only, which makes it
