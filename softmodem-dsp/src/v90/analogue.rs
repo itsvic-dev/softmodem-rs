@@ -307,12 +307,6 @@ impl Analogue {
         }
     }
 
-    /// Starts a rate renegotiation from data mode, as § 9.6.2.1 has the
-    /// analogue modem do.
-    pub fn renegotiate(&mut self) {
-        self.start_renegotiation(false);
-    }
-
     fn start_renegotiation(&mut self, clearing: bool) {
         let (Some(upstream), Some(downstream)) = (&mut self.upstream, &mut self.downstream) else {
             return;
@@ -397,6 +391,11 @@ impl DataPump for Analogue {
         };
         downstream.receive(input, bits);
         self.online |= self.connected();
+    }
+
+    // § 9.6.2.1.
+    fn renegotiate(&mut self) {
+        self.start_renegotiation(false);
     }
 
     fn clear_down(&mut self) {

@@ -94,6 +94,10 @@ pub trait DataPump: Debug + Send {
     /// Asks the far end to train again, for a modulation that can.
     fn retrain(&mut self) {}
 
+    /// Starts a rate renegotiation from data mode, for a modulation that has
+    /// one. Data stops until both ends are in data mode again.
+    fn renegotiate(&mut self) {}
+
     /// Starts ending the call with the far end, for a modulation that can.
     /// [`DataPump::cleared`] then says when it has.
     fn clear_down(&mut self) {}

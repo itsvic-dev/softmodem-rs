@@ -812,23 +812,6 @@ impl V34 {
         self.tone_heard > RETRAIN_TONE
     }
 
-    /// Starts a rate renegotiation from data mode, as § 11.6.1.1 has the
-    /// initiating modem do. Data stops until both ends are in data mode
-    /// again, at the rate the two MPs then agree.
-    pub fn renegotiate(&mut self) {
-        let Some(source) = &mut self.source else {
-            return;
-        };
-        if source.send != Send::Data {
-            return;
-        }
-        source.renegotiate();
-        self.far.trn = false;
-        self.far.trained = None;
-        self.far.mp = None;
-        self.far.ack = false;
-    }
-
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -970,6 +953,21 @@ impl DataPump for V34 {
         if self.connected() {
             self.restart();
         }
+    }
+
+    // § 11.6.1.1: data stops until both ends are in data mode again, at the rate the two MPs agree.
+    fn renegotiate(&mut self) {
+        let Some(source) = &mut self.source else {
+            return;
+        };
+        if source.send != Send::Data {
+            return;
+        }
+        source.renegotiate();
+        self.far.trn = false;
+        self.far.trained = None;
+        self.far.mp = None;
+        self.far.ack = false;
     }
 
     fn clear_down(&mut self) {

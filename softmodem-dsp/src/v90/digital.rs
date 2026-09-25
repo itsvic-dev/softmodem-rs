@@ -378,12 +378,6 @@ impl Digital {
         }
     }
 
-    /// Starts a rate renegotiation from data mode, as § 9.6.1.1 has the
-    /// digital modem do.
-    pub fn renegotiate(&mut self) {
-        self.start_renegotiation(false);
-    }
-
     fn start_renegotiation(&mut self, clearing: bool) {
         let (Some(downstream), Some(upstream)) = (&mut self.downstream, &mut self.upstream) else {
             return;
@@ -485,6 +479,11 @@ impl DataPump for Digital {
         upstream.receive(input, bits);
         self.agree_upstream();
         self.online |= self.connected();
+    }
+
+    // § 9.6.1.1.
+    fn renegotiate(&mut self) {
+        self.start_renegotiation(false);
     }
 
     fn clear_down(&mut self) {

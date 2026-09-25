@@ -331,6 +331,12 @@ impl DataPump for Answer {
         }
     }
 
+    fn renegotiate(&mut self) {
+        if let AnswerStage::Chosen(pump) = &mut self.stage {
+            pump.renegotiate();
+        }
+    }
+
     fn clear_down(&mut self) {
         if let AnswerStage::Chosen(pump) = &mut self.stage {
             pump.clear_down();
@@ -539,6 +545,12 @@ impl DataPump for Call {
     fn retrain(&mut self) {
         if let CallStage::Chosen(pump) = &mut self.stage {
             pump.retrain();
+        }
+    }
+
+    fn renegotiate(&mut self) {
+        if let CallStage::Chosen(pump) = &mut self.stage {
+            pump.renegotiate();
         }
     }
 
