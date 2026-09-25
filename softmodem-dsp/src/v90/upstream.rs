@@ -43,6 +43,8 @@ pub struct Events {
     pub cp_ack: bool,
     /// The highest upstream rate the phase 3 training allows, in multiples of 2400 bit/s.
     pub trained: Option<u8>,
+    /// Rate renegotiations the analogue modem has started, by the S̄ of each.
+    pub renegotiations: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +57,8 @@ enum Listen {
     Sequences,
     /// B1 and data, from `from`.
     Data { from: usize },
+    /// S in data mode, until the S̄ that starts a rate renegotiation.
+    Hold,
 }
 
 /// Hears the analogue modem from its phase 3 on.
@@ -163,6 +167,12 @@ impl Upstream {
             (Some(Heard::SBar(_)), Listen::Sequences) if self.events.ja.is_some() => {
                 self.events.s_bars += 1;
             }
+            (Some(Heard::S), Listen::Data { .. }) => self.listen = Listen::Hold,
+            (Some(Heard::SBar(_)), Listen::Data { .. } | Listen::Hold) => {
+                self.expect_renegotiation();
+                self.listen = Listen::Sequences;
+                self.events.renegotiations += 1;
+            }
             _ => {}
         }
         let Some(index) = index else {
@@ -172,8 +182,19 @@ impl Upstream {
             Listen::Train { from } => self.train(index, from),
             Listen::Sequences => self.sequences(z, index),
             Listen::Data { from } if index >= from => self.data(z, data),
-            Listen::S | Listen::Data { .. } => {}
+            Listen::S | Listen::Data { .. } | Listen::Hold => {}
         }
+    }
+
+    /// Forgets the CP of data mode, for the new one that § 9.6 has the
+    /// analogue modem send after S and S̄.
+    pub fn expect_renegotiation(&mut self) {
+        self.events.cp = None;
+        self.events.cp_ack = false;
+        self.cp = Deframer::default();
+        self.ones = 0;
+        self.decoder = None;
+        self.frame.clear();
     }
 
     fn train(&mut self, index: usize, from: usize) {
@@ -229,6 +250,12 @@ impl Upstream {
                 self.listen = Listen::Data { from: index + 1 };
             }
         }
+    }
+
+    /// Whether data mode waits for its rate, from phase 4 or a renegotiation.
+    #[must_use]
+    pub fn awaits_rate(&self) -> bool {
+        self.decoder.is_none()
     }
 
     /// Starts decoding data mode at `bit_rate`, from after B1.

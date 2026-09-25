@@ -49,6 +49,9 @@ pub struct Events {
     pub mp: Option<Mp>,
     /// MP′ or Ed, which ends CP′.
     pub mp_ack: bool,
+    /// Rate renegotiations the digital modem has started or answered, by
+    /// the R̄d of each.
+    pub renegotiations: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +90,9 @@ pub struct Downstream {
     stats: Vec<[Stat; 2]>,
     training: Option<Mapping>,
     data: Option<Mapping>,
+    /// The mapping that TRN2d or MP will come with.
+    next: Option<Mapping>,
+    rd_frames: usize,
     decoder: Option<Decoder>,
     descrambler: Descrambler,
     mp: mp::Deframer,
@@ -121,6 +127,8 @@ impl Downstream {
             stats: vec![[Stat::default(); 2]; FRAME * usize::from(COUNT)],
             training: None,
             data: None,
+            next: None,
+            rd_frames: 0,
             decoder: None,
             descrambler: Descrambler::with(Polynomial::V34_CALL),
             mp: mp::Deframer::default(),
@@ -184,11 +192,13 @@ impl Downstream {
         (pattern || bar).then_some(positive)
     }
 
-    // The last frame as R, + + + − − −, or R̄ when false, on UINFO.
-    fn r_like(&self) -> Option<bool> {
-        let expected = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
+    // The last frame as R, + + + − − −, or R̄ when false, at `expected` in each interval.
+    fn r_like(&self, expected: [f64; FRAME]) -> Option<bool> {
         let w: Vec<f64> = self.window.iter().copied().collect();
-        if w.iter().any(|x| (x.abs() - expected).abs() > 0.25 * expected) {
+        if w.iter()
+            .zip(expected)
+            .any(|(x, level)| (x.abs() - level).abs() > 0.25 * level)
+        {
             return None;
         }
         let r = w[..3].iter().all(|&x| x > 0.0) && w[3..].iter().all(|&x| x < 0.0);
@@ -216,10 +226,12 @@ impl Downstream {
             Stage::Dil { from } => self.dil(n, from, x),
             Stage::Ri { frames } => {
                 if self.at_frame_end() {
-                    match self.r_like() {
+                    let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
+                    match self.r_like([uinfo; FRAME]) {
                         Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
                         Some(false) if frames >= RI_FRAMES => {
                             self.events.r_bar = true;
+                            self.next = self.training.clone();
                             self.stage = Stage::Training {
                                 from: n + 1 - FRAME + R_BAR_SYMBOLS,
                             };
@@ -230,7 +242,7 @@ impl Downstream {
             }
             Stage::Training { from } => {
                 if n == from {
-                    self.decoder = self.training.clone().map(Decoder::new);
+                    self.decoder = self.next.take().map(Decoder::new);
                     self.descrambler = Descrambler::with(Polynomial::V34_CALL);
                 }
                 if n >= from {
@@ -348,6 +360,9 @@ impl Downstream {
         let Some(mapping) = self.decoder.as_ref().map(|d| d.mapping().clone()) else {
             return;
         };
+        if self.stage == Stage::Data && self.renegotiated(&mapping) {
+            return;
+        }
         let codewords: [Codeword; FRAME] =
             std::array::from_fn(|interval| self.slice(samples[interval], interval, &mapping));
         let Some(decoder) = &mut self.decoder else {
@@ -381,5 +396,50 @@ impl Downstream {
             self.descrambler = Descrambler::with(Polynomial::V34_CALL);
             self.skip_frames = B1D_FRAMES;
         }
+    }
+
+    // § 9.6.2.2.1: Rd, the largest codeword of each interval as R, holds data mode, and R̄d starts MP.
+    fn renegotiated(&mut self, data: &Mapping) -> bool {
+        let largest: [f64; FRAME] = std::array::from_fn(|i| {
+            let ucode = data.sets[i].first().copied().unwrap_or(0);
+            self.events
+                .levels
+                .as_ref()
+                .map_or(f64::from(ucode::linear(ucode, self.law)), |l| {
+                    l.levels[i][usize::from(ucode)]
+                })
+        });
+        match self.r_like(largest) {
+            Some(true) => {
+                self.rd_frames += 1;
+                true
+            }
+            Some(false) if self.rd_frames >= RI_FRAMES => {
+                self.rd_frames = 0;
+                self.expect_renegotiation();
+                self.events.renegotiations += 1;
+                self.next = self
+                    .training
+                    .as_ref()
+                    .map(|training| Mapping::renegotiating(training, data));
+                self.stage = Stage::Training {
+                    from: self.count + 1 - FRAME + R_BAR_SYMBOLS,
+                };
+                true
+            }
+            _ => {
+                self.rd_frames = 0;
+                false
+            }
+        }
+    }
+
+    /// Forgets the MP of data mode and listens for a new one, as § 9.6 has
+    /// the digital modem send after R̄d.
+    pub fn expect_renegotiation(&mut self) {
+        self.events.mp = None;
+        self.events.mp_ack = false;
+        self.mp = mp::Deframer::default();
+        self.zero_frames = 0;
     }
 }

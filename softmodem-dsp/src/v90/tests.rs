@@ -78,6 +78,76 @@ fn connect_over(line: impl Fn(i16) -> i16) -> u32 {
     analogue.bit_rate()
 }
 
+fn connected_pair() -> (Analogue, Digital) {
+    let mut analogue = Analogue::new();
+    let mut digital = Digital::new();
+    for _ in 0..2000 {
+        if analogue.connected() && digital.connected() {
+            break;
+        }
+        exchange(&mut analogue, &mut digital, 1, &alaw);
+    }
+    assert!(analogue.connected() && digital.connected());
+    (analogue, digital)
+}
+
+// Whether data crosses down and up.
+fn carries_data(analogue: &mut Analogue, digital: &mut Digital) -> (bool, bool) {
+    let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+    analogue.push_bits(&message);
+    digital.push_bits(&message);
+    let (at_analogue, at_digital) = exchange(analogue, digital, 60, &alaw);
+    let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+    (found(&at_analogue), found(&at_digital))
+}
+
+#[test]
+fn renegotiates_from_either_end_and_carries_data_after() {
+    for from_analogue in [true, false] {
+        let (mut analogue, mut digital) = connected_pair();
+        if from_analogue {
+            analogue.renegotiate();
+        } else {
+            digital.renegotiate();
+        }
+        assert!(!(analogue.connected() && digital.connected()));
+        let back = (0..500).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            assert!(
+                analogue.carrier() && digital.carrier(),
+                "DCD would drop during a renegotiation"
+            );
+            analogue.connected() && digital.connected()
+        });
+        assert!(back.is_some(), "a renegotiation from the {} modem would not end", if from_analogue { "analogue" } else { "digital" });
+        assert_eq!((analogue.bit_rate(), digital.bit_rate()), (56_000, 56_000));
+        assert_eq!(
+            carries_data(&mut analogue, &mut digital),
+            (true, true),
+            "data down and up after a renegotiation from the {} modem",
+            if from_analogue { "analogue" } else { "digital" }
+        );
+    }
+}
+
+#[test]
+fn clears_down_from_either_end() {
+    for from_analogue in [true, false] {
+        let (mut analogue, mut digital) = connected_pair();
+        if from_analogue {
+            analogue.clear_down();
+        } else {
+            digital.clear_down();
+        }
+        let cleared = (0..500).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            analogue.cleared() && digital.cleared()
+        });
+        assert!(cleared.is_some(), "a cleardown from the {} modem would leave the call up", if from_analogue { "analogue" } else { "digital" });
+        assert!(!analogue.carrier() && !digital.carrier(), "DCD would stay on after a cleardown");
+    }
+}
+
 #[test]
 fn an_analogue_and_a_digital_modem_carry_data_at_56000_bit_s() {
     assert_eq!(connect_over(alaw), 56_000);

@@ -41,6 +41,8 @@ enum Send {
     Cp,
     /// B1 and data.
     Data,
+    /// Silence once a cleardown has ended the call.
+    Cleared,
 }
 
 /// The upstream V.34 signal from phase 3 on.
@@ -61,6 +63,12 @@ struct Upstream {
     b1_frames: usize,
     b1_sent: bool,
     rate: u8,
+    /// Renegotiations the digital modem has started, as far as this end has answered them.
+    renegotiations: u32,
+    /// A renegotiation to start at the next symbol.
+    renegotiate: bool,
+    /// This end started a cleardown, so its CP asks for 0 bit/s.
+    clearing: bool,
 }
 
 impl Upstream {
@@ -94,6 +102,9 @@ impl Upstream {
             b1_frames: 0,
             b1_sent: false,
             rate: 0,
+            renegotiations: 0,
+            renegotiate: false,
+            clearing: false,
         }
     }
 
@@ -110,6 +121,11 @@ impl Upstream {
     }
 
     fn refill(&mut self, events: &Events) {
+        // § 9.6.2.2: the responding modem answers the far R̄d; an initiating one has already begun.
+        if events.renegotiations != self.renegotiations {
+            self.renegotiations = events.renegotiations;
+            self.renegotiate |= self.send == Send::Data;
+        }
         match self.send {
             Send::Ja if events.sd => self.send = Send::Quiet,
             Send::Ja => {
@@ -134,8 +150,21 @@ impl Upstream {
                 }
             }
             Send::Cp => self.cp(events),
+            Send::Data if self.renegotiate => self.start_renegotiation(),
             Send::Data => self.data(),
+            Send::Cleared => self.queue.push_back((0.0, 0.0)),
         }
+    }
+
+    // § 9.6.2.1: S and S̄, then CP.
+    fn start_renegotiation(&mut self) {
+        self.renegotiate = false;
+        self.queue.extend((0..S_SYMBOLS).map(training::s));
+        self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
+        self.training = training::Sender::new(Role::Answer);
+        self.acks = 0;
+        self.b1_sent = false;
+        self.send = Send::Cp;
     }
 
     // § 9.3.2.10: CPt and CP from what DIL showed, then S and S̄ to end DIL.
@@ -159,7 +188,13 @@ impl Upstream {
         if self.acks > 0 && events.mp_ack {
             let e = self.training.sequence(&[true; E_ONES], Points::Four);
             self.queue.extend(e);
-            self.start_data(events.mp);
+            // § 9.7: after a rate sequence of 0 bit/s from either end, the call is over.
+            let far_clears = events.mp.is_some_and(|mp| mp.max_answer_to_call == 0);
+            if self.clearing || far_clears {
+                self.send = Send::Cleared;
+            } else {
+                self.start_data(events.mp);
+            }
             return;
         }
         let Some(cp) = &self.cp else {
@@ -168,11 +203,14 @@ impl Upstream {
         };
         let acknowledge = events.mp.is_some();
         self.acks += usize::from(acknowledge);
-        let frame = Cp {
+        let mut cp = Cp {
             acknowledge,
             ..cp.clone()
+        };
+        if self.clearing {
+            cp.rate = 0;
         }
-        .frame();
+        let frame = cp.frame();
         self.queue.extend(self.training.sequence(&frame, Points::Four));
     }
 
@@ -241,6 +279,8 @@ pub struct Analogue {
     modulator: Option<Modulator>,
     upstream: Option<Upstream>,
     downstream: Option<Downstream>,
+    /// Connected once, and still in the call through renegotiations.
+    online: bool,
 }
 
 impl Default for Analogue {
@@ -257,7 +297,27 @@ impl Analogue {
             modulator: None,
             upstream: None,
             downstream: None,
+            online: false,
         }
+    }
+
+    /// Starts a rate renegotiation from data mode, as § 9.6.2.1 has the
+    /// analogue modem do.
+    pub fn renegotiate(&mut self) {
+        self.start_renegotiation(false);
+    }
+
+    fn start_renegotiation(&mut self, clearing: bool) {
+        let (Some(upstream), Some(downstream)) = (&mut self.upstream, &mut self.downstream) else {
+            return;
+        };
+        if upstream.send != Send::Data {
+            return;
+        }
+        upstream.renegotiate = true;
+        upstream.clearing = clearing;
+        upstream.b1_sent = false;
+        downstream.expect_renegotiation();
     }
 
     fn start(&mut self, outcome: PcmOutcome) {
@@ -324,10 +384,21 @@ impl DataPump for Analogue {
             return;
         };
         downstream.receive(input, bits);
+        self.online |= self.connected();
+    }
+
+    fn clear_down(&mut self) {
+        self.start_renegotiation(true);
+    }
+
+    fn cleared(&self) -> bool {
+        self.upstream
+            .as_ref()
+            .is_some_and(|up| up.send == Send::Cleared)
     }
 
     fn carrier(&self) -> bool {
-        self.connected()
+        self.online && !self.cleared()
     }
 
     fn connected(&self) -> bool {

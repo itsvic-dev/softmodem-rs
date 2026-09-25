@@ -49,6 +49,18 @@ impl Mapping {
         mapping.fits().then_some(mapping)
     }
 
+    /// § 8.6: the mapping of MP and Ed in a rate renegotiation, the
+    /// constellations and K of CPt with the spectral shaping of data mode.
+    #[must_use]
+    pub fn renegotiating(training: &Self, data: &Self) -> Self {
+        Self {
+            redundancy: data.redundancy,
+            lookahead: data.lookahead,
+            filter: data.filter,
+            ..training.clone()
+        }
+    }
+
     /// Whether 2^K ≤ M0 · … · M5, as § 5.4.3 requires.
     #[must_use]
     pub fn fits(&self) -> bool {

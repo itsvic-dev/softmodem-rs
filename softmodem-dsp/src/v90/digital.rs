@@ -21,6 +21,8 @@ const TRN2D_FRAMES: usize = 340;
 // § 8.6.2 and § 8.6.1.
 const ED_FRAMES: usize = 2;
 const B1D_FRAMES: usize = 48;
+// § 9.6.1.1.1: Rd for 384T.
+const RD_SYMBOLS: usize = 384;
 // The most look-ahead this modem's spectral shaper takes.
 const LOOKAHEAD: u8 = 3;
 
@@ -38,6 +40,8 @@ enum Send {
     Training,
     /// B1d and data, with the constellations of CP.
     Data,
+    /// Silence once a cleardown has ended the call.
+    Cleared,
 }
 
 /// The downstream PCM signal from phase 3 on.
@@ -60,6 +64,15 @@ struct Downstream {
     data: VecDeque<bool>,
     b1_sent: bool,
     rate: u32,
+    /// The mapping of CPt, and the CP of data mode.
+    training: Option<Mapping>,
+    cp: Option<Cp>,
+    /// Renegotiations the analogue modem has started, as far as this end has answered them.
+    renegotiations: u32,
+    /// A renegotiation to start at the next data frame.
+    renegotiate: bool,
+    /// This end started a cleardown, so its MP asks for 0 bit/s.
+    clearing: bool,
 }
 
 impl Downstream {
@@ -80,6 +93,11 @@ impl Downstream {
             data: VecDeque::new(),
             b1_sent: false,
             rate: 0,
+            training: None,
+            cp: None,
+            renegotiations: 0,
+            renegotiate: false,
+            clearing: false,
         }
     }
 
@@ -102,6 +120,11 @@ impl Downstream {
 
     fn refill(&mut self, events: &Events, mp: Mp) {
         let uinfo = self.outcome.uinfo;
+        // § 9.6.1.2.2: the responding modem answers the far S̄; an initiating one has already begun.
+        if events.renegotiations != self.renegotiations {
+            self.renegotiations = events.renegotiations;
+            self.renegotiate |= self.send == Send::Data;
+        }
         match self.send {
             Send::Quiet => {
                 let Some(ja) = &events.ja else {
@@ -146,8 +169,31 @@ impl Downstream {
                 self.send = Send::Ri { sent: sent + FRAME };
             }
             Send::Training => self.training(events, mp),
+            Send::Data if self.renegotiate => self.start_renegotiation(),
             Send::Data => self.data(),
+            Send::Cleared => self.queue.push_back(Codeword::SILENCE),
         }
+    }
+
+    // § 9.6.1.1.1: Rd and R̄d on the largest codeword of each interval, then MP.
+    fn start_renegotiation(&mut self) {
+        self.renegotiate = false;
+        let (Some(training), Some(cp)) = (&self.training, &self.cp) else {
+            self.send = Send::Data;
+            return;
+        };
+        let Some(data) = Mapping::from_cp(cp) else {
+            return;
+        };
+        let largest: [u8; FRAME] =
+            std::array::from_fn(|i| data.sets[i].first().copied().unwrap_or(0));
+        self.queue.extend(training::r(largest, false, RD_SYMBOLS));
+        self.queue.extend(training::r(largest, true, R_BAR_SYMBOLS));
+        let mapping = Mapping::renegotiating(training, &data);
+        self.restart_encoder(mapping);
+        self.acks = 0;
+        self.b1_sent = false;
+        self.send = Send::Training;
     }
 
     fn restart_encoder(&mut self, mapping: Mapping) {
@@ -164,6 +210,7 @@ impl Downstream {
             self.queue.push_back(Codeword::SILENCE);
             return;
         };
+        self.training = Some(mapping.clone());
         self.restart_encoder(mapping);
         self.queue_bits(&vec![true; self.frame_bits() * TRN2D_FRAMES]);
         self.send = Send::Training;
@@ -212,7 +259,11 @@ impl Downstream {
             } else {
                 let acknowledge = events.cp.is_some();
                 self.acks += usize::from(acknowledge);
-                let frame = Mp { acknowledge, ..mp }.frame();
+                let mut mp = Mp { acknowledge, ..mp };
+                if self.clearing {
+                    mp.max_answer_to_call = 0;
+                }
+                let frame = mp.frame();
                 self.queue_bits(&frame);
             }
         }
@@ -222,11 +273,18 @@ impl Downstream {
         }
     }
 
+    // § 9.7: after a rate sequence of 0 bit/s from either end, the call is over.
     fn start_data(&mut self, events: &Events) {
+        let far_clears = events.cp.as_ref().is_some_and(|cp| cp.rate == 0);
+        if self.clearing || far_clears {
+            self.send = Send::Cleared;
+            return;
+        }
         let Some(mapping) = events.cp.as_ref().and_then(Mapping::from_cp) else {
             return;
         };
         self.rate = events.cp.as_ref().map_or(0, Cp::bit_rate);
+        self.cp.clone_from(&events.cp);
         self.restart_encoder(mapping);
         self.queue_bits(&vec![true; self.frame_bits() * B1D_FRAMES]);
         self.send = Send::Data;
@@ -251,7 +309,8 @@ pub struct Digital {
     outcome: Option<PcmOutcome>,
     downstream: Option<Downstream>,
     upstream: Option<Upstream>,
-    upstream_rate: u8,
+    /// Connected once, and still in the call through renegotiations.
+    online: bool,
 }
 
 impl Default for Digital {
@@ -268,8 +327,27 @@ impl Digital {
             outcome: None,
             downstream: None,
             upstream: None,
-            upstream_rate: 0,
+            online: false,
         }
+    }
+
+    /// Starts a rate renegotiation from data mode, as § 9.6.1.1 has the
+    /// digital modem do.
+    pub fn renegotiate(&mut self) {
+        self.start_renegotiation(false);
+    }
+
+    fn start_renegotiation(&mut self, clearing: bool) {
+        let (Some(downstream), Some(upstream)) = (&mut self.downstream, &mut self.upstream) else {
+            return;
+        };
+        if downstream.send != Send::Data {
+            return;
+        }
+        downstream.renegotiate = true;
+        downstream.clearing = clearing;
+        downstream.b1_sent = false;
+        upstream.expect_renegotiation();
     }
 
     // Table 16: what this end's receiver asks of the analogue modem's transmitter.
@@ -295,7 +373,7 @@ impl Digital {
         let Some(cp) = &upstream.events().cp else {
             return;
         };
-        if self.upstream_rate != 0 {
+        if !upstream.awaits_rate() {
             return;
         }
         let both = mp.rates & (cp.upstream_rates << 1);
@@ -304,7 +382,6 @@ impl Digital {
             .find(|&n| both >> (n - 1) & 1 == 1)
             .unwrap_or(0);
         if rate > 0 {
-            self.upstream_rate = rate;
             upstream.start_data(u32::from(rate) * 2400);
         }
     }
@@ -357,10 +434,21 @@ impl DataPump for Digital {
         };
         upstream.receive(input, bits);
         self.agree_upstream();
+        self.online |= self.connected();
+    }
+
+    fn clear_down(&mut self) {
+        self.start_renegotiation(true);
+    }
+
+    fn cleared(&self) -> bool {
+        self.downstream
+            .as_ref()
+            .is_some_and(|d| d.send == Send::Cleared)
     }
 
     fn carrier(&self) -> bool {
-        self.connected()
+        self.online && !self.cleared()
     }
 
     fn connected(&self) -> bool {
