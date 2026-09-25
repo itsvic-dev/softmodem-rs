@@ -413,7 +413,8 @@ impl Downstream {
         let Some(mapping) = self.decoder.as_ref().map(|d| d.mapping().clone()) else {
             return;
         };
-        if self.stage == Stage::Data && self.rd_frames[self.count % FRAME] > 0 {
+        // Data can look like one frame of Rd, so data mode holds only once several have come.
+        if self.stage == Stage::Data && self.rd_frames[self.count % FRAME] >= RI_FRAMES {
             return;
         }
         let codewords: [Codeword; FRAME] =
