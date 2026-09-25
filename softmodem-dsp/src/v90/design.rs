@@ -12,9 +12,10 @@ const POWER_LIMITS: [f64; 32] = [
     8504.0, 8028.0, 7580.0, 7156.0, 6756.0, 6380.0, 6020.0, 5684.0, 5368.0, 5068.0, 4784.0,
     4516.0, 4264.0, 4024.0, 3800.0, 3588.0, 3388.0, 3196.0, 3020.0, 2852.0, 2692.0, 2540.0,
 ];
-// SP, the most table 12 allows, and H for segments of 120 symbols.
+// SP, the most table 12 allows.
 const DIL_SIGN_BITS: usize = 128;
-const DIL_LENGTH: u8 = 19;
+// H1 to H8: segments of 120 symbols, shorter for the loud Uchords, down to 12 at full scale.
+const DIL_LENGTHS: [u8; 8] = [19, 19, 19, 19, 19, 9, 3, 1];
 // Levels this many noise deviations apart leave symbol errors below 10⁻⁷.
 const SPACING_SIGMAS: f64 = 11.0;
 // Where DIL showed no noise at all, half the smallest A-law step.
@@ -57,34 +58,37 @@ pub fn average_power(sets: &[Vec<f64>; FRAME], modulus_bits: usize) -> f64 {
     sum / (6.0 * total as f64)
 }
 
-// Pseudo-random signs from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, so that DIL has no strong tones.
+// Pseudo-random from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, the second frame the first inverted for segments of 12.
 fn dil_signs() -> Vec<bool> {
     let mut state: u16 = 0xACE1;
-    (0..DIL_SIGN_BITS)
+    let mut signs: Vec<bool> = (0..DIL_SIGN_BITS)
         .map(|_| {
             let bit = (state ^ state >> 2 ^ state >> 3 ^ state >> 5) & 1;
             state = state >> 1 | bit << 15;
             bit == 1
         })
-        .collect()
+        .collect();
+    for k in FRAME..2 * FRAME {
+        signs[k] = !signs[k - FRAME];
+    }
+    signs
 }
 
-/// The DIL this modem asks for: every Ucode in segments of 120 symbols, with
-/// both signs in each data frame interval. The Ucodes go from UINFO down to
-/// 0, up to 127 and back toward UINFO, so the level never jumps, and TRN1d
-/// before it and Ri after it are near UINFO too.
+/// The DIL this modem asks for: every Ucode, with both signs in each data
+/// frame interval. The Ucodes go from UINFO up to 127, down to 0 and back
+/// up to UINFO, so the level never jumps, and TRN1d before it and Ri after
+/// it are near UINFO too. The loud Uchords have short segments.
 #[must_use]
 pub fn descriptor(uinfo: u8) -> Descriptor {
-    let uinfo = uinfo.min(COUNT - 2);
+    let uinfo = uinfo.clamp(1, COUNT - 1);
     Descriptor {
         signs: dil_signs(),
         pattern: vec![true],
-        lengths: [DIL_LENGTH; 8],
+        lengths: DIL_LENGTHS,
         references: [uinfo; 8],
-        training: (0..=uinfo)
-            .rev()
-            .chain(1..COUNT)
-            .chain((uinfo + 1..COUNT - 1).rev())
+        training: (uinfo..COUNT)
+            .chain((0..COUNT - 1).rev())
+            .chain(1..uinfo)
             .collect(),
     }
 }
@@ -297,20 +301,30 @@ mod tests {
         ucodes.sort_unstable();
         ucodes.dedup();
         assert_eq!(ucodes.len(), usize::from(COUNT));
-        let length = (usize::from(DIL_LENGTH) + 1) * FRAME;
-        for interval in 0..FRAME {
-            let signs: Vec<bool> = (interval..length)
-                .step_by(FRAME)
-                .map(|k| descriptor.signs[k % descriptor.signs.len()])
-                .collect();
-            assert!(signs.contains(&true) && signs.contains(&false));
+        for h in DIL_LENGTHS {
+            let length = (usize::from(h) + 1) * FRAME;
+            for interval in 0..FRAME {
+                let signs: Vec<bool> = (interval..length)
+                    .step_by(FRAME)
+                    .map(|k| descriptor.signs[k % descriptor.signs.len()])
+                    .collect();
+                assert!(signs.contains(&true) && signs.contains(&false));
+            }
         }
     }
 
     #[test]
     fn moves_through_the_ucodes_one_step_at_a_time() {
         let training = descriptor(75).training;
-        assert_eq!((training[0], *training.last().unwrap_or(&0)), (75, 76));
+        assert_eq!((training[0], *training.last().unwrap_or(&0)), (75, 74));
         assert!(training.windows(2).all(|w| w[0].abs_diff(w[1]) <= 1));
+    }
+
+    #[test]
+    fn keeps_the_loud_part_short() {
+        let descriptor = descriptor(75);
+        let length = |u: u8| (usize::from(descriptor.lengths[usize::from(u / 16)]) + 1) * FRAME;
+        let loud: usize = descriptor.training.iter().filter(|&&u| u >= 112).map(|&u| length(u)).sum();
+        assert!(loud <= 400, "{loud} symbols of DIL near full scale");
     }
 }
