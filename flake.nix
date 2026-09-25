@@ -38,6 +38,19 @@
             reuse --root ${self} lint
             touch $out
           '';
+          fmt =
+            pkgs.runCommand "softmodem-fmt"
+              {
+                nativeBuildInputs = [
+                  pkgs.cargo
+                  pkgs.rustfmt
+                ];
+              }
+              ''
+                cd ${self}
+                cargo fmt --all --check
+                touch $out
+              '';
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });

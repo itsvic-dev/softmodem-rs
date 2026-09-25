@@ -51,6 +51,7 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `kvm`, and it copies each side's WAV recordings into `result/`.
   `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
   V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.90.
+- `checks.<system>.fmt` fails on code that `cargo fmt` would change.
 - The project is GPL-3.0-or-later under REUSE, and `checks.<system>.reuse`
   runs `reuse lint`. Every file that takes a comment starts with the SPDX
   header, and a new one without it fails the check: `reuse annotate
