@@ -465,42 +465,8 @@ impl Phase2 {
         let mut bits = Vec::new();
         self.demodulator.process(input, &mut bits);
         for bit in bits {
-            let far = if self.mode == Mode::Analogue {
-                self.info0d.push(bit).map(|info0d| {
-                    self.far_info0d = Some(info0d);
-                    info0d.v34
-                })
-            } else {
-                self.info0.push(bit)
-            };
-            if let Some(info0) = far
-                && self.far.is_none()
-            {
-                self.far = Some(info0);
-                self.far_at = self.heard + input.len();
-            }
-            if self.role == Role::Answer
-                && let Some(info1c) = self.info1c.push(bit)
-                && self.step == Step::AfterProbe
-            {
-                if self.mode == Mode::Analogue {
-                    self.decide_pcm(&info1c);
-                } else {
-                    self.decide(&info1c);
-                }
-            }
-            if self.role == Role::Originate
-                && let Some(info1a) = self.info1a.push(bit)
-                && self.step == Step::AwaitInfo1a
-            {
-                self.settle(&info1a);
-            }
-            if self.mode == Mode::Digital
-                && let Some(info1a) = self.pcm_info1a.push(bit)
-                && self.step == Step::AwaitInfo1a
-            {
-                self.settle_pcm(info1a);
-            }
+            self.info0_bit(bit, self.heard + input.len());
+            self.info1_bit(bit);
         }
         self.reversals.extend(self.detector.process(input));
         if let Step::Measure { from } = self.step {
@@ -512,6 +478,49 @@ impl Phase2 {
         }
         self.heard += input.len();
         self.advance();
+    }
+
+    // The far INFO0, or INFO0d, heard by sample `at`.
+    fn info0_bit(&mut self, bit: bool, at: usize) {
+        let far = if self.mode == Mode::Analogue {
+            self.info0d.push(bit).map(|info0d| {
+                self.far_info0d = Some(info0d);
+                info0d.v34
+            })
+        } else {
+            self.info0.push(bit)
+        };
+        if let Some(info0) = far
+            && self.far.is_none()
+        {
+            self.far = Some(info0);
+            self.far_at = at;
+        }
+    }
+
+    fn info1_bit(&mut self, bit: bool) {
+        if self.role == Role::Answer
+            && let Some(info1c) = self.info1c.push(bit)
+            && self.step == Step::AfterProbe
+        {
+            if self.mode == Mode::Analogue {
+                self.decide_pcm(&info1c);
+            } else {
+                self.decide(&info1c);
+            }
+        }
+        if self.role == Role::Originate
+            && let Some(info1a) = self.info1a.push(bit)
+            && self.step == Step::AwaitInfo1a
+        {
+            self.settle(&info1a);
+        }
+        if self.mode == Mode::Digital
+            && let Some(info1a) = self.pcm_info1a.push(bit)
+            && self.step == Step::AwaitInfo1a
+        {
+            self.settle_pcm(info1a);
+        }
     }
 
     #[expect(
