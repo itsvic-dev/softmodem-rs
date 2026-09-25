@@ -199,6 +199,34 @@ fn clears_down_from_either_end() {
 }
 
 #[test]
+fn sends_cp_on_16_points_when_jd_asks() {
+    for from_analogue in [true, false] {
+        let mut analogue = Analogue::new();
+        let mut digital = Digital::asking_sixteen_points();
+        let up = (0..2000).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            analogue.connected() && digital.connected()
+        });
+        assert!(up.is_some(), "no V.90 connection with CP on 16 points");
+        assert_eq!(carries_data(&mut analogue, &mut digital), (true, true));
+        if from_analogue {
+            analogue.renegotiate();
+        } else {
+            digital.renegotiate();
+        }
+        let back = (0..1500).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            analogue.connected() && digital.connected()
+        });
+        assert!(
+            back.is_some(),
+            "a renegotiation with CP on 16 points would not end"
+        );
+        assert_eq!(carries_data(&mut analogue, &mut digital), (true, true));
+    }
+}
+
+#[test]
 fn an_analogue_and_a_digital_modem_carry_data_at_56000_bit_s() {
     assert_eq!(connect_over(alaw), 56_000);
 }

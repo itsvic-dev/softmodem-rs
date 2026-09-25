@@ -58,6 +58,7 @@ enum Send {
 )]
 struct Downstream {
     outcome: PcmOutcome,
+    jd: Jd,
     send: Send,
     queue: VecDeque<Codeword>,
     signs: Signs,
@@ -88,9 +89,10 @@ struct Downstream {
 }
 
 impl Downstream {
-    fn new(outcome: PcmOutcome) -> Self {
+    fn new(outcome: PcmOutcome, jd: Jd) -> Self {
         Self {
             outcome,
+            jd,
             send: Send::Quiet,
             queue: VecDeque::new(),
             signs: Signs::new(outcome.uinfo),
@@ -111,15 +113,6 @@ impl Downstream {
             renegotiate: false,
             clearing: false,
             silence: false,
-        }
-    }
-
-    fn jd() -> Jd {
-        Jd {
-            rates: ALL_RATES,
-            sixteen_points: false,
-            sixteen_points_renegotiating: false,
-            lookahead: LOOKAHEAD,
         }
     }
 
@@ -163,7 +156,7 @@ impl Downstream {
                 };
             }
             Send::Jd => {
-                let frame = Self::jd().frame();
+                let frame = self.jd.frame();
                 self.queue.extend(self.signs.sequence(&frame));
             }
             Send::Dil => match &mut self.dil {
@@ -352,6 +345,7 @@ impl Downstream {
 /// The digital modem, from phase 2 on.
 #[derive(Debug)]
 pub struct Digital {
+    jd: Jd,
     phase2: Phase2,
     outcome: Option<PcmOutcome>,
     downstream: Option<Downstream>,
@@ -374,6 +368,12 @@ impl Digital {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            jd: Jd {
+                rates: ALL_RATES,
+                sixteen_points: false,
+                sixteen_points_renegotiating: false,
+                lookahead: LOOKAHEAD,
+            },
             phase2: Phase2::digital(),
             outcome: None,
             downstream: None,
@@ -383,6 +383,15 @@ impl Digital {
             tone_heard: 0,
             retrained_from: 0,
         }
+    }
+
+    /// As a digital modem that has CP and E sent on 16 points, as many do.
+    #[cfg(test)]
+    pub(crate) fn asking_sixteen_points() -> Self {
+        let mut digital = Self::new();
+        digital.jd.sixteen_points = true;
+        digital.jd.sixteen_points_renegotiating = true;
+        digital
     }
 
     // § 9.5.1: phase 2 again from the tones, with the far INFO0a kept.
@@ -510,8 +519,8 @@ impl DataPump for Digital {
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.pcm_outcome().filter(|_| self.phase2.done()) {
                 self.outcome = Some(outcome);
-                self.upstream = Some(Upstream::new(&outcome.upstream));
-                self.downstream = Some(Downstream::new(outcome));
+                self.upstream = Some(Upstream::new(&outcome.upstream, &self.jd));
+                self.downstream = Some(Downstream::new(outcome, self.jd));
             }
             return;
         };

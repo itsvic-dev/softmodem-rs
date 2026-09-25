@@ -11,6 +11,7 @@ use super::cp::Cp;
 use super::design::{self, Levels};
 use super::downstream::{Downstream, Events};
 use super::encoder::Mapping;
+use super::jd::Jd;
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
@@ -29,6 +30,14 @@ const S_BAR_SYMBOLS: usize = 16;
 const TRN_SYMBOLS: usize = 1024;
 // § 9.3.2.1: 70 ± 5 ms of silence after INFO1a.
 const SILENCE_MS: f64 = 70.0;
+
+fn sixteen(sixteen: bool) -> Points {
+    if sixteen {
+        Points::Sixteen
+    } else {
+        Points::Four
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Send {
@@ -58,6 +67,9 @@ struct Upstream {
     queue: VecDeque<Complex>,
     training: training::Sender,
     ja: Vec<bool>,
+    jd: Option<Jd>,
+    /// For CPt, CP and E, as Jd asks for phase 4 or a renegotiation (§ 8.5.2).
+    points: Points,
     cpt: Option<Cp>,
     cp: Option<Cp>,
     acks: usize,
@@ -97,6 +109,8 @@ impl Upstream {
             queue,
             training,
             ja: design::descriptor(outcome.uinfo).frame(),
+            jd: None,
+            points: Points::Four,
             cpt: None,
             cp: None,
             acks: 0,
@@ -131,6 +145,9 @@ impl Upstream {
             self.renegotiations = events.renegotiations;
             self.renegotiate |= self.send == Send::Data;
         }
+        if self.jd.is_none() {
+            self.jd = events.jd;
+        }
         match self.send {
             Send::Ja if events.sd => self.send = Send::Quiet,
             Send::Ja => {
@@ -150,7 +167,7 @@ impl Upstream {
             Send::Cpt => {
                 let frame = self.cpt.as_ref().map(Cp::frame).unwrap_or_default();
                 self.queue
-                    .extend(self.training.sequence(&frame, Points::Four));
+                    .extend(self.training.sequence(&frame, self.points));
                 if frame.is_empty() {
                     self.queue.push_back((0.0, 0.0));
                 }
@@ -168,6 +185,7 @@ impl Upstream {
         self.queue.extend((0..S_SYMBOLS).map(training::s));
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(Role::Answer);
+        self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points_renegotiating));
         self.acks = 0;
         self.b1_sent = false;
         self.send = Send::Cp;
@@ -186,13 +204,14 @@ impl Upstream {
         self.queue.extend((0..S_SYMBOLS).map(training::s));
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(Role::Answer);
+        self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points));
         self.send = Send::Cpt;
     }
 
     // § 9.4.2.3 and § 9.4.2.4: CP until MP, CP′ until MP′ or Ed, then E.
     fn cp(&mut self, events: &Events) {
         if self.acks > 0 && events.mp_ack {
-            let e = self.training.sequence(&[true; E_ONES], Points::Four);
+            let e = self.training.sequence(&[true; E_ONES], self.points);
             self.queue.extend(e);
             // § 9.7: after a rate sequence of 0 bit/s from either end, the call is over.
             let far_clears = events.mp.is_some_and(|mp| mp.max_answer_to_call == 0);
@@ -218,7 +237,7 @@ impl Upstream {
         }
         let frame = cp.frame();
         self.queue
-            .extend(self.training.sequence(&frame, Points::Four));
+            .extend(self.training.sequence(&frame, self.points));
     }
 
     // § 9.4.2.4: the highest rate both enable, up to the maximum in MP.
