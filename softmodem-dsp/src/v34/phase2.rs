@@ -977,15 +977,16 @@ mod tests {
 
     // `call` and `answer` in their V.34 parts, which V.90 gives the digital and the analogue modem.
     fn run_between(call: Phase2, answer: Phase2, delay: usize) -> (Phase2, Phase2, usize) {
-        run_stalled(call, answer, delay, 0)
+        run_impaired(call, answer, delay, 0, 0)
     }
 
-    // As `run_between`, with `stall` samples more delay toward the answer from 200 ms into its L2.
-    fn run_stalled(
+    // As `run_between`, with `stall` samples more delay toward the answer from 200 ms into its L2, and both ends first hearing the line `late` frames after they start sending.
+    fn run_impaired(
         mut call: Phase2,
         mut answer: Phase2,
         delay: usize,
         stall: usize,
+        late: usize,
     ) -> (Phase2, Phase2, usize) {
         let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
         let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
@@ -999,31 +1000,6 @@ mod tests {
                 up_line.extend(std::iter::repeat_n(0, stall));
                 stalled = true;
             }
-            up_line.extend(up);
-            down_line.extend(down);
-            let heard_up: Vec<i16> = up_line.drain(..FRAME).collect();
-            let heard_down: Vec<i16> = down_line.drain(..FRAME).collect();
-            answer.receive(&heard_up);
-            call.receive(&heard_down);
-            frames += 1;
-        }
-        (call, answer, frames)
-    }
-
-    // As `run_between`, with both ends first hearing the line `late` frames after they start sending.
-    fn run_hearing_late(
-        mut call: Phase2,
-        mut answer: Phase2,
-        delay: usize,
-        late: usize,
-    ) -> (Phase2, Phase2, usize) {
-        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
-        let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
-        let mut down_line = up_line.clone();
-        let mut frames = 0;
-        while !(call.done() && answer.done()) && frames < 400 {
-            call.transmit(&mut up);
-            answer.transmit(&mut down);
             up_line.extend(up);
             down_line.extend(down);
             let heard_up: Vec<i16> = up_line.drain(..FRAME).collect();
@@ -1189,7 +1165,7 @@ mod tests {
             (Phase2::digital(), Phase2::analogue()),
         ];
         for (call, answer) in pairs {
-            let (call, answer, frames) = run_stalled(call, answer, 0, 1600);
+            let (call, answer, frames) = run_impaired(call, answer, 0, 1600, 0);
             assert!(
                 call.done() && answer.done(),
                 "phase 2 did not finish in {} ms: call {:?}, answer {:?}",
@@ -1251,7 +1227,7 @@ mod tests {
                 (Phase2::digital(), Phase2::analogue()),
             ];
             for (call, answer) in pairs {
-                let (call, answer, frames) = run_hearing_late(call, answer, delay, 3);
+                let (call, answer, frames) = run_impaired(call, answer, delay, 0, 3);
                 assert!(
                     call.done() && answer.done(),
                     "phase 2 did not finish in {} ms: call {:?}, answer {:?}",
