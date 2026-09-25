@@ -170,6 +170,8 @@ enum Step {
     },
     /// Answer: L1 and L2 until tone B.
     Probe,
+    /// Answer: tone A after L2 ran its longest, until tone B.
+    LateToneB,
     /// Call: tone B, waiting for the reversal of § 11.2.1.1.3.
     ToneB,
     /// Answer: tone A, reversed once, until the far reversal that starts its L1 and L2.
@@ -364,7 +366,11 @@ impl Phase2 {
     fn segment_ended(&mut self) {
         let (tx, until) = match (self.step, self.tx) {
             (Step::SendInfo0, Tx::Silence) => (Tx::Info, None),
-            (Step::ToneA | Step::ToneB, Tx::Silence) | (Step::Probe, Tx::L2) => (Tx::Tone, None),
+            (Step::ToneA | Step::ToneB, Tx::Silence) => (Tx::Tone, None),
+            (Step::Probe, Tx::L2) => {
+                self.step = Step::LateToneB;
+                (Tx::Tone, None)
+            }
             (Step::Probe | Step::ProbeFar, Tx::Tone) => (Tx::L1, Some(self.sent + L1_SAMPLES)),
             (Step::Probe | Step::ProbeFar, Tx::L1) => {
                 (Tx::L2, Some(self.sent + L2_MOST + self.round_trip))
@@ -531,6 +537,10 @@ impl Phase2 {
             }
             Step::Probe if self.tx == Tx::L2 && self.detector.present() => {
                 self.start(Tx::Tone, None);
+                self.step = Step::AwaitProbe { reversed: false };
+            }
+            Step::LateToneB if self.detector.present() => {
+                self.tone_from = self.sent;
                 self.step = Step::AwaitProbe { reversed: false };
             }
             Step::AwaitProbe { reversed } => {
@@ -743,14 +753,29 @@ mod tests {
     }
 
     // `call` and `answer` in their V.34 parts, which V.90 gives the digital and the analogue modem.
-    fn run_between(mut call: Phase2, mut answer: Phase2, delay: usize) -> (Phase2, Phase2, usize) {
+    fn run_between(call: Phase2, answer: Phase2, delay: usize) -> (Phase2, Phase2, usize) {
+        run_stalled(call, answer, delay, 0)
+    }
+
+    // As `run_between`, with `stall` samples more delay toward the answer from 200 ms into its L2.
+    fn run_stalled(
+        mut call: Phase2,
+        mut answer: Phase2,
+        delay: usize,
+        stall: usize,
+    ) -> (Phase2, Phase2, usize) {
         let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
         let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
         let mut down_line = up_line.clone();
+        let mut stalled = false;
         let mut frames = 0;
         while !(call.done() && answer.done()) && frames < 400 {
             call.transmit(&mut up);
             answer.transmit(&mut down);
+            if !stalled && answer.tx == Tx::L2 && answer.sent >= answer.l2_from + 1600 {
+                up_line.extend(std::iter::repeat_n(0, stall));
+                stalled = true;
+            }
             up_line.extend(up);
             down_line.extend(down);
             let heard_up: Vec<i16> = up_line.drain(..FRAME).collect();
@@ -805,6 +830,24 @@ mod tests {
             assert_eq!((digital.uinfo, analogue.uinfo), (75, 75));
             assert_eq!(digital.digital, analogue.digital);
             assert!(digital.round_trip.abs_diff(2 * delay) <= 8);
+        }
+    }
+
+    #[test]
+    fn the_answer_waits_past_l2_for_a_late_tone_b() {
+        let pairs = [
+            (Phase2::new(Role::Originate), Phase2::new(Role::Answer)),
+            (Phase2::digital(), Phase2::analogue()),
+        ];
+        for (call, answer) in pairs {
+            let (call, answer, frames) = run_stalled(call, answer, 0, 1600);
+            assert!(
+                call.done() && answer.done(),
+                "phase 2 did not finish in {} ms: call {:?}, answer {:?}",
+                frames * 20,
+                call.step,
+                answer.step
+            );
         }
     }
 
