@@ -120,6 +120,7 @@ async fn fills_lost_packets_with_silence_and_undoes_reordering() {
         loss: 0.1,
         reorder: 0.2,
         seed: 7,
+        ..Impairment::default()
     };
     let (outgoing, mut incoming) = connect(impairment).await;
     for n in 0..100 {
@@ -144,6 +145,44 @@ async fn fills_lost_packets_with_silence_and_undoes_reordering() {
         "far more loss than configured: {}",
         levels.len()
     );
+}
+
+#[tokio::test]
+async fn slips_frames_out_with_no_gap_to_fill() {
+    let impairment = Impairment {
+        slip: 0.1,
+        seed: 7,
+        ..Impairment::default()
+    };
+    let (outgoing, mut incoming) = connect(impairment).await;
+    for n in 0..100 {
+        outgoing.audio_out.send(frame(n)).await.unwrap();
+    }
+    drop(outgoing);
+    let received = receive_all(&mut incoming).await;
+    assert!(received.iter().all(|f| f[0] != 0), "a slip left a gap");
+    assert!(
+        (70..100).contains(&received.len()),
+        "{} frames arrived",
+        received.len()
+    );
+}
+
+#[tokio::test]
+async fn delivers_every_frame_through_stalls() {
+    let impairment = Impairment {
+        stall: 0.1,
+        stall_for: Duration::from_millis(30),
+        seed: 7,
+        ..Impairment::default()
+    };
+    let (outgoing, mut incoming) = connect(impairment).await;
+    for n in 0..100 {
+        outgoing.audio_out.send(frame(n)).await.unwrap();
+    }
+    drop(outgoing);
+    let expected: Vec<_> = (0..100).map(frame).collect();
+    assert_eq!(receive_all(&mut incoming).await, expected);
 }
 
 #[tokio::test]
