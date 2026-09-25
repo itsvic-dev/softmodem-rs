@@ -181,38 +181,27 @@ fn attach_with(
     }
 }
 
-// Stops taking the call's audio for `stall` once `after` frames have gone, as a busy host would.
-fn stalled(after: usize, stall: Duration) -> impl FnMut(Call, Role) -> Call + Send + 'static {
-    move |mut call, _| {
-        let (stalled_out, mut outgoing) = mpsc::channel(8);
-        let audio_out = std::mem::replace(&mut call.audio_out, stalled_out);
-        tokio::spawn(async move {
-            let mut frames = 0;
-            while let Some(frame) = outgoing.recv().await {
-                frames += 1;
-                if frames == after {
-                    sleep(stall).await;
-                }
-                if audio_out.send(frame).await.is_err() {
-                    break;
-                }
-            }
-        });
-        call
-    }
+#[derive(Clone, Copy)]
+enum Fault {
+    /// The call's audio stops being taken for a while, as on a busy host.
+    Stall(Duration),
+    /// Frames vanish with no gap left for them.
+    Drop(usize),
 }
 
-// Drops `count` frames of the call's audio once `after` have gone, and leaves no gap for them.
-fn dropping(after: usize, count: usize) -> impl FnMut(Call, Role) -> Call + Send + 'static {
+// Does `fault` to the call's audio once `after` frames have gone.
+fn impaired(after: usize, fault: Fault) -> impl FnMut(Call, Role) -> Call + Send + 'static {
     move |mut call, _| {
-        let (dropping_out, mut outgoing) = mpsc::channel(8);
-        let audio_out = std::mem::replace(&mut call.audio_out, dropping_out);
+        let (impaired_out, mut outgoing) = mpsc::channel(8);
+        let audio_out = std::mem::replace(&mut call.audio_out, impaired_out);
         tokio::spawn(async move {
             let mut frames = 0;
             while let Some(frame) = outgoing.recv().await {
                 frames += 1;
-                if (after..after + count).contains(&frames) {
-                    continue;
+                match fault {
+                    Fault::Stall(stall) if frames == after => sleep(stall).await,
+                    Fault::Drop(count) if (after..after + count).contains(&frames) => continue,
+                    _ => {}
                 }
                 if audio_out.send(frame).await.is_err() {
                     break;
@@ -506,37 +495,30 @@ async fn a_v90_call_connects_at_56000_and_carries_data_both_ways() {
     a.expect(&text).await;
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_v90_call_carries_data_after_the_digital_modem_stalls() {
+// A V.90 call whose digital modem meets `fault` in data mode, and whether text crosses after it.
+async fn v90_carries_text_after(fault: Fault) {
     let (a, b) = loopback::pair();
     let mut a = attach(a, profile("ATE0+MS=V90").unwrap());
-    let stall = stalled(900, Duration::from_millis(400));
-    let mut b = attach_with(b, profile("ATE0S0=1+MS=V90").unwrap(), stall);
+    let mut b = attach_with(b, profile("ATE0S0=1+MS=V90").unwrap(), impaired(900, fault));
     a.command("ATDT0300").await;
     a.expect("CONNECT 56000\r\n").await;
     b.expect("CONNECT 56000\r\n").await;
     sleep(Duration::from_secs(10)).await;
 
-    b.send(b"after the stall").await;
-    a.expect("after the stall").await;
+    b.send(b"after the fault").await;
+    a.expect("after the fault").await;
     a.send(b"and back").await;
     b.expect("and back").await;
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_v90_call_renegotiates_after_samples_go_missing() {
-    let (a, b) = loopback::pair();
-    let mut a = attach(a, profile("ATE0+MS=V90").unwrap());
-    let mut b = attach_with(b, profile("ATE0S0=1+MS=V90").unwrap(), dropping(900, 2));
-    a.command("ATDT0300").await;
-    a.expect("CONNECT 56000\r\n").await;
-    b.expect("CONNECT 56000\r\n").await;
-    sleep(Duration::from_secs(10)).await;
+async fn a_v90_call_carries_data_after_the_digital_modem_stalls() {
+    v90_carries_text_after(Fault::Stall(Duration::from_millis(400))).await;
+}
 
-    b.send(b"after the loss").await;
-    a.expect("after the loss").await;
-    a.send(b"and back").await;
-    b.expect("and back").await;
+#[tokio::test(start_paused = true)]
+async fn a_v90_call_renegotiates_after_samples_go_missing() {
+    v90_carries_text_after(Fault::Drop(2)).await;
 }
 
 #[tokio::test(start_paused = true)]
