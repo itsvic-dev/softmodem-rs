@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 
 use super::Codeword;
-use super::design::{Levels, UCHORDS};
+use super::design::{self, Levels, UCHORDS};
 use super::dil::{Descriptor, Dil};
 use super::encoder::{Decoder, FRAME, Mapping};
 use super::frames::Deframer;
@@ -342,6 +342,7 @@ impl Downstream {
         let mut levels = Levels::table(self.law);
         let mut spread = [0.0; UCHORDS];
         let mut freedom = [0.0; UCHORDS];
+        let (mut reference_spread, mut reference_freedom) = (0.0, 0.0);
         for (index, [negative, positive]) in self.stats.iter().enumerate() {
             if negative.count == 0 || positive.count == 0 {
                 continue;
@@ -351,14 +352,32 @@ impl Downstream {
             levels.levels[index / usize::from(COUNT)][ucode] =
                 (mean(positive) - mean(negative)) / 2.0;
             for s in [negative, positive] {
-                spread[ucode / 16] += (s.squares - s.sum * mean(s)).max(0.0);
-                freedom[ucode / 16] += f64::from(s.count - 1);
+                let (squares, more) = (
+                    (s.squares - s.sum * mean(s)).max(0.0),
+                    f64::from(s.count - 1),
+                );
+                spread[ucode / 16] += squares;
+                freedom[ucode / 16] += more;
+                if ucode == usize::from(self.uinfo) {
+                    reference_spread += squares;
+                    reference_freedom += more;
+                }
             }
         }
         let noise: [Option<f64>; UCHORDS] =
             std::array::from_fn(|c| (freedom[c] > 0.0).then(|| (spread[c] / freedom[c]).sqrt()));
         let worst = noise.iter().flatten().copied().fold(0.0, f64::max);
-        levels.noise = noise.map(|n| n.unwrap_or(worst));
+        // The reference runs through all of DIL, so its noise, in steps of its Uchord, bounds every Uchord's.
+        let reference = if reference_freedom > 0.0 {
+            (reference_spread / reference_freedom).sqrt()
+        } else {
+            0.0
+        };
+        let reference_step = design::step(usize::from(self.uinfo / 16), self.law);
+        levels.noise = std::array::from_fn(|c| {
+            let floor = reference * design::step(c, self.law) / reference_step;
+            noise[c].unwrap_or(worst).max(floor)
+        });
         levels
     }
 
@@ -478,5 +497,55 @@ impl Downstream {
         self.events.ed = false;
         self.mp = mp::Deframer::default();
         self.zero_frames = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // DIL of `ucode` heard as `samples` in each interval, with each sign.
+    fn hear(downstream: &mut Downstream, ucode: u8, samples: &[f64]) {
+        for interval in 0..FRAME {
+            for positive in [false, true] {
+                let stat = &mut downstream.stats
+                    [interval * usize::from(COUNT) + usize::from(ucode)][usize::from(positive)];
+                for &sample in samples {
+                    let x = if positive { sample } else { -sample };
+                    stat.sum += x;
+                    stat.squares += x * x;
+                    stat.count += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_reference_that_strays_raises_the_noise_of_every_uchord() {
+        let uinfo = 75;
+        let mut downstream = Downstream::new(uinfo, Law::A, &design::descriptor(uinfo));
+        for u in 0..design::TRAINED {
+            let level = f64::from(ucode::linear(u, Law::A));
+            if u == uinfo {
+                let step = design::step(usize::from(u / 16), Law::A);
+                hear(
+                    &mut downstream,
+                    u,
+                    &[level - step, level, level + step, level],
+                );
+            } else {
+                hear(&mut downstream, u, &[level; 4]);
+            }
+        }
+        let noise = downstream.levels().noise;
+        let reference_step = design::step(usize::from(uinfo / 16), Law::A);
+        let reference = reference_step * (2.0f64 / 3.0).sqrt();
+        for (c, &n) in noise.iter().enumerate().take(UCHORDS - 1) {
+            let expected = reference * design::step(c, Law::A) / reference_step;
+            assert!(
+                (n - expected).abs() < 1e-9,
+                "Uchord {c}: noise {n}, not {expected}"
+            );
+        }
     }
 }

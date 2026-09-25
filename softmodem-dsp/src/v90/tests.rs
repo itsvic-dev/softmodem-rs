@@ -246,22 +246,25 @@ fn connects_losing_upstream_frame(lost: usize) -> bool {
     false
 }
 
+// E cannot come twice, as B1 follows it at once, so only a retrain recovers it.
 #[test]
-fn connects_whichever_upstream_frame_of_phase_4_is_lost() {
+fn connects_whichever_upstream_frame_of_phase_4_before_e_is_lost() {
     let mut analogue = Analogue::new();
     let mut digital = Digital::asking_sixteen_points();
-    let mut phase_4 = None;
-    let connected = (0..2000_usize).find(|&frame| {
+    let mut phase_4 = Vec::new();
+    for frame in 0..2000_usize {
         exchange(&mut analogue, &mut digital, 1, &alaw);
         if analogue.in_phase_4() {
-            phase_4.get_or_insert(frame);
+            phase_4.push(frame);
         }
-        analogue.connected() && digital.connected()
-    });
-    let (Some(from), Some(to)) = (phase_4, connected) else {
-        panic!("no V.90 connection to lose frames from");
+        if analogue.connected() && digital.connected() {
+            break;
+        }
+    }
+    let (Some(&from), Some(&to)) = (phase_4.first(), phase_4.last()) else {
+        panic!("no V.90 phase 4 to lose frames from");
     };
-    let failed: Vec<usize> = (from..to)
+    let failed: Vec<usize> = (from..=to)
         .filter(|&lost| !connects_losing_upstream_frame(lost))
         .collect();
     assert!(
