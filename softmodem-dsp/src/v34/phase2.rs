@@ -645,14 +645,14 @@ impl Phase2 {
         }
     }
 
+    // A confirmed lone reversal of the far tone, after its INFO0 and while its tone is heard.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "sample positions are small and positive"
     )]
-    fn advance(&mut self) {
-        let reversal = self
-            .reversals
+    fn next_reversal(&mut self) -> Option<usize> {
+        self.reversals
             .first()
             .map(|&at| at.round() as usize)
             .filter(|&at| self.heard >= at + CONFIRM)
@@ -662,7 +662,27 @@ impl Phase2 {
             })
             .filter(|&at| {
                 self.far.is_some() && at >= self.far_at + AFTER_INFO && at >= self.tone_heard_from
-            });
+            })
+    }
+
+    fn await_reply(&mut self, ours: usize, reversal: Option<usize>) {
+        if let Some(at) = reversal.filter(|&at| at > ours) {
+            self.replied(ours, at);
+        } else if self.role == Role::Answer && self.sent >= ours + REPLY_MOST {
+            self.step = Step::ToneA;
+        }
+    }
+
+    // § 11.2.2.1.6 and § 9.2.1.2.6/V.90: the far end retrains, as silence and then its tone show.
+    fn await_info1a(&mut self) {
+        self.far_went_quiet |= self.far_absent >= RETRAIN_SILENCE / 2;
+        if self.far_went_quiet && self.far_tone_alone() {
+            self.restart();
+        }
+    }
+
+    fn advance(&mut self) {
+        let reversal = self.next_reversal();
         self.tone_b_gone |= !self.detector.present();
         if self.info0_lost() {
             self.repeat_info0();
@@ -687,13 +707,7 @@ impl Phase2 {
                     self.step = Step::AwaitReply { ours };
                 }
             }
-            Step::AwaitReply { ours } => {
-                if let Some(at) = reversal.filter(|&at| at > ours) {
-                    self.replied(ours, at);
-                } else if self.role == Role::Answer && self.sent >= ours + REPLY_MOST {
-                    self.step = Step::ToneA;
-                }
-            }
+            Step::AwaitReply { ours } => self.await_reply(ours, reversal),
             Step::Probe if self.tx == Tx::L2 && self.tone_b_gone && self.detector.present() => {
                 self.start(Tx::Tone, None);
                 self.step = Step::AwaitProbe { reversed: false };
@@ -716,13 +730,7 @@ impl Phase2 {
             {
                 self.restart();
             }
-            // § 11.2.2.1.6 and § 9.2.1.2.6/V.90: the far end retrains, as silence and then its tone show.
-            Step::AwaitInfo1a => {
-                self.far_went_quiet |= self.far_absent >= RETRAIN_SILENCE / 2;
-                if self.far_went_quiet && self.far_tone_alone() {
-                    self.restart();
-                }
-            }
+            Step::AwaitInfo1a => self.await_info1a(),
             Step::AfterProbe if self.role == Role::Originate => {
                 if let Some(at) = reversal {
                     self.reverse_at(at + ANSWER_DELAY);
