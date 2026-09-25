@@ -9,7 +9,16 @@ implementations.
 signalling. Dial and answer are a minimal exchange on the same socket. This is
 what two instances use during development. It is UDP and not TCP on purpose:
 TCP hides loss and reordering, and then the receive path goes untested
-without SIP. The wire can inject loss, reordering and delay.
+without SIP. The wire can inject loss, reordering, slips and stalls.
+
+It can also act as the path of a VoIP provider, as real calls through one
+showed it: `--delay` holds each frame back, `--conceal` sends a frame as
+silence, as a gateway conceals a lost packet, and `--noise` adds noise
+before the samples are coded, as a path that decodes and codes again.
+`--gateway-after` adds `--gateway-noise` to all that it sends once the far
+end has been quiet that long, as a gateway that took the call for voice
+again. On real calls that happened after about 6 s of quiet from the
+analogue modem, and stayed.
 
 **SIP.** `ezk-sip-ua` for signalling, the same RTP code for media. As the
 media path is shared, SIP adds only signalling.

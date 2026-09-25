@@ -101,6 +101,20 @@ struct WireArgs {
     stall_for: u64,
     #[arg(long, default_value_t = 0)]
     seed: u64,
+    /// Extra delay each outgoing frame waits, in whole frames of 20 ms.
+    #[arg(long, value_name = "MS", default_value_t = 0)]
+    delay: u64,
+    /// Chance that an outgoing frame goes as silence, as a provider's gateway conceals a lost packet.
+    #[arg(long, default_value_t = 0.0)]
+    conceal: f64,
+    /// Most of the noise added to each outgoing sample before it is coded.
+    #[arg(long, value_name = "AMPLITUDE", default_value_t = 0)]
+    noise: u16,
+    /// Once the far end has been quiet this long, add --gateway-noise from then on, as a gateway that gives up on the modem.
+    #[arg(long, value_name = "MS")]
+    gateway_after: Option<u64>,
+    #[arg(long, value_name = "AMPLITUDE", default_value_t = 100)]
+    gateway_noise: u16,
     #[command(flatten)]
     modem: ModemArgs,
 }
@@ -152,6 +166,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 stall: args.stall,
                 stall_for: Duration::from_millis(args.stall_for),
                 seed: args.seed,
+                delay: Duration::from_millis(args.delay),
+                conceal: args.conceal,
+                noise: args.noise,
+                gateway_after: args.gateway_after.map(Duration::from_millis),
+                gateway_noise: args.gateway_noise,
             };
             let wire = Wire::bind(args.local, args.peer, impairment).await?;
             serve(wire, args.modem).await
