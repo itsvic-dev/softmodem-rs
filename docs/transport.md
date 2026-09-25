@@ -18,6 +18,12 @@ media path is shared, SIP adds only signalling.
   the registration alive. The Contact carries `;transport=tcp` and the
   registration's own address, so the PBX sends incoming INVITEs back over
   the same connection and nothing has to listen.
+- `--protocol udp` registers over UDP instead, for providers that speak
+  nothing else. The socket binds the local address that routes to the
+  registrar, as the Via, the Contact and the SDP carry it. Every 25 s a
+  CRLF keepalive goes to the registrar, to keep a NAT's binding open for
+  incoming INVITEs. Our Via has no `rport`, so behind NAT the provider must
+  send its responses back to the address they came from.
 - `ezk-sip-ua` runs without its `rtc` feature. Its `MediaBackend` trait is
   implemented here: the offer and answer hold PCMA only, and the audio runs
   on the shared RTP session. That session takes packets from any port on the

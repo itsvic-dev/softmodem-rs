@@ -8,14 +8,14 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use softmodem::{Modem, Role};
 use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
 use softmodem_terminal::settings::Settings;
 use softmodem_terminal::tcp::TcpPort;
-use softmodem_transport::sip::{Account, Sip};
+use softmodem_transport::sip::{Account, Protocol, Sip};
 use softmodem_transport::speaker::Speaker;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
@@ -36,7 +36,7 @@ struct Cli {
 enum Command {
     /// Use a direct UDP wire to another softmodem as the phone line.
     Wire(WireArgs),
-    /// Register with a SIP registrar over TCP and use it as the phone line.
+    /// Register with a SIP registrar and use it as the phone line.
     #[command(
         after_help = "Without --password, --password-env or --password-file, the modem asks for the password on stdin."
     )]
@@ -45,16 +45,34 @@ enum Command {
 
 #[derive(Args)]
 struct SipArgs {
-    /// Host name of the registrar.
+    /// Host name of the registrar, with a port if not 5060.
     #[arg(long)]
     registrar: String,
     /// User name, which is also the number the modem answers on.
     #[arg(long)]
     user: String,
+    /// How SIP messages reach the registrar.
+    #[arg(long, value_enum, default_value_t = SipProtocol::Tcp)]
+    protocol: SipProtocol,
     #[command(flatten)]
     password: password::Source,
     #[command(flatten)]
     modem: ModemArgs,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SipProtocol {
+    Tcp,
+    Udp,
+}
+
+impl From<SipProtocol> for Protocol {
+    fn from(protocol: SipProtocol) -> Self {
+        match protocol {
+            SipProtocol::Tcp => Self::Tcp,
+            SipProtocol::Udp => Self::Udp,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -139,6 +157,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 registrar: args.registrar,
                 user: args.user,
                 password: args.password.read()?,
+                protocol: args.protocol.into(),
             })
             .await
             .context("registering")?;
