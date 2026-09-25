@@ -13,6 +13,8 @@ use crate::v34::info::{Info, Info0, TransmitClock, narrow, read_offset, write_of
 
 // Bits 37:39 of INFO1a: the digital modem sends at 8000 symbols/s.
 const PCM_SYMBOL_RATE: u32 = 6;
+// Bits 26:27 of INFO0d, the V.34 transmit clock: reserved here, and set by a V.92 digital modem.
+const RESERVED: std::ops::Range<usize> = 14..16;
 
 /// Table 7: what the digital modem supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -58,7 +60,9 @@ impl Info for Info0d {
 
     fn from_fields(fields: &[bool]) -> Option<Self> {
         let (v34, rest) = fields.split_at(Info0::FIELDS);
-        let mut v34 = Info0::from_fields(v34)?;
+        let mut v34 = v34.to_vec();
+        v34[RESERVED].fill(false);
+        let mut v34 = Info0::from_fields(&v34)?;
         v34.clock = TransmitClock::Internal;
         let mut reader = Reader::new(rest);
         Some(Self {
@@ -120,6 +124,7 @@ impl Info for Info1a {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v34::bits;
     use crate::v34::info::{self, Deframer};
 
     fn info0d() -> Info0d {
@@ -191,6 +196,18 @@ mod tests {
     fn reads_back_what_it_frames() {
         assert_eq!(deframe::<Info0d>(info0d().frame()), [info0d()]);
         assert_eq!(deframe::<Info1a>(info1a().frame()), [info1a()]);
+    }
+
+    #[test]
+    fn ignores_the_bits_that_a_v92_digital_modem_sets() {
+        let mut frame = info0d().frame();
+        frame[26] = true;
+        frame[27] = true;
+        let crc = bits::crc(frame[12..42].iter().copied());
+        for n in 0..16 {
+            frame[42 + n] = crc >> n & 1 == 1;
+        }
+        assert_eq!(deframe::<Info0d>(frame), [info0d()]);
     }
 
     #[test]
