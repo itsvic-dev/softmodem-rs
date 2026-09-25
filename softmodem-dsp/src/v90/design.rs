@@ -35,8 +35,8 @@ const SPACING_SIGMAS: f64 = 11.0;
 const LEAST_SPACING: f64 = 8.0;
 // Data mode rates, as D, from 56 000 bit/s down to 28 000.
 const DATA_BITS: std::ops::RangeInclusive<usize> = 21..=42;
-// CPt: 32 000 bit/s on 8 levels.
-const TRAINING_BITS: usize = 24;
+// CPt: 32 000 bit/s on 8 levels, or down to 16 000 on 2 where the noise leaves no room for 8.
+const TRAINING_BITS_RANGE: std::ops::RangeInclusive<usize> = 12..=24;
 
 /// The most that the average power may be, squared, for the highest digital
 /// modem power in bits 33:37 of INFO0d.
@@ -247,22 +247,49 @@ fn cp(sets: &[Vec<u8>; FRAME], bits: usize, training: bool, law: Law, upstream_r
     }
 }
 
-/// CPt: 8 levels in each interval, as far apart as the power limit allows.
+// The highest D of `bits` whose levels fit the noise, or else the lowest, as far apart as the power limit allows.
+fn highest(
+    levels: &Levels,
+    bits: std::ops::RangeInclusive<usize>,
+    training: bool,
+    law: Law,
+    max_power: u8,
+    upstream_rates: u16,
+) -> Option<Cp> {
+    let limit = power_limit(max_power);
+    let lowest = *bits.start();
+    bits.rev()
+        .find_map(|d| constellations(levels, d, law, limit).map(|sets| (sets, d)))
+        .or_else(|| {
+            let quiet = Levels {
+                noise: [0.0; UCHORDS],
+                ..levels.clone()
+            };
+            constellations(&quiet, lowest, law, limit).map(|sets| (sets, lowest))
+        })
+        .map(|(sets, d)| cp(&sets, d, training, law, upstream_rates))
+}
+
+/// CPt: 8 levels in each interval, as far apart as the power limit allows,
+/// or fewer where the noise leaves no room for 8.
 #[must_use]
 pub fn training(levels: &Levels, law: Law, max_power: u8, upstream_rates: u16) -> Option<Cp> {
-    let sets = constellations(levels, TRAINING_BITS, law, power_limit(max_power))?;
-    Some(cp(&sets, TRAINING_BITS, true, law, upstream_rates))
+    highest(
+        levels,
+        TRAINING_BITS_RANGE,
+        true,
+        law,
+        max_power,
+        upstream_rates,
+    )
 }
 
 /// CP: the highest rate whose levels are far enough apart for the noise,
-/// within the power limit.
+/// within the power limit. Where even 28 000 bit/s is too fast for the
+/// noise, 28 000 bit/s on levels as far apart as the power limit allows.
 #[must_use]
 pub fn data(levels: &Levels, law: Law, max_power: u8, upstream_rates: u16) -> Option<Cp> {
-    let limit = power_limit(max_power);
-    DATA_BITS.rev().find_map(|bits| {
-        let sets = constellations(levels, bits, law, limit)?;
-        Some(cp(&sets, bits, false, law, upstream_rates))
-    })
+    highest(levels, DATA_BITS, false, law, max_power, upstream_rates)
 }
 
 #[cfg(test)]
@@ -315,7 +342,10 @@ mod tests {
         let noisy = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
         assert!((28_000..56_000).contains(&noisy.bit_rate()));
         levels.noise = [5000.0; UCHORDS];
-        assert!(data(&levels, Law::A, 23, 0x1FFF).is_none());
+        let deaf = data(&levels, Law::A, 23, 0x1FFF).expect("the lowest CP");
+        assert_eq!(deaf.bit_rate(), 28_000);
+        let cpt = training(&levels, Law::A, 23, 0x1FFF).expect("the lowest CPt");
+        assert_eq!(cpt.bit_rate(), 16_000);
     }
 
     #[test]

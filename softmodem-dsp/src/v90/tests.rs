@@ -109,6 +109,73 @@ fn carries_data(analogue: &mut Analogue, digital: &mut Digital) -> (bool, bool) 
     (found(&at_analogue), found(&at_digital))
 }
 
+// As `exchange`, with the lines up and down apart.
+fn exchange_apart(
+    analogue: &mut Analogue,
+    digital: &mut Digital,
+    frames: usize,
+    up_line: &impl Fn(i16) -> i16,
+    down_line: &impl Fn(i16) -> i16,
+) -> (Vec<bool>, Vec<bool>) {
+    let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+    let (mut at_analogue, mut at_digital) = (Vec::new(), Vec::new());
+    for _ in 0..frames {
+        analogue.transmit(&mut up);
+        digital.transmit(&mut down);
+        digital.receive(&up.map(up_line), &mut at_digital);
+        analogue.receive(&down.map(down_line), &mut at_analogue);
+    }
+    (at_analogue, at_digital)
+}
+
+// A-law, with up to `amplitude` of noise added before it, as a path that decodes and codes again.
+fn noisy(amplitude: i32) -> impl Fn(i16) -> i16 {
+    let state = std::cell::Cell::new(0x1234_5678_u32);
+    move |sample| {
+        let next = state
+            .get()
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
+        state.set(next);
+        let added = i32::try_from(next >> 16).unwrap_or(0) % (2 * amplitude + 1) - amplitude;
+        let sum = (i32::from(alaw(sample)) + added).clamp(-32_768, 32_767);
+        alaw(i16::try_from(sum).unwrap_or(0))
+    }
+}
+
+#[test]
+fn connects_at_the_lowest_rates_when_dil_shows_noise() {
+    for (amplitude, least, most) in [
+        (100, 28_000, 33_333),
+        (120, 28_000, 29_333),
+        (400, 28_000, 28_000),
+    ] {
+        let line = noisy(amplitude);
+        let mut analogue = Analogue::new();
+        let mut digital = Digital::new();
+        let up = (0..2000).find(|_| {
+            exchange_apart(&mut analogue, &mut digital, 1, &alaw, &line);
+            analogue.connected() && digital.connected()
+        });
+        let rate = analogue.bit_rate();
+        assert!(up.is_some(), "no connection with {amplitude} of noise down");
+        assert!(
+            (least..=most).contains(&rate),
+            "{rate} bit/s with {amplitude} of noise down"
+        );
+        if amplitude < 400 {
+            let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+            analogue.push_bits(&message);
+            digital.push_bits(&message);
+            let (at_analogue, _) = exchange_apart(&mut analogue, &mut digital, 60, &alaw, &line);
+            assert!(
+                at_analogue.windows(message.len()).any(|w| w == message),
+                "{rate} bit/s would lose data with {amplitude} of noise down"
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Recovery {
     Renegotiation,
