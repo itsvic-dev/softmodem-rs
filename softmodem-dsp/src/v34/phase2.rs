@@ -8,6 +8,8 @@
 //! Phase 2 of V.90 (§ 9.2/V.90) is the same, with the digital modem in the
 //! part of the call modem and its own INFO0d and INFO1a.
 
+use std::collections::VecDeque;
+
 use super::SymbolRate;
 use super::info::{Deframer, Info, Info0, Info1a, Info1c, Probe, TransmitClock};
 use super::probing::{self, Analyser, L1_DBM0, L1_SAMPLES, L2_DBM0, Probing};
@@ -38,6 +40,15 @@ const L2_MEASURED: usize = 3200;
 const L2_LEAST: usize = 800;
 // INFO flips its carrier on each 1, so its fill bits must not pass for tone A's reversal.
 const AFTER_INFO: usize = 160;
+// A reversal counts once the tone after it shows no INFO, still before the 40 ms reply.
+const CONFIRM: usize = 160;
+const LONE_BEFORE: usize = 160;
+// § 11.2.2.2.2: the answer reverses tone A again after 2 s with no reply.
+const REPLY_MOST: usize = 16_000;
+// The far tone counts as alone after this long with no 1s, which no INFO0 has.
+const QUIET: usize = 320;
+const LONE_ONES: usize = 2;
+const ONES_KEPT: usize = 64;
 // Bits 79:88 of INFO1c and 40:49 of INFO1a count 0.02 Hz.
 const STEPS_PER_HZ: f64 = 50.0;
 // § 8.2.3.2/V.90: UINFO above 66.
@@ -108,6 +119,20 @@ fn uinfo(digital: &Info0d) -> u8 {
     ucode::nearest(rms, digital.law).max(LEAST_UINFO)
 }
 
+fn own_info0_frame(mode: Mode, acknowledge: bool) -> Vec<bool> {
+    if mode == Mode::Digital {
+        let mut info0d = own_info0d();
+        info0d.v34.acknowledge = acknowledge;
+        info0d.frame()
+    } else {
+        Info0 {
+            acknowledge,
+            ..own_info0()
+        }
+        .frame()
+    }
+}
+
 fn own_info0() -> Info0 {
     Info0 {
         supports_2743: true,
@@ -162,6 +187,8 @@ fn offset(probing: &Probing) -> Option<i16> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     SendInfo0,
+    /// § 11.2.2.1.1 and § 11.2.2.2.1: INFO0 again and again, as one end lacks the other's.
+    RepeatInfo0,
     /// Answer: tone A, waiting for the call's INFO0 and tone B.
     ToneA,
     /// Waiting for the far reversal that answers ours.
@@ -210,6 +237,8 @@ pub struct Phase2 {
     sent: usize,
     heard: usize,
     tone_from: usize,
+    // Where this end's tone started, in samples heard: a far reversal before it is stale.
+    tone_heard_from: usize,
     l2_from: usize,
     info: dpsk::Modulator,
     tone: tones::Sender,
@@ -225,11 +254,16 @@ pub struct Phase2 {
     detector: tones::Detector,
     analyser: Analyser,
     reversals: Vec<f64>,
+    // Where the demodulator gave its last 1s, roughly.
+    ones: VecDeque<usize>,
     // Tone B held past the call modem's reversal must stop before a tone B can end L2.
     tone_b_gone: bool,
     far: Option<Info0>,
     far_info0d: Option<Info0d>,
     far_at: usize,
+    // Far INFO0 sequences that lack our own, heard since this end last started its tone.
+    far_repeats: usize,
+    far_acknowledged: bool,
     round_trip: usize,
     probing: Option<Probing>,
     outcome: Option<Outcome>,
@@ -264,11 +298,7 @@ impl Phase2 {
             Role::Originate => Role::Answer,
         };
         let mut info = dpsk::Modulator::new(role);
-        info.send(if mode == Mode::Digital {
-            own_info0d().frame()
-        } else {
-            own_info0().frame()
-        });
+        info.send(own_info0_frame(mode, false));
         Self {
             role,
             mode,
@@ -278,6 +308,7 @@ impl Phase2 {
             sent: 0,
             heard: 0,
             tone_from: 0,
+            tone_heard_from: 0,
             l2_from: 0,
             info,
             tone: tones::Sender::new(role),
@@ -293,10 +324,13 @@ impl Phase2 {
             detector: tones::Detector::new(far),
             analyser: Analyser::new(L2_DBM0),
             reversals: Vec::new(),
+            ones: VecDeque::new(),
             tone_b_gone: false,
             far: None,
             far_info0d: None,
             far_at: 0,
+            far_repeats: 0,
+            far_acknowledged: false,
             round_trip: 0,
             probing: None,
             outcome: None,
@@ -367,6 +401,8 @@ impl Phase2 {
     fn start(&mut self, tx: Tx, until: Option<usize>) {
         if tx == Tx::Tone && self.tx != Tx::Tone {
             self.tone_from = self.sent;
+            self.tone_heard_from = self.heard;
+            self.far_repeats = 0;
         }
         if tx == Tx::L2 {
             self.l2_from = self.sent;
@@ -443,13 +479,13 @@ impl Phase2 {
 
     fn info_sent(&mut self) {
         match self.step {
-            Step::SendInfo0 => {
-                self.start(Tx::Tone, None);
-                self.step = match self.role {
-                    Role::Answer => Step::ToneA,
-                    Role::Originate => Step::ToneB,
-                };
+            Step::SendInfo0 => self.tone_after_info0(),
+            Step::RepeatInfo0
+                if self.far.is_some() && (self.far_acknowledged || self.far_tone_alone()) =>
+            {
+                self.tone_after_info0();
             }
+            Step::RepeatInfo0 => self.repeat_info0(),
             Step::SendInfo1 => {
                 self.start(Tx::Silence, None);
                 self.step = match self.role {
@@ -461,9 +497,63 @@ impl Phase2 {
         }
     }
 
+    fn tone_after_info0(&mut self) {
+        self.start(Tx::Tone, None);
+        self.step = match self.role {
+            Role::Answer => Step::ToneA,
+            Role::Originate => Step::ToneB,
+        };
+    }
+
+    fn repeat_info0(&mut self) {
+        self.info
+            .send(own_info0_frame(self.mode, self.far.is_some()));
+        self.start(Tx::Info, None);
+        self.step = Step::RepeatInfo0;
+    }
+
+    fn far_tone_alone(&self) -> bool {
+        self.detector.present()
+            && self
+                .ones
+                .back()
+                .is_none_or(|&one| self.heard >= one + QUIET)
+    }
+
+    // A reversal of the tone is one 1 from the demodulator, and the start of an INFO many.
+    fn lone(&self, at: usize) -> bool {
+        let (from, to) = (at.saturating_sub(LONE_BEFORE), at + TAIL);
+        let ones = self
+            .ones
+            .iter()
+            .filter(|&&one| (from..to).contains(&one))
+            .count();
+        ones <= LONE_ONES
+    }
+
+    // § 11.2.2.1.1 and § 11.2.2.2.1: the far tone with no far INFO0, or the far INFO0 again.
+    fn info0_lost(&self) -> bool {
+        let listening = match self.step {
+            Step::ToneA | Step::ToneB => true,
+            Step::AwaitReply { .. } => self.role == Role::Answer,
+            _ => false,
+        };
+        listening
+            && self.tx == Tx::Tone
+            && ((self.far.is_none() && self.far_tone_alone())
+                || (self.far_repeats > 1 && !self.far_acknowledged))
+    }
+
     pub fn receive(&mut self, input: &[i16]) {
         let mut bits = Vec::new();
         self.demodulator.process(input, &mut bits);
+        let step = input.len() / bits.len().max(1);
+        for (n, _) in bits.iter().enumerate().filter(|&(_, &bit)| bit) {
+            self.ones.push_back(self.heard + (n + 1) * step);
+        }
+        while self.ones.len() > ONES_KEPT {
+            self.ones.pop_front();
+        }
         for bit in bits {
             self.info0_bit(bit, self.heard + input.len());
             self.info1_bit(bit);
@@ -490,11 +580,11 @@ impl Phase2 {
         } else {
             self.info0.push(bit)
         };
-        if let Some(info0) = far
-            && self.far.is_none()
-        {
-            self.far = Some(info0);
+        if let Some(info0) = far {
+            self.far.get_or_insert(info0);
             self.far_at = at;
+            self.far_repeats += usize::from(!info0.acknowledge);
+            self.far_acknowledged |= info0.acknowledge;
         }
     }
 
@@ -529,18 +619,28 @@ impl Phase2 {
         reason = "sample positions are small and positive"
     )]
     fn advance(&mut self) {
-        let reversal = if self.reversals.is_empty() {
-            None
-        } else {
-            Some(self.reversals.remove(0).round() as usize)
-        }
-        .filter(|&at| self.far.is_some() && at >= self.far_at + AFTER_INFO);
+        let reversal = self
+            .reversals
+            .first()
+            .map(|&at| at.round() as usize)
+            .filter(|&at| self.heard >= at + CONFIRM)
+            .and_then(|at| {
+                self.reversals.remove(0);
+                self.lone(at).then_some(at)
+            })
+            .filter(|&at| {
+                self.far.is_some() && at >= self.far_at + AFTER_INFO && at >= self.tone_heard_from
+            });
         self.tone_b_gone |= !self.detector.present();
+        if self.info0_lost() {
+            self.repeat_info0();
+            return;
+        }
         match self.step {
             Step::ToneA
                 if self.far.is_some()
                     && self.tx == Tx::Tone
-                    && self.detector.present()
+                    && self.far_tone_alone()
                     && self.sent >= self.tone_from + TONE_FIRST =>
             {
                 let at = self.sent;
@@ -558,6 +658,8 @@ impl Phase2 {
             Step::AwaitReply { ours } => {
                 if let Some(at) = reversal.filter(|&at| at > ours) {
                     self.replied(ours, at);
+                } else if self.role == Role::Answer && self.sent >= ours + REPLY_MOST {
+                    self.step = Step::ToneA;
                 }
             }
             Step::Probe if self.tx == Tx::L2 && self.tone_b_gone && self.detector.present() => {
@@ -825,6 +927,71 @@ mod tests {
             frames += 1;
         }
         (call, answer, frames)
+    }
+
+    // As `run_between`, with the first INFO0 of the call, or of the answer, lost on the line.
+    fn run_losing_info0(
+        mut call: Phase2,
+        mut answer: Phase2,
+        delay: usize,
+        from_call: bool,
+    ) -> (Phase2, Phase2, usize) {
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
+        let mut down_line = up_line.clone();
+        let mut frames = 0;
+        while !(call.done() && answer.done()) && frames < 400 {
+            let (lose_up, lose_down) = (
+                from_call && call.step == Step::SendInfo0,
+                !from_call && answer.step == Step::SendInfo0,
+            );
+            call.transmit(&mut up);
+            answer.transmit(&mut down);
+            if lose_up {
+                up.fill(0);
+            }
+            if lose_down {
+                down.fill(0);
+            }
+            up_line.extend(up);
+            down_line.extend(down);
+            let heard_up: Vec<i16> = up_line.drain(..FRAME).collect();
+            let heard_down: Vec<i16> = down_line.drain(..FRAME).collect();
+            answer.receive(&heard_up);
+            call.receive(&heard_down);
+            frames += 1;
+        }
+        (call, answer, frames)
+    }
+
+    #[test]
+    fn recovers_an_info0_lost_on_the_line() {
+        for from_call in [true, false] {
+            for delay in [0, 400, 1200, 2400] {
+                let pairs = [
+                    (Phase2::new(Role::Originate), Phase2::new(Role::Answer)),
+                    (Phase2::digital(), Phase2::analogue()),
+                ];
+                for (call, answer) in pairs {
+                    let (call, answer, frames) = run_losing_info0(call, answer, delay, from_call);
+                    assert!(
+                        call.done() && answer.done(),
+                        "losing the {} INFO0 over {delay} samples, phase 2 did not finish in {} ms: \
+                         call {:?}, answer {:?}",
+                        if from_call { "call's" } else { "answer's" },
+                        frames * 20,
+                        call.step,
+                        answer.step
+                    );
+                    let (call, answer) = (call.round_trip, answer.round_trip);
+                    assert!(
+                        call.abs_diff(2 * delay) <= 8 && answer.abs_diff(2 * delay) <= 8,
+                        "round trips of {call} and {answer} samples, not {}",
+                        2 * delay
+                    );
+                }
+            }
+        }
     }
 
     #[test]
