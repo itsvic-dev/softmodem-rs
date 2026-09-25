@@ -93,6 +93,7 @@ enum Send {
 #[derive(Debug)]
 struct Upstream {
     outcome: PcmOutcome,
+    max_transmit: Option<u32>,
     send: Send,
     queue: VecDeque<Complex>,
     training: training::Sender,
@@ -130,7 +131,7 @@ impl Upstream {
         clippy::cast_sign_loss,
         reason = "70 ms of symbols"
     )]
-    fn new(outcome: PcmOutcome) -> Self {
+    fn new(outcome: PcmOutcome, max_transmit: Option<u32>) -> Self {
         let baud = outcome.upstream.symbol_rate.baud();
         let silence = (SILENCE_MS / 1000.0 * baud) as usize;
         let mut training = training::Sender::new(Role::Answer);
@@ -141,6 +142,7 @@ impl Upstream {
         queue.extend((0..TRN_SYMBOLS).map(|_| training.trn(Points::Four)));
         Self {
             outcome,
+            max_transmit,
             send: Send::Ja,
             queue,
             training,
@@ -168,7 +170,12 @@ impl Upstream {
 
     // The rates its transmitter has at its symbol rate, bit n for (n + 1) · 2400 bit/s.
     fn own_rates(&self) -> u16 {
-        rates::mask(self.outcome.upstream.symbol_rate, 14)
+        let allowed = self.max_transmit.map_or(u16::MAX, |most| {
+            (0..14)
+                .filter(|n| (n + 1) * 2400 <= most)
+                .fold(0, |mask, n| mask | 1 << n)
+        });
+        rates::mask(self.outcome.upstream.symbol_rate, 14) & allowed
     }
 
     fn next(&mut self, events: &Events) -> Complex {
@@ -368,6 +375,8 @@ impl Upstream {
 /// The analogue modem, from phase 2 on.
 #[derive(Debug)]
 pub struct Analogue {
+    /// The fastest upstream rate it enables, in bit/s.
+    max_transmit: Option<u32>,
     phase2: Phase2,
     modulator: Option<Modulator>,
     upstream: Option<Upstream>,
@@ -392,7 +401,15 @@ impl Default for Analogue {
 impl Analogue {
     #[must_use]
     pub fn new() -> Self {
+        Self::up_to(None)
+    }
+
+    /// An analogue modem that enables no upstream rate above `max_transmit`
+    /// bit/s, so that the digital modem cannot ask for one.
+    #[must_use]
+    pub fn up_to(max_transmit: Option<u32>) -> Self {
         Self {
+            max_transmit,
             phase2: Phase2::analogue(),
             modulator: None,
             upstream: None,
@@ -404,6 +421,15 @@ impl Analogue {
             tone_heard: 0,
             retrained_from: 0,
         }
+    }
+
+    /// The upstream rate in data mode, in bit/s, which the digital modem's
+    /// MP set, or 0 before data mode.
+    #[must_use]
+    pub fn upstream_bit_rate(&self) -> u32 {
+        self.upstream
+            .as_ref()
+            .map_or(0, |up| u32::from(up.rate) * 2400)
     }
 
     /// Whether it has ended DIL and not yet reached data mode.
@@ -546,7 +572,7 @@ impl Analogue {
             outcome.digital.law,
             &descriptor,
         ));
-        self.upstream = Some(Upstream::new(outcome));
+        self.upstream = Some(Upstream::new(outcome, self.max_transmit));
         self.outcome = Some(outcome);
     }
 }
@@ -561,6 +587,10 @@ impl DataPump for Analogue {
             .as_ref()
             .and_then(|up| up.cp.as_ref())
             .map_or(self.retrained_from, Cp::bit_rate)
+    }
+
+    fn transmit_rate(&self) -> u32 {
+        self.upstream_bit_rate()
     }
 
     fn decoder(&self) -> Characters {

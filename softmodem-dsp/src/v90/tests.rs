@@ -517,6 +517,28 @@ fn connects_whichever_upstream_frame_of_phase_4_before_e_is_lost() {
 }
 
 #[test]
+fn enables_no_upstream_rate_above_its_limit() {
+    for (limit, expected) in [
+        (None, 33_600),
+        (Some(24_000), 24_000),
+        (Some(25_000), 24_000),
+    ] {
+        let mut analogue = Analogue::up_to(limit);
+        let mut digital = Digital::new();
+        let up = (0..2000).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            analogue.connected() && digital.connected()
+        });
+        assert!(
+            up.is_some(),
+            "no connection with the upstream up to {limit:?}"
+        );
+        assert_eq!(analogue.upstream_bit_rate(), expected, "up to {limit:?}");
+        assert_eq!(carries_data(&mut analogue, &mut digital), (true, true));
+    }
+}
+
+#[test]
 fn an_analogue_and_a_digital_modem_carry_data_at_56000_bit_s() {
     assert_eq!(connect_over(alaw), 56_000);
 }

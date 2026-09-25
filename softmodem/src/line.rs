@@ -155,6 +155,10 @@ impl Line {
         self.handshake.as_ref().map(|h| h.pump.bit_rate())
     }
 
+    pub(crate) fn transmit_rate(&self) -> Option<u32> {
+        self.handshake.as_ref().map(|h| h.pump.transmit_rate())
+    }
+
     /// Whether the modem should read more from the computer.
     #[expect(clippy::cast_precision_loss, reason = "a few hundred bits")]
     pub(crate) fn wants_input(&self) -> bool {

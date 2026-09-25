@@ -34,11 +34,13 @@ pub enum Command {
         value: u8,
     },
     ReadRegister(u8),
-    /// `+MS=`, the highest modulation for the next call, and whether automode
-    /// may fall back from it. Automode is on unless the command turns it off.
+    /// `+MS=`, the highest modulation for the next call, whether automode
+    /// may fall back from it, and the highest rate to transmit at. Automode
+    /// is on unless the command turns it off.
     SetCarrier {
         carrier: Carrier,
         automode: bool,
+        max_transmit: Option<u32>,
     },
     /// `+MS?`.
     ReadCarrier,
@@ -369,13 +371,18 @@ impl Parser<'_> {
                         Some(_) => return Err(ParseError),
                     };
                 }
+                // <min_tx_rate>, <max_tx_rate>, <min_rx_rate> and <max_rx_rate>, of which only the second counts.
+                let mut rates = Vec::new();
                 while self.peek() == Some(b',') {
                     self.at += 1;
-                    while self.peek().is_some_and(|b| b.is_ascii_digit()) {
-                        self.at += 1;
-                    }
+                    rates.push(self.number::<u32>()?);
                 }
-                Command::SetCarrier { carrier, automode }
+                let max_transmit = rates.get(1).copied().flatten().filter(|&rate| rate > 0);
+                Command::SetCarrier {
+                    carrier,
+                    automode,
+                    max_transmit,
+                }
             }
             _ => return Err(ParseError),
         };
@@ -637,19 +644,23 @@ mod tests {
             [
                 Command::SetCarrier {
                     carrier: Carrier::V22,
-                    automode: true
+                    automode: true,
+                    max_transmit: None
                 },
                 Command::SetCarrier {
                     carrier: Carrier::V21,
-                    automode: false
+                    automode: false,
+                    max_transmit: Some(300)
                 },
                 Command::SetCarrier {
                     carrier: Carrier::V22bis,
-                    automode: true
+                    automode: true,
+                    max_transmit: None
                 },
                 Command::SetCarrier {
                     carrier: Carrier::V22,
-                    automode: true
+                    automode: true,
+                    max_transmit: None
                 },
                 Command::Echo(false),
             ]
@@ -660,7 +671,24 @@ mod tests {
             parse(b"+MS=V34,0,2400,33600").unwrap(),
             [Command::SetCarrier {
                 carrier: Carrier::V34,
-                automode: false
+                automode: false,
+                max_transmit: Some(33_600)
+            }]
+        );
+        assert_eq!(
+            parse(b"+MS=V90,1,,24000,0,0").unwrap(),
+            [Command::SetCarrier {
+                carrier: Carrier::V90,
+                automode: true,
+                max_transmit: Some(24_000)
+            }]
+        );
+        assert_eq!(
+            parse(b"+MS=V90,1,300,0").unwrap(),
+            [Command::SetCarrier {
+                carrier: Carrier::V90,
+                automode: true,
+                max_transmit: None
             }]
         );
     }

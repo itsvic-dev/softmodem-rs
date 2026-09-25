@@ -398,6 +398,7 @@ where
                 Carrier::V90 => Modulation::V90,
             },
             automode: chosen.automode,
+            max_transmit: chosen.max_transmit,
         };
         let control = self.settings.error_control;
         let asked = self.settings.compression;
@@ -599,7 +600,12 @@ where
             Some((true, false)) => "V42B TD",
             _ => "NONE",
         };
-        info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}");
+        match self.line.as_ref().and_then(Line::transmit_rate) {
+            Some(up) if up != bit_rate => info!(
+                "CONNECT {bit_rate}, transmitting at {up}, error control {protocol}, compression {compression}"
+            ),
+            _ => info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}"),
+        }
         self.mode = Mode::Data {
             escape: EscapeDetector::new(Instant::now().into_std()),
         };

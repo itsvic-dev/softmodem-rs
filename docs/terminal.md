@@ -39,7 +39,7 @@ command mode, on hook.
 | `X0` to `X4` | Which result codes are used, see below. |
 | `Z` | Hang up and reset to the stored profile. |
 | `Sn=v`, `Sn?` | Write, read an S-register. |
-| `+MS=<carrier>[,<automode>]` | The highest modulation for the next call, `V21`, `V22`, `V22B`, `V34` or `V90`, and whether automode may fall back from it. The default is `V90` with automode. With `V90` the caller is the analogue modem and the answerer the digital modem. |
+| `+MS=<carrier>[,<automode>[,<rates>...]]` | The highest modulation for the next call, `V21`, `V22`, `V22B`, `V34` or `V90`, whether automode may fall back from it, and the rates, of which the fastest to transmit at counts (see below). The default is `V90` with automode. With `V90` the caller is the analogue modem and the answerer the digital modem. |
 | `+MS?`, `+MS=?` | Read the modulation, list those supported. |
 | `+ES=<orig_rqst>[,<orig_fbk>[,<ans_fbk>]]` | How to try V.42, as V.250 § 6.5.1. The default is `3,0,2`: try it with the detection phase, and fall back to plain data. |
 | `+ES?`, `+ES=?` | Read the error control, list the values supported. |
@@ -64,8 +64,13 @@ V.250 tells direct and buffered operation apart. On a pseudoterminal there is
 no DTE rate to match, so they are the same here. A subparameter left out
 keeps its value.
 
-`+MS` takes the V.250 form `+MS=<carrier>[,<automode>[,<rates>...]]`. The
-rates are accepted and ignored. As V.250 § 6.4.2 has it, `+MS=<carrier>` on
+`+MS` takes the V.250 form `+MS=<carrier>[,<automode>[,<min_tx_rate>[,<max_tx_rate>[,<min_rx_rate>[,<max_rx_rate>]]]]]`.
+`<max_tx_rate>` in bit/s, other than 0, is the fastest this modem transmits
+at. For now only the V.90 analogue modem keeps to it: it enables no faster
+upstream rate, so the digital modem cannot ask for one, as in
+`AT+MS=V90,1,,24000`. The other rates are accepted and ignored. When the two
+directions differ, the log gives the transmit rate after CONNECT's. As
+V.250 § 6.4.2 has it, `+MS=<carrier>` on
 its own turns automode on again, so a fixed modulation needs `,0`:
 `AT+MS=V21,0`. Without automode, V.22bis still falls back to V.22, which is
 part of V.22bis itself. As V.250 requires, a basic command after `+MS` on the
