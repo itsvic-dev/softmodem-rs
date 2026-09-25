@@ -23,6 +23,9 @@ pub mod upstream;
 
 use ucode::Law;
 
+// § 9.5.1.2 and § 9.5.2.2: the far tone for more than 50 ms in data mode starts a retrain.
+const RETRAIN_TONE: usize = 400;
+
 /// One PCM symbol: a Ucode and its sign.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Codeword {

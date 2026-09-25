@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 
+use super::RETRAIN_TONE;
 use super::cp::Cp;
 use super::design::{self, Levels};
 use super::downstream::{Downstream, Events};
@@ -20,7 +21,7 @@ use crate::v34::modulator::Modulator;
 use crate::v34::mp::{E_ONES, Mp};
 use crate::v34::phase2::{PcmOutcome, Phase2};
 use crate::v34::training::{self, PP_SYMBOLS, Points};
-use crate::v34::{NOMINAL_DBM0, rates};
+use crate::v34::{NOMINAL_DBM0, rates, tones};
 
 const S_SYMBOLS: usize = 128;
 const S_BAR_SYMBOLS: usize = 16;
@@ -285,8 +286,13 @@ pub struct Analogue {
     modulator: Option<Modulator>,
     upstream: Option<Upstream>,
     downstream: Option<Downstream>,
-    /// Connected once, and still in the call through renegotiations.
+    outcome: Option<PcmOutcome>,
+    /// Connected once, and still in the call through renegotiations and retrains.
     online: bool,
+    retrain_tone: tones::Detector,
+    tone_heard: usize,
+    /// The bit rate before a retrain, until the retrain sets a new one.
+    retrained_from: u32,
 }
 
 impl Default for Analogue {
@@ -303,8 +309,39 @@ impl Analogue {
             modulator: None,
             upstream: None,
             downstream: None,
+            outcome: None,
             online: false,
+            retrain_tone: tones::Detector::new(Role::Originate),
+            tone_heard: 0,
+            retrained_from: 0,
         }
+    }
+
+    // § 9.5.2: phase 2 again from the tones, with the far INFO0d kept.
+    fn restart(&mut self) {
+        let Some(outcome) = self.outcome.take() else {
+            return;
+        };
+        self.retrained_from = self.bit_rate();
+        self.phase2 = Phase2::retrain_analogue(outcome.digital);
+        self.modulator = None;
+        self.upstream = None;
+        self.downstream = None;
+        self.tone_heard = 0;
+    }
+
+    fn far_retrains(&mut self, input: &[i16]) -> bool {
+        if !self.connected() {
+            self.tone_heard = 0;
+            return false;
+        }
+        self.retrain_tone.process(input);
+        self.tone_heard = if self.retrain_tone.present() {
+            self.tone_heard + input.len()
+        } else {
+            0
+        };
+        self.tone_heard > RETRAIN_TONE
     }
 
     fn start_renegotiation(&mut self, clearing: bool) {
@@ -335,6 +372,7 @@ impl Analogue {
             &descriptor,
         ));
         self.upstream = Some(Upstream::new(outcome));
+        self.outcome = Some(outcome);
     }
 }
 
@@ -347,7 +385,7 @@ impl DataPump for Analogue {
         self.upstream
             .as_ref()
             .and_then(|up| up.cp.as_ref())
-            .map_or(0, Cp::bit_rate)
+            .map_or(self.retrained_from, Cp::bit_rate)
     }
 
     fn decoder(&self) -> Characters {
@@ -382,6 +420,10 @@ impl DataPump for Analogue {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        if self.far_retrains(input) {
+            self.restart();
+            return;
+        }
         let Some(downstream) = &mut self.downstream else {
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.pcm_outcome().filter(|_| self.phase2.done()) {
@@ -391,6 +433,12 @@ impl DataPump for Analogue {
         };
         downstream.receive(input, bits);
         self.online |= self.connected();
+    }
+
+    fn retrain(&mut self) {
+        if self.connected() {
+            self.restart();
+        }
     }
 
     // § 9.6.2.1.

@@ -175,6 +175,43 @@ fn a_renegotiation_finds_the_data_frames_again_after_a_slip() {
 }
 
 #[test]
+fn retrains_from_either_end_after_a_slip_and_carries_data_after() {
+    for from_analogue in [true, false] {
+        let (mut analogue, mut digital) = connected_pair();
+        let mut lost = [0; FRAME];
+        for _ in 0..2 {
+            digital.transmit(&mut lost);
+        }
+        if from_analogue {
+            analogue.retrain();
+        } else {
+            digital.retrain();
+        }
+        assert!(!(analogue.connected() && digital.connected()));
+        let back = (0..1500).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            assert!(
+                analogue.carrier() && digital.carrier(),
+                "DCD would drop during a retrain"
+            );
+            analogue.connected() && digital.connected()
+        });
+        assert!(
+            back.is_some(),
+            "a retrain from the {} modem would not end: analogue {analogue:?}",
+            if from_analogue { "analogue" } else { "digital" }
+        );
+        assert_eq!((analogue.bit_rate(), digital.bit_rate()), (56_000, 56_000));
+        assert_eq!(
+            carries_data(&mut analogue, &mut digital),
+            (true, true),
+            "data down and up after a retrain from the {} modem",
+            if from_analogue { "analogue" } else { "digital" }
+        );
+    }
+}
+
+#[test]
 fn clears_down_from_either_end() {
     for from_analogue in [true, false] {
         let (mut analogue, mut digital) = connected_pair();

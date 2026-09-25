@@ -544,6 +544,7 @@ async fn ato1_retrains_and_the_call_goes_on() {
     for (modulation, connect) in [
         ("+MS=V22B", "CONNECT 2400\r\n"),
         ("+MS=V34", "CONNECT 33600\r\n"),
+        ("+MS=V90", "CONNECT 56000\r\n"),
     ] {
         let (mut a, mut b) = two_modems(
             &format!("ATE0{modulation}"),
