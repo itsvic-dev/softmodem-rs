@@ -32,6 +32,9 @@ const R_BAR_SYMBOLS: usize = 24;
 // Jd's fill and Jd′.
 const JD_PRIME_ZEROS: usize = 4 + JD_PRIME_BITS;
 const ED_FRAMES: usize = 2;
+// Data mode is measured a second at a time, and a Uchord only from enough of its symbols.
+const MEASURE_SYMBOLS: usize = 8000;
+const LEAST_MEASURED: u32 = 100;
 const B1D_FRAMES: usize = 48;
 
 /// What the receiver has heard that the transmitter acts on.
@@ -60,6 +63,11 @@ pub struct Events {
     /// Rate renegotiations the digital modem has started or answered, by
     /// the R̄d of each.
     pub renegotiations: u32,
+    /// The RMS of how far data mode symbols stray from the levels DIL
+    /// showed, by Uchord, over the last second measured.
+    pub data_noise: Option<[Option<f64>; UCHORDS]>,
+    /// Seconds of data mode measured since data mode last began.
+    pub measurements: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +117,9 @@ pub struct Downstream {
     zero_frames: usize,
     skip_frames: usize,
     events: Events,
+    // Squared strays and their count in data mode, by Uchord, and the symbols measured.
+    strays: [(f64, u32); UCHORDS],
+    measured: usize,
 }
 
 impl Downstream {
@@ -145,6 +156,8 @@ impl Downstream {
             zero_frames: 0,
             skip_frames: 0,
             events: Events::default(),
+            strays: [(0.0, 0); UCHORDS],
+            measured: 0,
         }
     }
 
@@ -157,6 +170,11 @@ impl Downstream {
     /// which B1d and data use.
     pub fn set_mappings(&mut self, training: Option<Mapping>, data: Option<Mapping>) {
         self.training = training;
+        self.data = data;
+    }
+
+    /// The mapping of the CP that the next renegotiation asks for.
+    pub fn set_data_mapping(&mut self, data: Option<Mapping>) {
         self.data = data;
     }
 
@@ -432,6 +450,7 @@ impl Downstream {
                 self.skip_frames -= 1;
             } else {
                 data.extend(bits);
+                self.measure(&samples, &codewords);
             }
             return;
         }
@@ -447,9 +466,35 @@ impl Downstream {
             self.events.mp_ack = true;
             self.events.ed = true;
             self.stage = Stage::Data;
+            self.strays = [(0.0, 0); UCHORDS];
+            self.measured = 0;
+            self.events.data_noise = None;
+            self.events.measurements = 0;
             self.decoder = self.data.clone().map(Decoder::new);
             self.descrambler = Descrambler::with(Polynomial::V34_CALL);
             self.skip_frames = B1D_FRAMES;
+        }
+    }
+
+    // How far data mode symbols stray from the levels DIL showed, by Uchord, a second at a time.
+    fn measure(&mut self, samples: &[f64], codewords: &[Codeword; FRAME]) {
+        let Some(levels) = &self.events.levels else {
+            return;
+        };
+        for (interval, (x, codeword)) in samples.iter().zip(codewords).enumerate() {
+            let error = x.abs() - levels.levels[interval][usize::from(codeword.ucode)];
+            let (squares, count) = &mut self.strays[usize::from(codeword.ucode / 16)];
+            *squares += error * error;
+            *count += 1;
+        }
+        self.measured += FRAME;
+        if self.measured >= MEASURE_SYMBOLS {
+            self.events.data_noise = Some(self.strays.map(|(squares, count)| {
+                (count >= LEAST_MEASURED).then(|| (squares / f64::from(count)).sqrt())
+            }));
+            self.events.measurements += 1;
+            self.strays = [(0.0, 0); UCHORDS];
+            self.measured = 0;
         }
     }
 

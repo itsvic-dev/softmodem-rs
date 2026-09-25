@@ -8,10 +8,11 @@ use std::collections::VecDeque;
 
 use super::RETRAIN_TONE;
 use super::cp::Cp;
-use super::design::{self, Levels};
+use super::design::{self, Levels, UCHORDS};
 use super::downstream::{Downstream, Events};
-use super::encoder::Mapping;
+use super::encoder::{FRAME, Mapping};
 use super::jd::Jd;
+use super::ucode::COUNT;
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
@@ -34,6 +35,28 @@ const SILENCE_MS: f64 = 70.0;
 const CP_ACK_SECONDS: f64 = 0.2;
 // Past a round trip, the time the digital modem takes from S̄ to enough Ri.
 const RI_MARGIN_SECONDS: f64 = 0.5;
+// The margin monitor judges nothing in the first 2 s of data mode.
+const SETTLE_MEASUREMENTS: u32 = 2;
+// Strays past this part of the gap to the next level make errors of about 4 in 10 000.
+const UNRELIABLE: f64 = 0.15;
+
+// The smallest gap in each Uchord between two neighbouring levels of `cp`, at the levels DIL showed.
+fn gaps(cp: &Cp, levels: &Levels) -> [f64; UCHORDS] {
+    let mut gaps = [f64::INFINITY; UCHORDS];
+    for interval in 0..FRAME {
+        let mut ucodes: Vec<u8> = (0..COUNT)
+            .filter(|&u| cp.constellation(interval) >> u & 1 == 1)
+            .collect();
+        ucodes.sort_unstable();
+        for pair in ucodes.windows(2) {
+            let row = &levels.levels[interval];
+            let gap = row[usize::from(pair[1])] - row[usize::from(pair[0])];
+            let uchord = usize::from(pair[0] / 16);
+            gaps[uchord] = gaps[uchord].min(gap);
+        }
+    }
+    gaps
+}
 
 fn sixteen(sixteen: bool) -> Points {
     if sixteen {
@@ -343,6 +366,8 @@ pub struct Analogue {
     tone_heard: usize,
     /// The bit rate before a retrain, until the retrain sets a new one.
     retrained_from: u32,
+    /// Seconds of data mode that the margin monitor has judged.
+    judged: u32,
 }
 
 impl Default for Analogue {
@@ -362,6 +387,7 @@ impl Analogue {
             outcome: None,
             online: false,
             retrain_tone: tones::Detector::new(Role::Originate),
+            judged: 0,
             tone_heard: 0,
             retrained_from: 0,
         }
@@ -414,6 +440,60 @@ impl Analogue {
         upstream.clearing = clearing;
         upstream.b1_sent = false;
         downstream.expect_renegotiation();
+    }
+
+    // Each second of data mode, the CP that the strays measured allow, which renegotiates if its rate is lower.
+    fn watch_margin(&mut self) {
+        let (Some(upstream), Some(downstream), Some(outcome)) =
+            (&self.upstream, &self.downstream, &self.outcome)
+        else {
+            return;
+        };
+        let events = downstream.events();
+        if events.measurements == self.judged {
+            return;
+        }
+        self.judged = events.measurements;
+        if !self.connected() || events.measurements < SETTLE_MEASUREMENTS {
+            return;
+        }
+        let (Some(measured), Some(dil)) = (events.data_noise, &events.levels) else {
+            return;
+        };
+        let gaps = upstream
+            .cp
+            .as_ref()
+            .map_or([f64::INFINITY; UCHORDS], |cp| gaps(cp, dil));
+        // Symbols that often land nearer another level stray less than the path makes them.
+        let worst = measured
+            .iter()
+            .zip(gaps)
+            .filter_map(|(strays, gap)| {
+                strays.map(|s| if s > UNRELIABLE * gap { s.max(gap) } else { s })
+            })
+            .fold(0.0, f64::max);
+        let mut levels = dil.clone();
+        for noise in &mut levels.noise {
+            *noise = noise.max(worst);
+        }
+        let rates = upstream.own_rates() >> 1;
+        let (law, max_power) = (outcome.digital.law, outcome.digital.max_power);
+        let running = upstream.cp.as_ref().map_or(0, Cp::bit_rate);
+        if let Some(cp) =
+            design::data(&levels, law, max_power, rates).filter(|cp| cp.bit_rate() < running)
+        {
+            self.renegotiate_to(cp);
+        }
+    }
+
+    // A rate renegotiation that asks for `cp` in data mode.
+    fn renegotiate_to(&mut self, cp: Cp) {
+        let mapping = Mapping::from_cp(&cp);
+        if let (Some(upstream), Some(downstream)) = (&mut self.upstream, &mut self.downstream) {
+            upstream.cp = Some(cp);
+            downstream.set_data_mapping(mapping);
+        }
+        self.start_renegotiation(false);
     }
 
     fn start(&mut self, outcome: PcmOutcome) {
@@ -492,6 +572,7 @@ impl DataPump for Analogue {
         };
         downstream.receive(input, bits);
         self.online |= self.connected();
+        self.watch_margin();
     }
 
     fn retrain(&mut self) {

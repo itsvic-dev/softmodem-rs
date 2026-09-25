@@ -144,6 +144,29 @@ fn noisy(amplitude: i32) -> impl Fn(i16) -> i16 {
 }
 
 #[test]
+fn renegotiates_down_when_data_mode_strays_more_than_dil_showed() {
+    let (mut analogue, mut digital) = connected_pair();
+    assert_eq!(analogue.bit_rate(), 56_000);
+    let line = noisy(100);
+    exchange_apart(&mut analogue, &mut digital, 400, &alaw, &line);
+    assert!(
+        analogue.connected() && digital.connected(),
+        "no connection after the renegotiation"
+    );
+    let rate = analogue.bit_rate();
+    assert!(rate < 56_000, "still at {rate} bit/s on a noisy path");
+    assert_eq!(rate, digital.bit_rate());
+    let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+    analogue.push_bits(&message);
+    digital.push_bits(&message);
+    let (at_analogue, _) = exchange_apart(&mut analogue, &mut digital, 150, &alaw, &line);
+    assert!(
+        at_analogue.windows(message.len()).any(|w| w == message),
+        "{rate} bit/s would lose data on that path"
+    );
+}
+
+#[test]
 fn connects_at_the_lowest_rates_when_dil_shows_noise() {
     for (amplitude, least, most) in [
         (100, 28_000, 33_333),
@@ -174,6 +197,14 @@ fn connects_at_the_lowest_rates_when_dil_shows_noise() {
             );
         }
     }
+}
+
+#[test]
+fn keeps_its_rate_while_data_mode_stays_within_dil() {
+    let (mut analogue, mut digital) = connected_pair();
+    exchange_apart(&mut analogue, &mut digital, 400, &alaw, &alaw);
+    assert_eq!((analogue.bit_rate(), digital.bit_rate()), (56_000, 56_000));
+    assert!(analogue.connected() && digital.connected());
 }
 
 #[derive(Debug, Clone, Copy)]
