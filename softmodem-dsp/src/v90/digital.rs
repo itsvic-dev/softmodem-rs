@@ -406,8 +406,9 @@ impl Digital {
         self.tone_heard = 0;
     }
 
+    // § 9.3.1 and § 9.4.1: from phase 3 on, tone A starts a retrain.
     fn far_retrains(&mut self, input: &[i16]) -> bool {
-        if !self.connected() {
+        if self.upstream.is_none() {
             self.tone_heard = 0;
             return false;
         }

@@ -166,6 +166,151 @@ fn renegotiates_down_when_data_mode_strays_more_than_dil_showed() {
     );
 }
 
+// A VoIP provider's path as real calls met it: see "Wire" in docs/transport.md.
+struct Provider {
+    up: std::collections::VecDeque<i16>,
+    down: std::collections::VecDeque<i16>,
+    quiet: usize,
+    gateway_after: usize,
+    gateway: bool,
+    noise: i32,
+    conceal: u32,
+    state: u32,
+    frames: usize,
+    concealed_up: Vec<usize>,
+    concealed_down: Vec<usize>,
+}
+
+impl Provider {
+    fn new(
+        delay: usize,
+        gateway_after: usize,
+        noise: i32,
+        conceal_per_mille: u32,
+        seed: u32,
+    ) -> Self {
+        Self {
+            up: std::collections::VecDeque::from(vec![0; delay]),
+            down: std::collections::VecDeque::from(vec![0; delay]),
+            quiet: 0,
+            gateway_after,
+            gateway: false,
+            noise,
+            conceal: conceal_per_mille,
+            state: seed.max(1),
+            frames: 0,
+            concealed_up: Vec::new(),
+            concealed_down: Vec::new(),
+        }
+    }
+
+    fn random(&mut self) -> u32 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 17;
+        self.state ^= self.state << 5;
+        self.state
+    }
+
+    #[expect(clippy::cast_precision_loss, reason = "a frame of samples")]
+    fn carry(&mut self, up: &[i16; FRAME], down: &[i16; FRAME]) -> ([i16; FRAME], [i16; FRAME]) {
+        let power = up.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>() / FRAME as f64;
+        self.quiet = if power.sqrt() < 30.0 {
+            self.quiet + FRAME
+        } else {
+            0
+        };
+        self.gateway |= self.quiet >= self.gateway_after;
+        let (mut up, mut down) = (*up, *down);
+        if self.gateway {
+            for sample in &mut down {
+                let most = self.noise.unsigned_abs() * 2 + 1;
+                let added = i32::try_from(self.random() % most).unwrap_or(0) - self.noise;
+                let sum = (i32::from(alaw(*sample)) + added).clamp(-32_768, 32_767);
+                *sample = i16::try_from(sum).unwrap_or(0);
+            }
+        }
+        for (frame, concealed) in [
+            (&mut up, &mut self.concealed_up),
+            (&mut down, &mut self.concealed_down),
+        ] {
+            self.state ^= self.state << 13;
+            self.state ^= self.state >> 17;
+            self.state ^= self.state << 5;
+            if self.state % 1000 < self.conceal {
+                frame.fill(0);
+                concealed.push(self.frames);
+            }
+        }
+        self.frames += 1;
+        self.up.extend(up.map(alaw));
+        self.down.extend(down.map(alaw));
+        let heard_up: Vec<i16> = self.up.drain(..FRAME).collect();
+        let heard_down: Vec<i16> = self.down.drain(..FRAME).collect();
+        (
+            heard_up.try_into().unwrap_or([0; FRAME]),
+            heard_down.try_into().unwrap_or([0; FRAME]),
+        )
+    }
+}
+
+// Frames through `provider`, and the data each end hears.
+fn through(
+    provider: &mut Provider,
+    analogue: &mut Analogue,
+    digital: &mut Digital,
+    frames: usize,
+) -> (Vec<bool>, Vec<bool>) {
+    let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+    let (mut at_analogue, mut at_digital) = (Vec::new(), Vec::new());
+    for _ in 0..frames {
+        analogue.transmit(&mut up);
+        digital.transmit(&mut down);
+        let (heard_up, heard_down) = provider.carry(&up, &down);
+        digital.receive(&heard_up, &mut at_digital);
+        analogue.receive(&heard_down, &mut at_analogue);
+    }
+    (at_analogue, at_digital)
+}
+
+#[test]
+fn connects_and_carries_data_through_a_path_like_a_providers() {
+    let mut failed = Vec::new();
+    // Seeds 6, 8 and 12 lose INFO1d, Sd and Ed.
+    for seed in [1, 6, 8, 12] {
+        let mut provider = Provider::new(1120, 2400, 100, 2, seed);
+        let mut analogue = Analogue::new();
+        let mut digital = Digital::asking_sixteen_points();
+        let up = (0..2500).find(|_| {
+            through(&mut provider, &mut analogue, &mut digital, 1);
+            analogue.connected() && digital.connected()
+        });
+        through(&mut provider, &mut analogue, &mut digital, 300);
+        // A lost frame in the message would spoil it however well the modems recover.
+        provider.conceal = 0;
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        analogue.push_bits(&message);
+        digital.push_bits(&message);
+        let (at_analogue, at_digital) = through(&mut provider, &mut analogue, &mut digital, 150);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        if up.is_none() || !found(&at_analogue) || !found(&at_digital) {
+            failed.push((
+                seed,
+                up,
+                analogue.bit_rate(),
+                found(&at_analogue),
+                found(&at_digital),
+                provider.concealed_up.clone(),
+                provider.concealed_down.clone(),
+            ));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "(seed, connected at frame, bit/s, data down, data up, frames concealed up, down) that failed: \
+         {failed:?}"
+    );
+}
+
 #[test]
 fn connects_at_the_lowest_rates_when_dil_shows_noise() {
     for (amplitude, least, most) in [

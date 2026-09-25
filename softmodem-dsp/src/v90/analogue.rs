@@ -35,6 +35,9 @@ const SILENCE_MS: f64 = 70.0;
 const CP_ACK_SECONDS: f64 = 0.2;
 // Past a round trip, the time the digital modem takes from S̄ to enough Ri.
 const RI_MARGIN_SECONDS: f64 = 0.5;
+// § 9.3.2.4: Sd and S̄d within 1.5 s of the start of Ja; Ed and B1d within 1 s of E.
+const SD_MOST_SECONDS: f64 = 1.5;
+const ED_MOST_SECONDS: f64 = 1.0;
 // The margin monitor judges nothing in the first 2 s of data mode.
 const SETTLE_MEASUREMENTS: u32 = 2;
 // Strays past this part of the gap to the next level make errors of about 4 in 10 000.
@@ -101,6 +104,9 @@ struct Upstream {
     cp: Option<Cp>,
     /// Symbols of CP′ sent.
     acked: f64,
+    /// What it sends, and for how many symbols it has sent it.
+    counted: Send,
+    in_send: usize,
     /// Symbols of CPt sent since the last S̄.
     cpt_sent: f64,
     encoder: Option<Encoder>,
@@ -144,6 +150,8 @@ impl Upstream {
             cpt: None,
             cp: None,
             acked: 0.0,
+            counted: Send::Ja,
+            in_send: 0,
             cpt_sent: 0.0,
             encoder: None,
             scale: 1.0,
@@ -167,6 +175,11 @@ impl Upstream {
         while self.queue.is_empty() {
             self.refill(events);
         }
+        if self.send != self.counted {
+            self.counted = self.send;
+            self.in_send = 0;
+        }
+        self.in_send += 1;
         self.queue.pop_front().unwrap_or((0.0, 0.0))
     }
 
@@ -486,6 +499,29 @@ impl Analogue {
         }
     }
 
+    // § 9.3.2.4, and a lost Ed: a retrain where a signal that the far end sends once went missing.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "symbol counts and a round trip in samples"
+    )]
+    fn watch_start_up(&mut self) {
+        let (Some(upstream), Some(downstream), Some(outcome)) =
+            (&self.upstream, &self.downstream, &self.outcome)
+        else {
+            return;
+        };
+        let waited = upstream.in_send as f64 / outcome.upstream.symbol_rate.baud();
+        let round_trip = outcome.round_trip as f64 / 8000.0;
+        let lost = match upstream.send {
+            Send::Ja => waited >= SD_MOST_SECONDS + round_trip,
+            Send::Data => !downstream.in_data() && waited >= ED_MOST_SECONDS + round_trip,
+            _ => false,
+        };
+        if lost {
+            self.restart();
+        }
+    }
+
     // A rate renegotiation that asks for `cp` in data mode.
     fn renegotiate_to(&mut self, cp: Cp) {
         let mapping = Mapping::from_cp(&cp);
@@ -573,6 +609,7 @@ impl DataPump for Analogue {
         downstream.receive(input, bits);
         self.online |= self.connected();
         self.watch_margin();
+        self.watch_start_up();
     }
 
     fn retrain(&mut self) {
