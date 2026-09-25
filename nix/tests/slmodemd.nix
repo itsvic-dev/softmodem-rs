@@ -16,6 +16,8 @@
   noise ? null,
   # ATO1 from the softmodem after the first exchange, then a second.
   retrain ? false,
+  # Wire options for the softmodem's end, such as --gateway-after on what it sends to slmodemd.
+  impairment ? "",
 }:
 
 let
@@ -47,7 +49,7 @@ in
       systemd.services.softmodem = {
         wantedBy = [ "multi-user.target" ];
         serviceConfig = {
-          ExecStart = "${softmodem}/bin/softmodem wire --local 127.0.0.1:5300 --pty ${port} --dump /var/lib/softmodem --init 'ATE0S0=1${ours}'";
+          ExecStart = "${softmodem}/bin/softmodem wire --local 127.0.0.1:5300 --pty ${port} --dump /var/lib/softmodem ${impairment} --init 'ATE0S0=1${ours}'";
           RuntimeDirectory = "softmodem";
           StateDirectory = "softmodem";
         };
