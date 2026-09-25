@@ -52,6 +52,11 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
   V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.90.
 - `checks.<system>.fmt` fails on code that `cargo fmt` would change.
+- GitHub Actions (`.github/workflows/ci.yml`) runs fmt, clippy, the tests
+  and `reuse lint` without Nix, on the Rust of the dev shell, and sends
+  clippy and coverage to SonarQube at `https://sonarqube.itsvic.dev`. It
+  skips `softmodem-interop`, as Ubuntu has no spandsp 3, and the VM checks.
+  Keep `RUST_VERSION` there in step with `rustc` in the dev shell.
 - The project is GPL-3.0-or-later under REUSE, and `checks.<system>.reuse`
   runs `reuse lint`. Every file that takes a comment starts with the SPDX
   header, and a new one without it fails the check: `reuse annotate
