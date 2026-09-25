@@ -42,10 +42,16 @@ enum Send {
     Data,
     /// Silence once a cleardown has ended the call.
     Cleared,
+    /// Silence that the analogue modem asked for with CPs, until its next CP.
+    Silent,
 }
 
 /// The downstream PCM signal from phase 3 on.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag for each turn that § 9.6 and § 9.7 can take"
+)]
 struct Downstream {
     outcome: PcmOutcome,
     send: Send,
@@ -73,6 +79,8 @@ struct Downstream {
     renegotiate: bool,
     /// This end started a cleardown, so its MP asks for 0 bit/s.
     clearing: bool,
+    /// The analogue modem has acknowledged its request for silence.
+    silence: bool,
 }
 
 impl Downstream {
@@ -98,6 +106,7 @@ impl Downstream {
             renegotiations: 0,
             renegotiate: false,
             clearing: false,
+            silence: false,
         }
     }
 
@@ -172,6 +181,7 @@ impl Downstream {
             Send::Data if self.renegotiate => self.start_renegotiation(),
             Send::Data => self.data(),
             Send::Cleared => self.queue.push_back(Codeword::SILENCE),
+            Send::Silent => self.silent(events),
         }
     }
 
@@ -253,7 +263,11 @@ impl Downstream {
     // § 9.4.1.3 and § 9.4.1.4: MP until CP, MP′ until CP′ or E, then Ed.
     fn training(&mut self, events: &Events, mp: Mp) {
         if self.last_frame.is_none() && self.wants_bits() {
-            if self.acks > 0 && events.cp_ack {
+            // § 9.6.1.2.4: after CPs, MP′ until CPs′, then Ed and silence.
+            let silence = events.cp.as_ref().filter(|cp| cp.silence);
+            let silence_acknowledged = silence.is_some_and(|cp| cp.acknowledge);
+            if self.acks > 0 && (silence_acknowledged || (silence.is_none() && events.cp_ack)) {
+                self.silence = silence_acknowledged;
                 self.last_frame = Some(self.queued_frames + ED_FRAMES);
                 self.queue_bits(&vec![false; self.frame_bits() * ED_FRAMES]);
             } else {
@@ -269,8 +283,35 @@ impl Downstream {
         }
         self.emit(false);
         if self.last_frame == Some(self.sent_frames) {
-            self.start_data(events);
+            if self.silence {
+                self.send = Send::Silent;
+            } else {
+                self.start_data(events);
+            }
         }
+    }
+
+    // § 9.6.1.2.5 and § 9.6.1.2.6: silence in whole data frames, until a CP without the request for it.
+    fn silent(&mut self, events: &Events) {
+        let (Some(training), Some(cp)) = (&self.training, &self.cp) else {
+            return;
+        };
+        if events.cp.as_ref().is_none_or(|cp| cp.silence) {
+            self.queue.extend([Codeword::SILENCE; FRAME]);
+            return;
+        }
+        let Some(data) = Mapping::from_cp(cp) else {
+            return;
+        };
+        let largest: [u8; FRAME] =
+            std::array::from_fn(|i| training.sets[i].first().copied().unwrap_or(0));
+        self.queue.extend(training::r(largest, false, RD_SYMBOLS));
+        self.queue.extend(training::r(largest, true, R_BAR_SYMBOLS));
+        let mapping = Mapping::renegotiating(training, &data);
+        self.restart_encoder(mapping);
+        self.acks = 0;
+        self.silence = false;
+        self.send = Send::Training;
     }
 
     // § 9.7: after a rate sequence of 0 bit/s from either end, the call is over.

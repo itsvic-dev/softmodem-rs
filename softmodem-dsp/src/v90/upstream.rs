@@ -238,14 +238,16 @@ impl Upstream {
                 continue;
             }
             if let Some(cp) = self.cp.push(bit) {
-                self.events.cp_ack |= cp.acknowledge && !cp.training;
+                self.events.cp_ack |= cp.acknowledge && !cp.training && !cp.silence;
                 if cp.training {
                     self.events.cpt = Some(cp);
                 } else {
                     self.events.cp = Some(cp);
                 }
             }
-            if self.events.cp.is_some() && self.ones == E_ONES {
+            // § 9.6.2.1.6: after CPs′ comes SCR, whose ones are not E.
+            let after_cp = self.events.cp.as_ref().is_some_and(|cp| !cp.silence);
+            if after_cp && self.ones == E_ONES {
                 self.events.cp_ack = true;
                 self.listen = Listen::Data { from: index + 1 };
             }
