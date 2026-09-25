@@ -220,7 +220,7 @@ async fn identifies_itself() {
         .await;
     a.command("ATI4").await;
     a.expect_next(
-        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.34 33600 bit/s, V.42 LAPM, V.42bis\r\n\r\nOK\r\n",
+        b"\r\nV.21 300 bit/s, V.22 1200 bit/s, V.22bis 2400 bit/s, V.34 33600 bit/s, V.90 56000 bit/s, V.42 LAPM, V.42bis\r\n\r\nOK\r\n",
     )
     .await;
 }
@@ -247,8 +247,8 @@ async fn reads_and_lists_the_error_control() {
 async fn two_modems_connect_with_v42_and_carry_data_both_ways() {
     let (mut a, mut b) = two_modems("ATE0+ER=1", "ATE0S0=1+ER=1");
     a.command("ATDT0300").await;
-    a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 33600\r\n").await;
-    b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 33600\r\n").await;
+    a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 56000\r\n").await;
+    b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 56000\r\n").await;
 
     let text = (0..300)
         .map(|n| format!("line {n} from the caller\r\n"))
@@ -268,8 +268,8 @@ async fn falls_back_to_plain_data_when_one_end_has_no_v42() {
             &format!("ATE0S0=1+ER=1;{answerer}"),
         );
         a.command("ATDT0300").await;
-        a.expect("\r\n+ER: NONE\r\n\r\nCONNECT 33600\r\n").await;
-        b.expect("\r\n+ER: NONE\r\n\r\nCONNECT 33600\r\n").await;
+        a.expect("\r\n+ER: NONE\r\n\r\nCONNECT 56000\r\n").await;
+        b.expect("\r\n+ER: NONE\r\n\r\nCONNECT 56000\r\n").await;
         a.send(b"plain from the caller").await;
         b.expect("plain from the caller").await;
         b.send(b"plain from the answerer").await;
@@ -320,9 +320,9 @@ fn compressible(lines: usize) -> String {
 async fn two_modems_compress_with_v42bis_both_ways() {
     let (mut a, mut b) = two_modems("ATE0+ER=1;+DR=1", "ATE0S0=1+ER=1;+DR=1");
     a.command("ATDT0300").await;
-    a.expect("\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\nCONNECT 33600\r\n")
+    a.expect("\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\nCONNECT 56000\r\n")
         .await;
-    b.expect("\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\nCONNECT 33600\r\n")
+    b.expect("\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\nCONNECT 56000\r\n")
         .await;
     let text = compressible(200);
     tokio::join!(a.send(text.as_bytes()), b.expect(&text));
@@ -333,8 +333,8 @@ async fn two_modems_compress_with_v42bis_both_ways() {
 async fn reports_compression_in_one_direction_or_none() {
     let (mut a, mut b) = two_modems("ATE0+DR=1;+DS=2", "ATE0S0=1+DR=1");
     a.command("ATDT0300").await;
-    a.expect("\r\n+DR: V42B RD\r\n\r\nCONNECT 33600\r\n").await;
-    b.expect("\r\n+DR: V42B TD\r\n\r\nCONNECT 33600\r\n").await;
+    a.expect("\r\n+DR: V42B RD\r\n\r\nCONNECT 56000\r\n").await;
+    b.expect("\r\n+DR: V42B TD\r\n\r\nCONNECT 56000\r\n").await;
     b.send(b"compressed only this way").await;
     a.expect("compressed only this way").await;
     a.send(b"and plain this way").await;
@@ -342,8 +342,8 @@ async fn reports_compression_in_one_direction_or_none() {
 
     let (mut a, mut b) = two_modems("ATE0+DR=1", "ATE0S0=1+DR=1;%C0");
     a.command("ATDT0300").await;
-    a.expect("\r\n+DR: NONE\r\n\r\nCONNECT 33600\r\n").await;
-    b.expect("\r\n+DR: NONE\r\n\r\nCONNECT 33600\r\n").await;
+    a.expect("\r\n+DR: NONE\r\n\r\nCONNECT 56000\r\n").await;
+    b.expect("\r\n+DR: NONE\r\n\r\nCONNECT 56000\r\n").await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -356,8 +356,8 @@ async fn hangs_up_when_v42bis_is_required_and_the_far_end_has_none() {
 async fn transfer_time(caller: &str, answerer: &str, text: &str) -> Duration {
     let (mut a, mut b) = two_modems(caller, answerer);
     a.command("ATDT0300").await;
-    a.expect("CONNECT 33600\r\n").await;
-    b.expect("CONNECT 33600\r\n").await;
+    a.expect("CONNECT 56000\r\n").await;
+    b.expect("CONNECT 56000\r\n").await;
     let start = tokio::time::Instant::now();
     tokio::join!(a.send(text.as_bytes()), b.expect(text));
     start.elapsed()
@@ -386,7 +386,7 @@ async fn reads_and_lists_the_modulation() {
     a.command("ATZ+MS?").await;
     a.expect_next(b"\r\n+MS: V22,0\r\n\r\nOK\r\n").await;
     a.command("AT&FE0+MS?").await;
-    a.expect_next(b"\r\n+MS: V34,1\r\n\r\nOK\r\n").await;
+    a.expect_next(b"\r\n+MS: V90,1\r\n\r\nOK\r\n").await;
     a.command("AT+MS=?").await;
     a.expect_next(b"\r\n+MS: (V21,V22,V22B,V34,V90),(0,1)\r\n\r\nOK\r\n")
         .await;
@@ -556,6 +556,8 @@ async fn keeps_what_the_answerer_sends_before_the_caller_connects() {
         "+MS=V22B,1",
         "+MS=V34,0",
         "+MS=V34,1",
+        "+MS=V90,0",
+        "+MS=V90,1",
     ] {
         let (mut a, mut b) = two_modems(
             &format!("ATE0{modulation}"),
@@ -577,13 +579,13 @@ async fn keeps_what_the_answerer_sends_before_the_caller_connects() {
 async fn escapes_to_command_mode_and_back_and_hangs_up() {
     let (mut a, mut b) = two_modems("ATE0", "ATE0S0=1");
     a.command("ATDT0300").await;
-    a.expect("CONNECT 33600\r\n").await;
+    a.expect("CONNECT 56000\r\n").await;
     b.expect("CONNECT").await;
 
     a.escape().await;
     a.expect_next(b"\r\nOK\r\n").await;
     a.command("ATO").await;
-    a.expect_next(b"\r\nCONNECT 33600\r\n").await;
+    a.expect_next(b"\r\nCONNECT 56000\r\n").await;
     a.send(b"still here").await;
     b.expect("still here").await;
 
@@ -692,7 +694,7 @@ impl Computer {
 async fn the_speaker_sounds_until_connect_under_m1_and_always_under_m2() {
     let (mut a, mut b) = two_modems("ATE0", "ATE0M2L3S0=1");
     a.command("ATDT0300").await;
-    a.expect("CONNECT 33600\r\n").await;
+    a.expect("CONNECT 56000\r\n").await;
     b.expect("CONNECT").await;
     sleep(Duration::from_millis(100)).await;
     assert_eq!(a.speaker(), [0.5, 0.0]);

@@ -50,7 +50,7 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
   `kvm`, and it copies each side's WAV recordings into `result/`.
   `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
-  V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.34.
+  V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.90.
 - The project is GPL-3.0-or-later under REUSE: `REUSE.toml` covers every
   file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
   licence needs its own annotation there and its text in `LICENSES/`.
