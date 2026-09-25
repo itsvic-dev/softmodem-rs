@@ -100,7 +100,10 @@ pub struct PcmOutcome {
 enum Mode {
     V34,
     Digital,
-    Analogue,
+    /// `picks_v34` asks for V.34 in INFO1a, not V.90.
+    Analogue {
+        picks_v34: bool,
+    },
 }
 
 fn own_info0d() -> Info0d {
@@ -296,7 +299,7 @@ impl Phase2 {
     /// V.34 answer modem.
     #[must_use]
     pub fn analogue() -> Self {
-        Self::with(Role::Answer, Mode::Analogue)
+        Self::with(Role::Answer, Mode::Analogue { picks_v34: false })
     }
 
     fn with(role: Role, mode: Mode) -> Self {
@@ -372,13 +375,30 @@ impl Phase2 {
         phase2
     }
 
+    /// As the analogue modem, asks for V.34 in INFO1a (§ 9.2.2.1.9/V.90),
+    /// so that phase 2 settles an [`Outcome`] for both ends.
+    #[must_use]
+    pub fn picking_v34(mut self) -> Self {
+        if let Mode::Analogue { picks_v34 } = &mut self.mode {
+            *picks_v34 = true;
+        }
+        self
+    }
+
+    /// The digital modem's INFO0d, as the analogue modem has heard it.
+    #[must_use]
+    pub fn far_info0d(&self) -> Option<Info0d> {
+        self.far_info0d
+    }
+
     // Phase 2 again from the tones, which the far end answers if it starts it and this end if the far end does.
     fn restart(&mut self) {
         let Some(far) = self.far else {
             return;
         };
         let again = match self.mode {
-            Mode::Analogue => match self.far_info0d {
+            Mode::Analogue { picks_v34 } => match self.far_info0d {
+                Some(digital) if picks_v34 => Self::retrain_analogue(digital).picking_v34(),
                 Some(digital) => Self::retrain_analogue(digital),
                 None => return,
             },
@@ -609,7 +629,7 @@ impl Phase2 {
 
     // The far INFO0, or INFO0d, heard by sample `at`.
     fn info0_bit(&mut self, bit: bool, at: usize) {
-        let far = if self.mode == Mode::Analogue {
+        let far = if matches!(self.mode, Mode::Analogue { .. }) {
             self.info0d.push(bit).map(|info0d| {
                 self.far_info0d = Some(info0d);
                 info0d.v34
@@ -630,7 +650,7 @@ impl Phase2 {
             && let Some(info1c) = self.info1c.push(bit)
             && self.step == Step::AfterProbe
         {
-            if self.mode == Mode::Analogue {
+            if self.mode == (Mode::Analogue { picks_v34: false }) {
                 self.decide_pcm(&info1c);
             } else {
                 self.decide(&info1c);
