@@ -21,6 +21,7 @@ use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 mod password;
 
@@ -128,6 +129,9 @@ struct ModemArgs {
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .with_writer(std::io::stderr)
         .init();
 
