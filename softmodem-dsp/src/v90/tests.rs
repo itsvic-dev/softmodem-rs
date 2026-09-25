@@ -353,6 +353,18 @@ fn keeps_its_rate_while_data_mode_stays_within_dil() {
     assert!(analogue.connected() && digital.connected());
 }
 
+#[test]
+fn keeps_its_rate_through_lost_downstream_packets() {
+    let (mut analogue, mut digital) = connected_pair();
+    exchange_apart(&mut analogue, &mut digital, 200, &alaw, &alaw);
+    for _ in 0..30 {
+        exchange_apart(&mut analogue, &mut digital, 1, &alaw, &|_| 0);
+        exchange_apart(&mut analogue, &mut digital, 37, &alaw, &alaw);
+    }
+    assert_eq!((analogue.bit_rate(), digital.bit_rate()), (56_000, 56_000));
+    assert!(analogue.connected() && digital.connected());
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Recovery {
     Renegotiation,
