@@ -672,7 +672,13 @@ impl Monitor {
         self.high = 0;
     }
 
-    fn watch(&mut self, margin_db: f64, rate: u8, can_rise: bool, samples: usize) -> Option<Action> {
+    fn watch(
+        &mut self,
+        margin_db: f64,
+        rate: u8,
+        can_rise: bool,
+        samples: usize,
+    ) -> Option<Action> {
         if self.in_data == 0
             && let Some(from) = self.up_from.take()
         {
@@ -1155,7 +1161,10 @@ mod tests {
         answerer.push_bits(&message);
         let (at_caller, at_answerer) = exchange(&mut caller, &mut answerer, 60);
         let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
-        assert!(found(&at_answerer) && found(&at_caller), "data lost after a short TRN");
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data lost after a short TRN"
+        );
     }
 
     thread_local! {
@@ -1263,7 +1272,13 @@ mod tests {
         until_rate(&mut caller, &mut answerer, mild, 750, |rate| rate < 33_600)
             .expect("no step down to come back up from");
         let low = caller.bit_rate();
-        let rose = until_rate(&mut caller, &mut answerer, |sample| sample, 1500, |rate| rate > low);
+        let rose = until_rate(
+            &mut caller,
+            &mut answerer,
+            |sample| sample,
+            1500,
+            |rate| rate > low,
+        );
         assert!(
             rose.is_some(),
             "{low} bit/s would stay after the line got clean again"

@@ -106,8 +106,8 @@ impl Info for Info1a {
         let md_length = narrow(reader.field(7));
         let uinfo = narrow(reader.field(7));
         reader.field(2);
-        let upstream = SymbolRate::from_index(reader.field(3))
-            .filter(|&rate| rate >= SymbolRate::S3000)?;
+        let upstream =
+            SymbolRate::from_index(reader.field(3)).filter(|&rate| rate >= SymbolRate::S3000)?;
         (reader.field(3) == PCM_SYMBOL_RATE).then(|| Self {
             md_length,
             uinfo,

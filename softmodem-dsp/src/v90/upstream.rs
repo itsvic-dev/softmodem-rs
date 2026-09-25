@@ -236,7 +236,10 @@ impl Upstream {
             self.ones = if bit { self.ones + 1 } else { 0 };
             if self.events.ja.is_none() {
                 if let Some(ja) = self.ja.push(bit) {
-                    self.events.trained = Some(rates::trained_rate(self.symbol_rate, self.equalizer.error()));
+                    self.events.trained = Some(rates::trained_rate(
+                        self.symbol_rate,
+                        self.equalizer.error(),
+                    ));
                     self.events.ja = Some(ja);
                 }
                 continue;

@@ -93,7 +93,12 @@ impl Words for Descriptor {
         let count = usize::from(*words.first()? & 0xFF);
         let (signs, pattern) = pattern_lengths(words)?;
         let lengths_and_references = UCHORDS;
-        Some(2 + signs.div_ceil(WORD) + pattern.div_ceil(WORD) + lengths_and_references + count.div_ceil(2))
+        Some(
+            2 + signs.div_ceil(WORD)
+                + pattern.div_ceil(WORD)
+                + lengths_and_references
+                + count.div_ceil(2),
+        )
     }
 
     fn from_words(words: &[u16]) -> Option<Self> {

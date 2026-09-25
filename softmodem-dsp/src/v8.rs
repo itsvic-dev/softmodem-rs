@@ -106,8 +106,16 @@ impl Menu {
         let mut octets = vec![call, modn0, modn1, modn2];
         if modes.v90.any() {
             let pcm0 = PCM_TAG
-                | if modes.v90.analogue { PCM_ANALOGUE_BIT } else { 0 }
-                | if modes.v90.digital { PCM_DIGITAL_BIT } else { 0 };
+                | if modes.v90.analogue {
+                    PCM_ANALOGUE_BIT
+                } else {
+                    0
+                }
+                | if modes.v90.digital {
+                    PCM_DIGITAL_BIT
+                } else {
+                    0
+                };
             octets.extend([ACCESS_TAG | DIGITAL_ACCESS_BIT, pcm0]);
         }
         octets
@@ -204,7 +212,8 @@ pub struct Reader {
 const CJ_BITS: usize = 30;
 
 fn cj_pattern() -> u32 {
-    cj().into_iter().fold(0, |recent, bit| recent << 1 | u32::from(bit))
+    cj().into_iter()
+        .fold(0, |recent, bit| recent << 1 | u32::from(bit))
 }
 
 impl Default for Reader {

@@ -279,7 +279,12 @@ impl Encoder {
     fn weigh(&self, frame: &Pending, rule: Rule, filter: &mut Filter) -> f64 {
         frame
             .signed(rule)
-            .map(|codeword| filter.push(f64::from(codeword.linear(self.mapping.law)), self.mapping.filter))
+            .map(|codeword| {
+                filter.push(
+                    f64::from(codeword.linear(self.mapping.law)),
+                    self.mapping.filter,
+                )
+            })
             .sum()
     }
 

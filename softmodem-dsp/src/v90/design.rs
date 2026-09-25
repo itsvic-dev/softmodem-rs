@@ -12,9 +12,9 @@ use super::ucode::{self, COUNT, Law};
 
 // Table 15, as RMS, for bits 33:37 of INFO0d from 0 (-0.5 dBm0) to 31 (-16 dBm0).
 const POWER_LIMITS: [f64; 32] = [
-    15124.0, 14276.0, 13480.0, 12724.0, 12012.0, 11340.0, 10708.0, 10108.0, 9544.0, 9008.0,
-    8504.0, 8028.0, 7580.0, 7156.0, 6756.0, 6380.0, 6020.0, 5684.0, 5368.0, 5068.0, 4784.0,
-    4516.0, 4264.0, 4024.0, 3800.0, 3588.0, 3388.0, 3196.0, 3020.0, 2852.0, 2692.0, 2540.0,
+    15124.0, 14276.0, 13480.0, 12724.0, 12012.0, 11340.0, 10708.0, 10108.0, 9544.0, 9008.0, 8504.0,
+    8028.0, 7580.0, 7156.0, 6756.0, 6380.0, 6020.0, 5684.0, 5368.0, 5068.0, 4784.0, 4516.0, 4264.0,
+    4024.0, 3800.0, 3588.0, 3388.0, 3196.0, 3020.0, 2852.0, 2692.0, 2540.0,
 ];
 // SP, the most table 12 allows.
 const DIL_SIGN_BITS: usize = 128;
@@ -111,9 +111,8 @@ impl Levels {
     /// nothing.
     #[must_use]
     pub fn table(law: Law) -> Self {
-        let row: [f64; COUNT as usize] = std::array::from_fn(|u| {
-            f64::from(ucode::linear(u8::try_from(u).unwrap_or(0), law))
-        });
+        let row: [f64; COUNT as usize] =
+            std::array::from_fn(|u| f64::from(ucode::linear(u8::try_from(u).unwrap_or(0), law)));
         Self {
             levels: [row; FRAME],
             noise: 0.0,
@@ -328,7 +327,12 @@ mod tests {
     fn keeps_the_loud_part_short() {
         let descriptor = descriptor(75);
         let length = |u: u8| (usize::from(descriptor.lengths[usize::from(u / 16)]) + 1) * FRAME;
-        let loud: usize = descriptor.training.iter().filter(|&&u| u >= 112).map(|&u| length(u)).sum();
+        let loud: usize = descriptor
+            .training
+            .iter()
+            .filter(|&&u| u >= 112)
+            .map(|&u| length(u))
+            .sum();
         assert!(loud <= 400, "{loud} symbols of DIL near full scale");
     }
 }

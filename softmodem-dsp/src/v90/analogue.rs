@@ -148,7 +148,8 @@ impl Upstream {
             Send::Cpt if events.r_bar => self.send = Send::Cp,
             Send::Cpt => {
                 let frame = self.cpt.as_ref().map(Cp::frame).unwrap_or_default();
-                self.queue.extend(self.training.sequence(&frame, Points::Four));
+                self.queue
+                    .extend(self.training.sequence(&frame, Points::Four));
                 if frame.is_empty() {
                     self.queue.push_back((0.0, 0.0));
                 }
@@ -215,7 +216,8 @@ impl Upstream {
             cp.rate = 0;
         }
         let frame = cp.frame();
-        self.queue.extend(self.training.sequence(&frame, Points::Four));
+        self.queue
+            .extend(self.training.sequence(&frame, Points::Four));
     }
 
     // § 9.4.2.4: the highest rate both enable, up to the maximum in MP.
@@ -333,7 +335,11 @@ impl Analogue {
             NOMINAL_DBM0,
         ));
         let descriptor = design::descriptor(outcome.uinfo);
-        self.downstream = Some(Downstream::new(outcome.uinfo, outcome.digital.law, &descriptor));
+        self.downstream = Some(Downstream::new(
+            outcome.uinfo,
+            outcome.digital.law,
+            &descriptor,
+        ));
         self.upstream = Some(Upstream::new(outcome));
     }
 }
@@ -365,9 +371,11 @@ impl DataPump for Analogue {
     }
 
     fn transmit(&mut self, out: &mut [i16]) {
-        let (Some(modulator), Some(upstream), Some(downstream)) =
-            (&mut self.modulator, &mut self.upstream, &mut self.downstream)
-        else {
+        let (Some(modulator), Some(upstream), Some(downstream)) = (
+            &mut self.modulator,
+            &mut self.upstream,
+            &mut self.downstream,
+        ) else {
             self.phase2.transmit(out);
             return;
         };

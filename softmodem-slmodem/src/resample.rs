@@ -68,8 +68,8 @@ impl Resampler {
                     (PI * fraction * t).sin() / (PI * fraction * t)
                 };
                 let x = t / centre;
-                let window = bessel_i0(KAISER_BETA * (1.0 - x * x).max(0.0).sqrt())
-                    / bessel_i0(KAISER_BETA);
+                let window =
+                    bessel_i0(KAISER_BETA * (1.0 - x * x).max(0.0).sqrt()) / bessel_i0(KAISER_BETA);
                 up as f64 * fraction * sinc * window
             })
             .collect();
@@ -116,17 +116,26 @@ mod tests {
     fn tone(hz: f64, rate: f64, samples: usize, amplitude: f64) -> Vec<i16> {
         #[expect(clippy::cast_possible_truncation, reason = "within i16")]
         (0..samples)
-            .map(|n| (amplitude * (2.0 * PI * hz * f64::from(u32::try_from(n).unwrap()) / rate).sin()) as i16)
+            .map(|n| {
+                (amplitude * (2.0 * PI * hz * f64::from(u32::try_from(n).unwrap()) / rate).sin())
+                    as i16
+            })
             .collect()
     }
 
     // The amplitude of `hz` in `samples`, skipping the filter's start.
     fn amplitude(samples: &[i16], hz: f64, rate: f64) -> f64 {
         let settled = &samples[samples.len() / 4..];
-        let (re, im) = settled.iter().zip(0u32..).fold((0.0, 0.0), |(re, im), (&s, n)| {
-            let angle = 2.0 * PI * hz * f64::from(n) / rate;
-            (re + f64::from(s) * angle.cos(), im + f64::from(s) * angle.sin())
-        });
+        let (re, im) = settled
+            .iter()
+            .zip(0u32..)
+            .fold((0.0, 0.0), |(re, im), (&s, n)| {
+                let angle = 2.0 * PI * hz * f64::from(n) / rate;
+                (
+                    re + f64::from(s) * angle.cos(),
+                    im + f64::from(s) * angle.sin(),
+                )
+            });
         #[expect(clippy::cast_precision_loss, reason = "a few thousand samples")]
         let count = settled.len() as f64;
         2.0 * (re * re + im * im).sqrt() / count
@@ -166,7 +175,9 @@ mod tests {
     #[test]
     fn passes_4000_hz_to_slmodemd() {
         let mut up = Resampler::up();
-        let alternating: Vec<i16> = (0..16_000).map(|n| if n % 2 == 0 { 10_000 } else { -10_000 }).collect();
+        let alternating: Vec<i16> = (0..16_000)
+            .map(|n| if n % 2 == 0 { 10_000 } else { -10_000 })
+            .collect();
         let mut high = Vec::new();
         up.process(&alternating, &mut high);
         let level = amplitude(&high, 4000.0, 9600.0);

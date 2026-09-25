@@ -712,7 +712,10 @@ mod tests {
 
     #[test]
     fn a_v90_end_meets_a_v34_end_at_v34() {
-        for (caller, answerer) in [(Modulation::V90, Modulation::V34), (Modulation::V34, Modulation::V90)] {
+        for (caller, answerer) in [
+            (Modulation::V90, Modulation::V34),
+            (Modulation::V34, Modulation::V90),
+        ] {
             let mut caller = pump(caller, Role::Originate);
             let mut answerer = pump(answerer, Role::Answer);
             connect(caller.as_mut(), answerer.as_mut());

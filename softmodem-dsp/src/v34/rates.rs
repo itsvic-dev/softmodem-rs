@@ -174,7 +174,10 @@ mod tests {
     fn training_through_a_law_carries_33600_at_3429_baud() {
         let alaw_mse = 10f64.powf(-37.6 / 10.0);
         assert_eq!(trained_rate(SymbolRate::S3429, alaw_mse), 14);
-        assert_eq!(trained_rate(SymbolRate::S3429, 10f64.powf(-34.0 / 10.0)), 13);
+        assert_eq!(
+            trained_rate(SymbolRate::S3429, 10f64.powf(-34.0 / 10.0)),
+            13
+        );
         assert_eq!(trained_rate(SymbolRate::S3429, 0.1), 0);
     }
 

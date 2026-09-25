@@ -178,7 +178,9 @@ impl Downstream {
     }
 
     fn at_frame_end(&self) -> bool {
-        (self.count + 1).checked_sub(self.origin).is_some_and(|n| n % FRAME == 0)
+        (self.count + 1)
+            .checked_sub(self.origin)
+            .is_some_and(|n| n % FRAME == 0)
     }
 
     // The last six samples as a frame of four large symbols and two small, and the signs of the first.
@@ -274,7 +276,10 @@ impl Downstream {
                 from: start + super::training::SD_BAR_SYMBOLS,
             };
         } else if positive {
-            self.stage = Stage::Sd { run: 1, last: Some(n) };
+            self.stage = Stage::Sd {
+                run: 1,
+                last: Some(n),
+            };
         }
     }
 
@@ -347,7 +352,11 @@ impl Downstream {
         let ucode = mapping.sets[interval]
             .iter()
             .copied()
-            .min_by(|&a, &b| (x.abs() - level(a)).abs().total_cmp(&(x.abs() - level(b)).abs()))
+            .min_by(|&a, &b| {
+                (x.abs() - level(a))
+                    .abs()
+                    .total_cmp(&(x.abs() - level(b)).abs())
+            })
             .unwrap_or(0);
         Codeword {
             ucode,

@@ -735,7 +735,11 @@ mod tests {
     const FRAME: usize = 160;
 
     fn run(delay: usize) -> (Phase2, Phase2, usize) {
-        run_between(Phase2::new(Role::Originate), Phase2::new(Role::Answer), delay)
+        run_between(
+            Phase2::new(Role::Originate),
+            Phase2::new(Role::Answer),
+            delay,
+        )
     }
 
     // `call` and `answer` in their V.34 parts, which V.90 gives the digital and the analogue modem.
@@ -793,7 +797,10 @@ mod tests {
                 );
             };
             assert_eq!(digital.upstream.symbol_rate, analogue.upstream.symbol_rate);
-            assert_eq!(digital.upstream.high_carrier, analogue.upstream.high_carrier);
+            assert_eq!(
+                digital.upstream.high_carrier,
+                analogue.upstream.high_carrier
+            );
             assert_eq!(analogue.upstream.symbol_rate, SymbolRate::S3429);
             assert_eq!((digital.uinfo, analogue.uinfo), (75, 75));
             assert_eq!(digital.digital, analogue.digital);

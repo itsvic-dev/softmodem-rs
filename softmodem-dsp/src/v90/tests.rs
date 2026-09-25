@@ -77,7 +77,11 @@ fn connect_over(line: impl Fn(i16) -> i16) -> u32 {
     digital.push_bits(&message);
     let (at_analogue, at_digital) = exchange(&mut analogue, &mut digital, 100, &line);
     let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
-    assert!(found(&at_analogue), "{} bit/s down would lose data", analogue.bit_rate());
+    assert!(
+        found(&at_analogue),
+        "{} bit/s down would lose data",
+        analogue.bit_rate()
+    );
     assert!(found(&at_digital), "V.34 up would lose data");
     analogue.bit_rate()
 }
@@ -123,7 +127,11 @@ fn renegotiates_from_either_end_and_carries_data_after() {
             );
             analogue.connected() && digital.connected()
         });
-        assert!(back.is_some(), "a renegotiation from the {} modem would not end", if from_analogue { "analogue" } else { "digital" });
+        assert!(
+            back.is_some(),
+            "a renegotiation from the {} modem would not end",
+            if from_analogue { "analogue" } else { "digital" }
+        );
         assert_eq!((analogue.bit_rate(), digital.bit_rate()), (56_000, 56_000));
         assert_eq!(
             carries_data(&mut analogue, &mut digital),
@@ -147,8 +155,15 @@ fn clears_down_from_either_end() {
             exchange(&mut analogue, &mut digital, 1, &alaw);
             analogue.cleared() && digital.cleared()
         });
-        assert!(cleared.is_some(), "a cleardown from the {} modem would leave the call up", if from_analogue { "analogue" } else { "digital" });
-        assert!(!analogue.carrier() && !digital.carrier(), "DCD would stay on after a cleardown");
+        assert!(
+            cleared.is_some(),
+            "a cleardown from the {} modem would leave the call up",
+            if from_analogue { "analogue" } else { "digital" }
+        );
+        assert!(
+            !analogue.carrier() && !digital.carrier(),
+            "DCD would stay on after a cleardown"
+        );
     }
 }
 
@@ -189,5 +204,8 @@ fn connects_whatever_the_delay_each_way() {
             failed.push((up_delay, down_delay));
         }
     }
-    assert!(failed.is_empty(), "no 56 000 bit/s over lines delayed, up and down, by {failed:?} samples");
+    assert!(
+        failed.is_empty(),
+        "no 56 000 bit/s over lines delayed, up and down, by {failed:?} samples"
+    );
 }

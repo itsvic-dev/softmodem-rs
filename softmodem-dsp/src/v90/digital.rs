@@ -174,7 +174,8 @@ impl Downstream {
             },
             Send::Ri { sent } => {
                 if let Some(cpt) = events.cpt.as_ref().filter(|_| sent >= RI_SYMBOLS) {
-                    self.queue.extend(training::r([uinfo; FRAME], true, R_BAR_SYMBOLS));
+                    self.queue
+                        .extend(training::r([uinfo; FRAME], true, R_BAR_SYMBOLS));
                     self.start_training(cpt);
                     return;
                 }
@@ -239,7 +240,8 @@ impl Downstream {
         let per_frame = self.frame_bits();
         let frames = bits.len().div_ceil(per_frame);
         self.pending.extend(bits);
-        self.pending.extend(std::iter::repeat_n(false, frames * per_frame - bits.len()));
+        self.pending
+            .extend(std::iter::repeat_n(false, frames * per_frame - bits.len()));
         self.queued_frames += frames;
     }
 
@@ -400,7 +402,10 @@ impl Digital {
         let (Some(outcome), Some(upstream)) = (self.outcome, &self.upstream) else {
             return Mp::default();
         };
-        let trained = upstream.events().trained.unwrap_or(outcome.upstream.max_rate);
+        let trained = upstream
+            .events()
+            .trained
+            .unwrap_or(outcome.upstream.max_rate);
         Mp {
             max_answer_to_call: trained.min(14),
             rates: rates::mask(upstream.symbol_rate(), 14) & !1,

@@ -133,7 +133,14 @@ impl Cp {
 impl Words for Cp {
     fn length(words: &[u16]) -> Option<usize> {
         let (&fifth, &sixth) = (words.get(5)?, words.get(6)?);
-        let indices = [fifth, fifth >> 4, fifth >> 8, fifth >> 12, sixth, sixth >> 4];
+        let indices = [
+            fifth,
+            fifth >> 4,
+            fifth >> 8,
+            fifth >> 12,
+            sixth,
+            sixth >> 4,
+        ];
         let count = usize::from(indices.iter().map(|&i| i & 0xF).max().unwrap_or(0)) + 1;
         let copies = if sixth >> 8 & 1 == 1 { 2 } else { 1 };
         Some(HEAD_WORDS + MASK_WORDS * count * copies)
@@ -141,7 +148,11 @@ impl Words for Cp {
 
     fn from_words(words: &[u16]) -> Option<Self> {
         let (first, second) = (words[0], words[1]);
-        let signed = |word: u16, shift: u16| u8::try_from(word >> shift & 0xFF).unwrap_or(0).cast_signed();
+        let signed = |word: u16, shift: u16| {
+            u8::try_from(word >> shift & 0xFF)
+                .unwrap_or(0)
+                .cast_signed()
+        };
         let nibble = |word: u16, shift: u16| u8::try_from(word >> shift & 0xF).unwrap_or(0);
         let intervals = [
             nibble(words[5], 0),
