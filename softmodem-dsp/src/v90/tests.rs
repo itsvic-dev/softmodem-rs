@@ -6,6 +6,7 @@
 
 use super::analogue::Analogue;
 use super::digital::Digital;
+use super::fallback::Fallback;
 use crate::pump::DataPump;
 use crate::v34::mp::{Asks, Trellis};
 
@@ -42,8 +43,8 @@ fn padded(gain: f64) -> impl Fn(i16) -> i16 {
 }
 
 fn exchange(
-    analogue: &mut Analogue,
-    digital: &mut Digital,
+    analogue: &mut impl DataPump,
+    digital: &mut impl DataPump,
     frames: usize,
     line: &impl Fn(i16) -> i16,
 ) -> (Vec<bool>, Vec<bool>) {
@@ -101,9 +102,9 @@ fn connected_pair() -> (Analogue, Digital) {
 }
 
 // A pair that phase 2 settled on V.34, as the analogue modem asked in INFO1a.
-fn connected_on_v34() -> (Analogue, Digital) {
-    let mut analogue = Analogue::picking_v34();
-    let mut digital = Digital::new();
+fn connected_on_v34() -> (Fallback<Analogue>, Fallback<Digital>) {
+    let mut analogue = Fallback::new(Analogue::picking_v34());
+    let mut digital = Fallback::new(Digital::new());
     for _ in 0..2000 {
         if analogue.connected() && digital.connected() {
             break;
@@ -118,7 +119,7 @@ fn connected_on_v34() -> (Analogue, Digital) {
 }
 
 // Whether data crosses down and up.
-fn carries_data(analogue: &mut Analogue, digital: &mut Digital) -> (bool, bool) {
+fn carries_data(analogue: &mut impl DataPump, digital: &mut impl DataPump) -> (bool, bool) {
     let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
     analogue.push_bits(&message);
     digital.push_bits(&message);

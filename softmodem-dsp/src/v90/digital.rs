@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use super::cp::Cp;
 use super::dil::Dil;
 use super::encoder::{Encoder, FRAME, Mapping};
+use super::fallback::Settles;
 use super::jd::{ALL_RATES, Jd};
 use super::training::{self, JD_PRIME_BITS, R_BAR_SYMBOLS, RI_SYMBOLS, Signs, TRN1D_SYMBOLS};
 use super::upstream::{Events, Upstream};
@@ -16,7 +17,6 @@ use super::{Codeword, RETRAIN_TONE};
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
 use crate::uart::Decoder as Characters;
-use crate::v34::info::Info0;
 use crate::v34::mp::{Asks, Mp};
 use crate::v34::phase2::{PcmOutcome, Phase2};
 use crate::v34::pump::V34;
@@ -352,8 +352,6 @@ pub struct Digital {
     outcome: Option<PcmOutcome>,
     downstream: Option<Downstream>,
     upstream: Option<Upstream>,
-    /// V.34 both ways, as the analogue modem asked in INFO1a, with its INFO0a for a retrain.
-    v34: Option<(V34, Info0)>,
     /// Connected once, and still in the call through renegotiations and retrains.
     online: bool,
     retrain_tone: tones::Detector,
@@ -383,7 +381,6 @@ impl Digital {
             outcome: None,
             downstream: None,
             upstream: None,
-            v34: None,
             online: false,
             retrain_tone: tones::Detector::new(Role::Answer),
             tone_heard: 0,
@@ -418,23 +415,6 @@ impl Digital {
         self.downstream = None;
         self.upstream = None;
         self.tone_heard = 0;
-    }
-
-    // § 9.2.1.1.8: a retrain from V.34 uses phase 2 of V.90 again.
-    fn leave_v34(&mut self) {
-        let Some((v34, far)) = self.v34.take_if(|(v34, _)| v34.retrain_asked()) else {
-            return;
-        };
-        self.retrained_from = v34.bit_rate();
-        self.phase2 = Phase2::retrain_digital(far);
-    }
-
-    fn fallback(&self) -> Option<&V34> {
-        self.v34.as_ref().map(|(v34, _)| v34)
-    }
-
-    fn fallback_mut(&mut self) -> Option<&mut V34> {
-        self.v34.as_mut().map(|(v34, _)| v34)
     }
 
     // § 9.3.1 and § 9.4.1: from phase 3 on, tone A starts a retrain.
@@ -511,9 +491,6 @@ impl DataPump for Digital {
     }
 
     fn bit_rate(&self) -> u32 {
-        if let Some(v34) = self.fallback() {
-            return v34.bit_rate();
-        }
         self.downstream
             .as_ref()
             .map_or(self.retrained_from, |d| d.rate)
@@ -524,25 +501,16 @@ impl DataPump for Digital {
     }
 
     fn push_bits(&mut self, bits: &[bool]) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.push_bits(bits);
-        } else if let Some(downstream) = &mut self.downstream {
+        if let Some(downstream) = &mut self.downstream {
             downstream.data.extend(bits);
         }
     }
 
     fn pending(&self) -> usize {
-        if let Some(v34) = self.fallback() {
-            return v34.pending();
-        }
         self.downstream.as_ref().map_or(0, |d| d.data.len())
     }
 
     fn transmit(&mut self, out: &mut [i16]) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.transmit(out);
-            return;
-        }
         let mp = self.mp();
         let (Some(downstream), Some(upstream)) = (&mut self.downstream, &self.upstream) else {
             self.phase2.transmit(out);
@@ -555,27 +523,16 @@ impl DataPump for Digital {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.receive(input, bits);
-            self.online |= self.connected();
-            self.leave_v34();
-            return;
-        }
         if self.far_retrains(input) {
             self.restart();
             return;
         }
         let Some(upstream) = &mut self.upstream else {
             self.phase2.receive(input);
-            if !self.phase2.done() {
-                return;
-            }
-            if let Some(outcome) = self.phase2.pcm_outcome() {
+            if let Some(outcome) = self.phase2.pcm_outcome().filter(|_| self.phase2.done()) {
                 self.outcome = Some(outcome);
                 self.upstream = Some(Upstream::new(&outcome.upstream, &self.jd));
                 self.downstream = Some(Downstream::new(outcome, self.jd));
-            } else if let Some(outcome) = self.phase2.outcome() {
-                self.v34 = Some((V34::after_v90(Role::Originate, outcome), outcome.far));
             }
             return;
         };
@@ -585,52 +542,46 @@ impl DataPump for Digital {
     }
 
     fn retrain(&mut self) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.retrain();
-            self.leave_v34();
-        } else if self.connected() {
+        if self.connected() {
             self.restart();
         }
     }
 
     // § 9.6.1.1.
     fn renegotiate(&mut self) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.renegotiate();
-        } else {
-            self.start_renegotiation(false);
-        }
+        self.start_renegotiation(false);
     }
 
     fn clear_down(&mut self) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.clear_down();
-        } else {
-            self.start_renegotiation(true);
-        }
+        self.start_renegotiation(true);
     }
 
     fn cleared(&self) -> bool {
-        if let Some(v34) = self.fallback() {
-            return v34.cleared();
-        }
         self.downstream
             .as_ref()
             .is_some_and(|d| d.send == Send::Cleared)
     }
 
     fn carrier(&self) -> bool {
-        if let Some(v34) = self.fallback() {
-            return v34.carrier();
-        }
         self.online && !self.cleared()
     }
 
     fn connected(&self) -> bool {
-        if let Some(v34) = self.fallback() {
-            return v34.connected();
-        }
         self.downstream.as_ref().is_some_and(|d| d.b1_sent)
             && self.upstream.as_ref().is_some_and(Upstream::in_data)
+    }
+}
+
+// § 9.2.1.1.8: V.34 as the call modem, where INFO1a asks for it.
+impl Settles for Digital {
+    fn settled_on_v34(&self) -> Option<V34> {
+        let outcome = self.phase2.settled_on_v34()?;
+        Some(V34::after_v90(Role::Originate, outcome))
+    }
+
+    fn retrain_from_v34(&mut self, rate: u32, online: bool) {
+        self.retrained_from = rate;
+        self.online |= online;
+        self.phase2 = self.phase2.again().unwrap_or_else(Phase2::digital);
     }
 }

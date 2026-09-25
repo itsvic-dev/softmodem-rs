@@ -11,6 +11,7 @@ use super::cp::Cp;
 use super::design::{self, Levels, UCHORDS};
 use super::downstream::{Downstream, Events};
 use super::encoder::{FRAME, Mapping};
+use super::fallback::Settles;
 use super::jd::Jd;
 use super::ucode::COUNT;
 use crate::passband::Complex;
@@ -25,7 +26,6 @@ use crate::v34::phase2::{PcmOutcome, Phase2};
 use crate::v34::pump::V34;
 use crate::v34::training::{self, PP_SYMBOLS, Points};
 use crate::v34::{NOMINAL_DBM0, rates, tones};
-use crate::v90::info::Info0d;
 
 const S_SYMBOLS: usize = 128;
 const S_BAR_SYMBOLS: usize = 16;
@@ -384,9 +384,6 @@ pub struct Analogue {
     upstream: Option<Upstream>,
     downstream: Option<Downstream>,
     outcome: Option<PcmOutcome>,
-    /// V.34 both ways, as this end asked in INFO1a, with the far INFO0d for a retrain.
-    v34: Option<(V34, Info0d)>,
-    picks_v34: bool,
     /// Connected once, and still in the call through renegotiations and retrains.
     online: bool,
     retrain_tone: tones::Detector,
@@ -420,8 +417,6 @@ impl Analogue {
             upstream: None,
             downstream: None,
             outcome: None,
-            v34: None,
-            picks_v34: false,
             online: false,
             retrain_tone: tones::Detector::new(Role::Originate),
             judged: 0,
@@ -434,36 +429,8 @@ impl Analogue {
     #[cfg(test)]
     pub(crate) fn picking_v34() -> Self {
         let mut analogue = Self::new();
-        analogue.picks_v34 = true;
         analogue.phase2 = Phase2::analogue().picking_v34();
         analogue
-    }
-
-    // Phase 2 again, with the far INFO0d kept.
-    fn phase2_again(&self, far: Info0d) -> Phase2 {
-        let phase2 = Phase2::retrain_analogue(far);
-        if self.picks_v34 {
-            phase2.picking_v34()
-        } else {
-            phase2
-        }
-    }
-
-    // § 9.2.2.1.9: a retrain from V.34 uses phase 2 of V.90 again.
-    fn leave_v34(&mut self) {
-        let Some((v34, far)) = self.v34.take_if(|(v34, _)| v34.retrain_asked()) else {
-            return;
-        };
-        self.retrained_from = v34.bit_rate();
-        self.phase2 = self.phase2_again(far);
-    }
-
-    fn fallback(&self) -> Option<&V34> {
-        self.v34.as_ref().map(|(v34, _)| v34)
-    }
-
-    fn fallback_mut(&mut self) -> Option<&mut V34> {
-        self.v34.as_mut().map(|(v34, _)| v34)
     }
 
     /// The upstream rate in data mode, in bit/s, which the digital modem's
@@ -489,7 +456,7 @@ impl Analogue {
             return;
         };
         self.retrained_from = self.bit_rate();
-        self.phase2 = self.phase2_again(outcome.digital);
+        self.phase2 = Phase2::retrain_analogue(outcome.digital);
         self.modulator = None;
         self.upstream = None;
         self.downstream = None;
@@ -626,9 +593,6 @@ impl DataPump for Analogue {
     }
 
     fn bit_rate(&self) -> u32 {
-        if let Some(v34) = self.fallback() {
-            return v34.bit_rate();
-        }
         self.upstream
             .as_ref()
             .and_then(|up| up.cp.as_ref())
@@ -636,9 +600,6 @@ impl DataPump for Analogue {
     }
 
     fn transmit_rate(&self) -> u32 {
-        if let Some(v34) = self.fallback() {
-            return v34.bit_rate();
-        }
         self.upstream_bit_rate()
     }
 
@@ -647,25 +608,16 @@ impl DataPump for Analogue {
     }
 
     fn push_bits(&mut self, bits: &[bool]) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.push_bits(bits);
-        } else if let Some(upstream) = &mut self.upstream {
+        if let Some(upstream) = &mut self.upstream {
             upstream.bits.extend(bits);
         }
     }
 
     fn pending(&self) -> usize {
-        if let Some(v34) = self.fallback() {
-            return v34.pending();
-        }
         self.upstream.as_ref().map_or(0, |up| up.bits.len())
     }
 
     fn transmit(&mut self, out: &mut [i16]) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.transmit(out);
-            return;
-        }
         let (Some(modulator), Some(upstream), Some(downstream)) = (
             &mut self.modulator,
             &mut self.upstream,
@@ -683,27 +635,14 @@ impl DataPump for Analogue {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.receive(input, bits);
-            self.online |= self.connected();
-            self.leave_v34();
-            return;
-        }
         if self.far_retrains(input) {
             self.restart();
             return;
         }
         let Some(downstream) = &mut self.downstream else {
             self.phase2.receive(input);
-            if !self.phase2.done() {
-                return;
-            }
-            if let Some(outcome) = self.phase2.pcm_outcome() {
+            if let Some(outcome) = self.phase2.pcm_outcome().filter(|_| self.phase2.done()) {
                 self.start(outcome);
-            } else if let (Some(outcome), Some(far)) =
-                (self.phase2.outcome(), self.phase2.far_info0d())
-            {
-                self.v34 = Some((V34::after_v90(Role::Answer, outcome), far));
             }
             return;
         };
@@ -714,52 +653,46 @@ impl DataPump for Analogue {
     }
 
     fn retrain(&mut self) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.retrain();
-            self.leave_v34();
-        } else if self.connected() {
+        if self.connected() {
             self.restart();
         }
     }
 
     // § 9.6.2.1.
     fn renegotiate(&mut self) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.renegotiate();
-        } else {
-            self.start_renegotiation(false);
-        }
+        self.start_renegotiation(false);
     }
 
     fn clear_down(&mut self) {
-        if let Some(v34) = self.fallback_mut() {
-            v34.clear_down();
-        } else {
-            self.start_renegotiation(true);
-        }
+        self.start_renegotiation(true);
     }
 
     fn cleared(&self) -> bool {
-        if let Some(v34) = self.fallback() {
-            return v34.cleared();
-        }
         self.upstream
             .as_ref()
             .is_some_and(|up| up.send == Send::Cleared)
     }
 
     fn carrier(&self) -> bool {
-        if let Some(v34) = self.fallback() {
-            return v34.carrier();
-        }
         self.online && !self.cleared()
     }
 
     fn connected(&self) -> bool {
-        if let Some(v34) = self.fallback() {
-            return v34.connected();
-        }
         self.upstream.as_ref().is_some_and(|up| up.b1_sent)
             && self.downstream.as_ref().is_some_and(Downstream::in_data)
+    }
+}
+
+// § 9.2.2.1.9: V.34 as the answer modem, where this end asked for it in INFO1a.
+impl Settles for Analogue {
+    fn settled_on_v34(&self) -> Option<V34> {
+        let outcome = self.phase2.settled_on_v34()?;
+        Some(V34::after_v90(Role::Answer, outcome))
+    }
+
+    fn retrain_from_v34(&mut self, rate: u32, online: bool) {
+        self.retrained_from = rate;
+        self.online |= online;
+        self.phase2 = self.phase2.again().unwrap_or_else(Phase2::analogue);
     }
 }

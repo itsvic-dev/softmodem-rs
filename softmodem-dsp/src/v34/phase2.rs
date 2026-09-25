@@ -385,27 +385,30 @@ impl Phase2 {
         self
     }
 
-    /// The digital modem's INFO0d, as the analogue modem has heard it.
+    /// Phase 2 again from the tones, as this end had it, with the far INFO0
+    /// heard before, or `None` before the far INFO0.
     #[must_use]
-    pub fn far_info0d(&self) -> Option<Info0d> {
-        self.far_info0d
+    pub fn again(&self) -> Option<Self> {
+        let far = self.far?;
+        Some(match self.mode {
+            Mode::Analogue { picks_v34 } => {
+                let again = Self::retrain_analogue(self.far_info0d?);
+                if picks_v34 {
+                    again.picking_v34()
+                } else {
+                    again
+                }
+            }
+            Mode::Digital => Self::retrain_digital(far),
+            Mode::V34 => Self::retrain(self.role, far),
+        })
     }
 
     // Phase 2 again from the tones, which the far end answers if it starts it and this end if the far end does.
     fn restart(&mut self) {
-        let Some(far) = self.far else {
-            return;
-        };
-        let again = match self.mode {
-            Mode::Analogue { picks_v34 } => match self.far_info0d {
-                Some(digital) if picks_v34 => Self::retrain_analogue(digital).picking_v34(),
-                Some(digital) => Self::retrain_analogue(digital),
-                None => return,
-            },
-            Mode::Digital => Self::retrain_digital(far),
-            Mode::V34 => Self::retrain(self.role, far),
-        };
-        *self = again;
+        if let Some(again) = self.again() {
+            *self = again;
+        }
     }
 
     fn retraining(mut self, far: Info0) -> Self {
@@ -430,6 +433,13 @@ impl Phase2 {
     #[must_use]
     pub fn pcm_outcome(&self) -> Option<PcmOutcome> {
         self.pcm_outcome
+    }
+
+    /// The [`Outcome`] of phase 2 of V.90 that settled on V.34 for both ends.
+    #[must_use]
+    pub fn settled_on_v34(&self) -> Option<Outcome> {
+        self.outcome
+            .filter(|_| self.done() && self.pcm_outcome.is_none() && self.mode != Mode::V34)
     }
 
     /// Whether the far end has answered with its INFO0.

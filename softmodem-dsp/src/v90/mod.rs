@@ -12,6 +12,7 @@ pub mod digital;
 pub mod dil;
 pub mod downstream;
 pub mod encoder;
+pub mod fallback;
 pub mod frames;
 pub mod info;
 pub mod jd;
