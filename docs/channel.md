@@ -21,6 +21,8 @@ A modem needs on top of that:
 The receiver does not play out on a local 8 kHz clock. It takes packets as
 they arrive, puts them in order by RTP sequence number in a short fixed window
 (a few packets), and fills any gap that the RTP timestamp shows with silence.
+That holds between packets in sequence too, as a relay that drops a packet
+may number the next one as if it had not.
 The demodulator then consumes samples as fast as they come.
 
 This removes clock drift between the two hosts from the problem: a sender

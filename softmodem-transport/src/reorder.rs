@@ -66,7 +66,7 @@ impl Reorder {
             .insert(next.sequence + offset, (timestamp, samples));
         self.drain(out);
         while self.held.len() > self.window {
-            self.skip_to_first_held(out);
+            self.skip_to_first_held();
             self.drain(out);
         }
     }
@@ -74,7 +74,7 @@ impl Reorder {
     /// Releases everything held, filling gaps, for when the stream ends.
     pub fn flush(&mut self, out: &mut Vec<Vec<i16>>) {
         while !self.held.is_empty() {
-            self.skip_to_first_held(out);
+            self.skip_to_first_held();
             self.drain(out);
         }
     }
@@ -84,24 +84,22 @@ impl Reorder {
             return;
         };
         while let Some((timestamp, samples)) = self.held.remove(&next.sequence) {
+            let gap = timestamp.wrapping_sub(next.timestamp);
+            if gap > 0 && gap <= MAX_GAP_SAMPLES {
+                out.push(vec![0; gap as usize]);
+            }
             next.sequence += 1;
             next.timestamp = timestamp.wrapping_add(u32::try_from(samples.len()).unwrap_or(0));
             out.push(samples);
         }
     }
 
-    fn skip_to_first_held(&mut self, out: &mut Vec<Vec<i16>>) {
-        let (Some(next), Some((&sequence, &(timestamp, _)))) =
+    fn skip_to_first_held(&mut self) {
+        if let (Some(next), Some((&sequence, _))) =
             (self.next.as_mut(), self.held.first_key_value())
-        else {
-            return;
-        };
-        let gap = timestamp.wrapping_sub(next.timestamp);
-        if gap > 0 && gap <= MAX_GAP_SAMPLES {
-            out.push(vec![0; gap as usize]);
+        {
+            next.sequence = sequence;
         }
-        next.sequence = sequence;
-        next.timestamp = timestamp;
     }
 }
 
@@ -164,6 +162,16 @@ mod tests {
             run(1, &[0, 2, 3, 1, 4]),
             [frame(0), silence(), frame(2), frame(3), frame(4)]
         );
+    }
+
+    #[test]
+    fn fills_a_gap_in_the_timestamps_between_packets_in_sequence() {
+        let mut reorder = Reorder::new(3);
+        let mut out = Vec::new();
+        for (sequence, n) in [(0, 0), (1, 1), (2, 3)] {
+            reorder.push(sequence, u32::from(n) * FRAME, frame(n), &mut out);
+        }
+        assert_eq!(out, [frame(0), frame(1), silence(), frame(3)]);
     }
 
     #[test]
