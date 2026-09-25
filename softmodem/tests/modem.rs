@@ -8,13 +8,15 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use softmodem::{Modem, profile};
+use softmodem::{Modem, Role, profile};
 use softmodem_terminal::port::SerialPort;
 use softmodem_terminal::settings::Settings;
+use softmodem_transport::Call;
 use softmodem_transport::loopback::{self, Loopback};
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf, duplex,
 };
+use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout};
 
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -147,6 +149,14 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn attach(transport: Loopback, settings: Settings) -> Computer {
+    attach_with(transport, settings, |call, _| call)
+}
+
+fn attach_with(
+    transport: Loopback,
+    settings: Settings,
+    on_call: impl FnMut(Call, Role) -> Call + Send + 'static,
+) -> Computer {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (computer, modem_side) = duplex(4096);
     let dcd = DcdHistory::default();
@@ -158,7 +168,7 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
     };
     let speaker = Arc::<Mutex<Vec<f32>>>::default();
     let gains = speaker.clone();
-    let modem = Modem::new(transport, port, settings, |call, _| call)
+    let modem = Modem::new(transport, port, settings, on_call)
         .with_speaker(move |gain| gains.lock().unwrap().push(gain));
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
     Computer {
@@ -168,6 +178,37 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
         dcd,
         ri,
         speaker,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Fault {
+    /// The call's audio stops being taken for a while, as on a busy host.
+    Stall(Duration),
+    /// Frames vanish with no gap left for them.
+    Drop(usize),
+}
+
+// Does `fault` to the call's audio once `after` frames have gone.
+fn impaired(after: usize, fault: Fault) -> impl FnMut(Call, Role) -> Call + Send + 'static {
+    move |mut call, _| {
+        let (impaired_out, mut outgoing) = mpsc::channel(8);
+        let audio_out = std::mem::replace(&mut call.audio_out, impaired_out);
+        tokio::spawn(async move {
+            let mut frames = 0;
+            while let Some(frame) = outgoing.recv().await {
+                frames += 1;
+                match fault {
+                    Fault::Stall(stall) if frames == after => sleep(stall).await,
+                    Fault::Drop(count) if (after..after + count).contains(&frames) => continue,
+                    _ => {}
+                }
+                if audio_out.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+        call
     }
 }
 
@@ -454,11 +495,38 @@ async fn a_v90_call_connects_at_56000_and_carries_data_both_ways() {
     a.expect(&text).await;
 }
 
+// A V.90 call whose digital modem meets `fault` in data mode, and whether text crosses after it.
+async fn v90_carries_text_after(fault: Fault) {
+    let (a, b) = loopback::pair();
+    let mut a = attach(a, profile("ATE0+MS=V90").unwrap());
+    let mut b = attach_with(b, profile("ATE0S0=1+MS=V90").unwrap(), impaired(900, fault));
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 56000\r\n").await;
+    b.expect("CONNECT 56000\r\n").await;
+    sleep(Duration::from_secs(10)).await;
+
+    b.send(b"after the fault").await;
+    a.expect("after the fault").await;
+    a.send(b"and back").await;
+    b.expect("and back").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_v90_call_carries_data_after_the_digital_modem_stalls() {
+    v90_carries_text_after(Fault::Stall(Duration::from_millis(400))).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_v90_call_renegotiates_after_samples_go_missing() {
+    v90_carries_text_after(Fault::Drop(2)).await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn ato1_retrains_and_the_call_goes_on() {
     for (modulation, connect) in [
         ("+MS=V22B", "CONNECT 2400\r\n"),
         ("+MS=V34", "CONNECT 33600\r\n"),
+        ("+MS=V90", "CONNECT 56000\r\n"),
     ] {
         let (mut a, mut b) = two_modems(
             &format!("ATE0{modulation}"),

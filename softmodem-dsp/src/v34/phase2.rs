@@ -170,6 +170,8 @@ enum Step {
     },
     /// Answer: L1 and L2 until tone B.
     Probe,
+    /// Answer: tone A after L2 ran its longest, until tone B.
+    LateToneB,
     /// Call: tone B, waiting for the reversal of § 11.2.1.1.3.
     ToneB,
     /// Answer: tone A, reversed once, until the far reversal that starts its L1 and L2.
@@ -223,6 +225,8 @@ pub struct Phase2 {
     detector: tones::Detector,
     analyser: Analyser,
     reversals: Vec<f64>,
+    // Tone B held past the call modem's reversal must stop before a tone B can end L2.
+    tone_b_gone: bool,
     far: Option<Info0>,
     far_info0d: Option<Info0d>,
     far_at: usize,
@@ -289,6 +293,7 @@ impl Phase2 {
             detector: tones::Detector::new(far),
             analyser: Analyser::new(L2_DBM0),
             reversals: Vec::new(),
+            tone_b_gone: false,
             far: None,
             far_info0d: None,
             far_at: 0,
@@ -304,15 +309,34 @@ impl Phase2 {
     /// the far INFO0 heard before.
     #[must_use]
     pub fn retrain(role: Role, far: Info0) -> Self {
-        let mut phase2 = Self::new(role);
-        phase2.info = dpsk::Modulator::new(role);
-        phase2.far = Some(far);
-        phase2.step = match role {
+        Self::new(role).retraining(far)
+    }
+
+    /// Phase 2 of V.90 again from the digital modem (§ 9.5.1), with the far
+    /// INFO0a heard before.
+    #[must_use]
+    pub fn retrain_digital(far: Info0) -> Self {
+        Self::digital().retraining(far)
+    }
+
+    /// Phase 2 of V.90 again from the analogue modem (§ 9.5.2), with the far
+    /// INFO0d heard before.
+    #[must_use]
+    pub fn retrain_analogue(far: Info0d) -> Self {
+        let mut phase2 = Self::analogue().retraining(far.v34);
+        phase2.far_info0d = Some(far);
+        phase2
+    }
+
+    fn retraining(mut self, far: Info0) -> Self {
+        self.info = dpsk::Modulator::new(self.role);
+        self.far = Some(far);
+        self.step = match self.role {
             Role::Answer => Step::ToneA,
             Role::Originate => Step::ToneB,
         };
-        phase2.tx_until = Some(RETRAIN_SILENCE);
-        phase2
+        self.tx_until = Some(RETRAIN_SILENCE);
+        self
     }
 
     /// What phase 2 settled, once it has.
@@ -364,7 +388,11 @@ impl Phase2 {
     fn segment_ended(&mut self) {
         let (tx, until) = match (self.step, self.tx) {
             (Step::SendInfo0, Tx::Silence) => (Tx::Info, None),
-            (Step::ToneA | Step::ToneB, Tx::Silence) | (Step::Probe, Tx::L2) => (Tx::Tone, None),
+            (Step::ToneA | Step::ToneB, Tx::Silence) => (Tx::Tone, None),
+            (Step::Probe, Tx::L2) => {
+                self.step = Step::LateToneB;
+                (Tx::Tone, None)
+            }
             (Step::Probe | Step::ProbeFar, Tx::Tone) => (Tx::L1, Some(self.sent + L1_SAMPLES)),
             (Step::Probe | Step::ProbeFar, Tx::L1) => {
                 (Tx::L2, Some(self.sent + L2_MOST + self.round_trip))
@@ -437,42 +465,8 @@ impl Phase2 {
         let mut bits = Vec::new();
         self.demodulator.process(input, &mut bits);
         for bit in bits {
-            let far = if self.mode == Mode::Analogue {
-                self.info0d.push(bit).map(|info0d| {
-                    self.far_info0d = Some(info0d);
-                    info0d.v34
-                })
-            } else {
-                self.info0.push(bit)
-            };
-            if let Some(info0) = far
-                && self.far.is_none()
-            {
-                self.far = Some(info0);
-                self.far_at = self.heard + input.len();
-            }
-            if self.role == Role::Answer
-                && let Some(info1c) = self.info1c.push(bit)
-                && self.step == Step::AfterProbe
-            {
-                if self.mode == Mode::Analogue {
-                    self.decide_pcm(&info1c);
-                } else {
-                    self.decide(&info1c);
-                }
-            }
-            if self.role == Role::Originate
-                && let Some(info1a) = self.info1a.push(bit)
-                && self.step == Step::AwaitInfo1a
-            {
-                self.settle(&info1a);
-            }
-            if self.mode == Mode::Digital
-                && let Some(info1a) = self.pcm_info1a.push(bit)
-                && self.step == Step::AwaitInfo1a
-            {
-                self.settle_pcm(info1a);
-            }
+            self.info0_bit(bit, self.heard + input.len());
+            self.info1_bit(bit);
         }
         self.reversals.extend(self.detector.process(input));
         if let Step::Measure { from } = self.step {
@@ -484,6 +478,49 @@ impl Phase2 {
         }
         self.heard += input.len();
         self.advance();
+    }
+
+    // The far INFO0, or INFO0d, heard by sample `at`.
+    fn info0_bit(&mut self, bit: bool, at: usize) {
+        let far = if self.mode == Mode::Analogue {
+            self.info0d.push(bit).map(|info0d| {
+                self.far_info0d = Some(info0d);
+                info0d.v34
+            })
+        } else {
+            self.info0.push(bit)
+        };
+        if let Some(info0) = far
+            && self.far.is_none()
+        {
+            self.far = Some(info0);
+            self.far_at = at;
+        }
+    }
+
+    fn info1_bit(&mut self, bit: bool) {
+        if self.role == Role::Answer
+            && let Some(info1c) = self.info1c.push(bit)
+            && self.step == Step::AfterProbe
+        {
+            if self.mode == Mode::Analogue {
+                self.decide_pcm(&info1c);
+            } else {
+                self.decide(&info1c);
+            }
+        }
+        if self.role == Role::Originate
+            && let Some(info1a) = self.info1a.push(bit)
+            && self.step == Step::AwaitInfo1a
+        {
+            self.settle(&info1a);
+        }
+        if self.mode == Mode::Digital
+            && let Some(info1a) = self.pcm_info1a.push(bit)
+            && self.step == Step::AwaitInfo1a
+        {
+            self.settle_pcm(info1a);
+        }
     }
 
     #[expect(
@@ -498,6 +535,7 @@ impl Phase2 {
             Some(self.reversals.remove(0).round() as usize)
         }
         .filter(|&at| self.far.is_some() && at >= self.far_at + AFTER_INFO);
+        self.tone_b_gone |= !self.detector.present();
         match self.step {
             Step::ToneA
                 if self.far.is_some()
@@ -519,31 +557,18 @@ impl Phase2 {
             }
             Step::AwaitReply { ours } => {
                 if let Some(at) = reversal.filter(|&at| at > ours) {
-                    self.round_trip = at.saturating_sub(ours + ANSWER_DELAY);
-                    match self.role {
-                        Role::Answer => {
-                            self.reverse_at(at + ANSWER_DELAY);
-                            self.step = Step::Probe;
-                        }
-                        Role::Originate => self.measure_from(at),
-                    }
+                    self.replied(ours, at);
                 }
             }
-            Step::Probe if self.tx == Tx::L2 && self.detector.present() => {
+            Step::Probe if self.tx == Tx::L2 && self.tone_b_gone && self.detector.present() => {
                 self.start(Tx::Tone, None);
                 self.step = Step::AwaitProbe { reversed: false };
             }
-            Step::AwaitProbe { reversed } => {
-                if !reversed && self.sent >= self.tone_from + TONE_FIRST {
-                    self.tone.reverse_after(0);
-                    self.tx_until = Some(self.sent + HELD_TAIL);
-                    self.step = Step::AwaitProbe { reversed: true };
-                }
-                if let Some(at) = reversal {
-                    self.start(Tx::Silence, None);
-                    self.measure_from(at);
-                }
+            Step::LateToneB if self.tone_b_gone && self.detector.present() => {
+                self.tone_from = self.sent;
+                self.step = Step::AwaitProbe { reversed: false };
             }
+            Step::AwaitProbe { reversed } => self.await_probe(reversed, reversal),
             Step::Measure { from } if self.heard >= from + L2_MEASURED => {
                 self.probing = self.analyser.result();
                 self.start(Tx::Tone, None);
@@ -563,6 +588,31 @@ impl Phase2 {
                 self.send_info1();
             }
             _ => {}
+        }
+    }
+
+    // The far reversal at `at` that answers ours at `ours` gives the round trip.
+    fn replied(&mut self, ours: usize, at: usize) {
+        self.round_trip = at.saturating_sub(ours + ANSWER_DELAY);
+        match self.role {
+            Role::Answer => {
+                self.reverse_at(at + ANSWER_DELAY);
+                self.step = Step::Probe;
+                self.tone_b_gone = false;
+            }
+            Role::Originate => self.measure_from(at),
+        }
+    }
+
+    fn await_probe(&mut self, reversed: bool, reversal: Option<usize>) {
+        if !reversed && self.sent >= self.tone_from + TONE_FIRST {
+            self.tone.reverse_after(0);
+            self.tx_until = Some(self.sent + HELD_TAIL);
+            self.step = Step::AwaitProbe { reversed: true };
+        }
+        if let Some(at) = reversal {
+            self.start(Tx::Silence, None);
+            self.measure_from(at);
         }
     }
 
@@ -743,14 +793,29 @@ mod tests {
     }
 
     // `call` and `answer` in their V.34 parts, which V.90 gives the digital and the analogue modem.
-    fn run_between(mut call: Phase2, mut answer: Phase2, delay: usize) -> (Phase2, Phase2, usize) {
+    fn run_between(call: Phase2, answer: Phase2, delay: usize) -> (Phase2, Phase2, usize) {
+        run_stalled(call, answer, delay, 0)
+    }
+
+    // As `run_between`, with `stall` samples more delay toward the answer from 200 ms into its L2.
+    fn run_stalled(
+        mut call: Phase2,
+        mut answer: Phase2,
+        delay: usize,
+        stall: usize,
+    ) -> (Phase2, Phase2, usize) {
         let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
         let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
         let mut down_line = up_line.clone();
+        let mut stalled = false;
         let mut frames = 0;
         while !(call.done() && answer.done()) && frames < 400 {
             call.transmit(&mut up);
             answer.transmit(&mut down);
+            if !stalled && answer.tx == Tx::L2 && answer.sent >= answer.l2_from + 1600 {
+                up_line.extend(std::iter::repeat_n(0, stall));
+                stalled = true;
+            }
             up_line.extend(up);
             down_line.extend(down);
             let heard_up: Vec<i16> = up_line.drain(..FRAME).collect();
@@ -806,6 +871,52 @@ mod tests {
             assert_eq!(digital.digital, analogue.digital);
             assert!(digital.round_trip.abs_diff(2 * delay) <= 8);
         }
+    }
+
+    #[test]
+    fn the_answer_waits_past_l2_for_a_late_tone_b() {
+        let pairs = [
+            (Phase2::new(Role::Originate), Phase2::new(Role::Answer)),
+            (Phase2::digital(), Phase2::analogue()),
+        ];
+        for (call, answer) in pairs {
+            let (call, answer, frames) = run_stalled(call, answer, 0, 1600);
+            assert!(
+                call.done() && answer.done(),
+                "phase 2 did not finish in {} ms: call {:?}, answer {:?}",
+                frames * 20,
+                call.step,
+                answer.step
+            );
+        }
+    }
+
+    #[test]
+    fn a_digital_and_an_analogue_modem_retrain_phase_2_of_v90() {
+        let (digital, analogue, _) = run_between(Phase2::digital(), Phase2::analogue(), 0);
+        let (digital, analogue) = (
+            digital.pcm_outcome().unwrap(),
+            analogue.pcm_outcome().unwrap(),
+        );
+        let (again_digital, again_analogue, frames) = run_between(
+            Phase2::retrain_digital(digital.far),
+            Phase2::retrain_analogue(analogue.digital),
+            0,
+        );
+        let (Some(again_digital), Some(again_analogue)) =
+            (again_digital.pcm_outcome(), again_analogue.pcm_outcome())
+        else {
+            panic!(
+                "a V.90 retrain did not finish phase 2 in {} ms: digital {:?}, analogue {:?}",
+                frames * 20,
+                again_digital.step,
+                again_analogue.step
+            );
+        };
+        assert_eq!(again_digital.upstream, digital.upstream);
+        assert_eq!(again_analogue.upstream, analogue.upstream);
+        assert_eq!((again_digital.uinfo, again_analogue.uinfo), (75, 75));
+        assert_eq!(again_analogue.digital, analogue.digital);
     }
 
     #[test]

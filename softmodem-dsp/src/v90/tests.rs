@@ -109,37 +109,68 @@ fn carries_data(analogue: &mut Analogue, digital: &mut Digital) -> (bool, bool) 
     (found(&at_analogue), found(&at_digital))
 }
 
-#[test]
-fn renegotiates_from_either_end_and_carries_data_after() {
+#[derive(Debug, Clone, Copy)]
+enum Recovery {
+    Renegotiation,
+    Retrain,
+}
+
+// `recovery` from either end, after a downstream slip if `slip`, back to 56 000 bit/s with DCD held.
+fn recovers_from_either_end(recovery: Recovery, slip: bool) {
     for from_analogue in [true, false] {
+        let end = if from_analogue { "analogue" } else { "digital" };
         let (mut analogue, mut digital) = connected_pair();
-        if from_analogue {
-            analogue.renegotiate();
+        if slip {
+            let mut lost = [0; FRAME];
+            for _ in 0..2 {
+                digital.transmit(&mut lost);
+            }
+            assert_eq!(carries_data(&mut analogue, &mut digital), (false, true));
+        }
+        let from: &mut dyn DataPump = if from_analogue {
+            &mut analogue
         } else {
-            digital.renegotiate();
+            &mut digital
+        };
+        match recovery {
+            Recovery::Renegotiation => from.renegotiate(),
+            Recovery::Retrain => from.retrain(),
         }
         assert!(!(analogue.connected() && digital.connected()));
-        let back = (0..500).find(|_| {
+        let back = (0..1500).find(|_| {
             exchange(&mut analogue, &mut digital, 1, &alaw);
             assert!(
                 analogue.carrier() && digital.carrier(),
-                "DCD would drop during a renegotiation"
+                "DCD would drop during a {recovery:?} from the {end} modem"
             );
             analogue.connected() && digital.connected()
         });
         assert!(
             back.is_some(),
-            "a renegotiation from the {} modem would not end",
-            if from_analogue { "analogue" } else { "digital" }
+            "a {recovery:?} from the {end} modem would not end"
         );
         assert_eq!((analogue.bit_rate(), digital.bit_rate()), (56_000, 56_000));
         assert_eq!(
             carries_data(&mut analogue, &mut digital),
             (true, true),
-            "data down and up after a renegotiation from the {} modem",
-            if from_analogue { "analogue" } else { "digital" }
+            "data down and up after a {recovery:?} from the {end} modem"
         );
     }
+}
+
+#[test]
+fn renegotiates_from_either_end_and_carries_data_after() {
+    recovers_from_either_end(Recovery::Renegotiation, false);
+}
+
+#[test]
+fn a_renegotiation_finds_the_data_frames_again_after_a_slip() {
+    recovers_from_either_end(Recovery::Renegotiation, true);
+}
+
+#[test]
+fn retrains_from_either_end_after_a_slip_and_carries_data_after() {
+    recovers_from_either_end(Recovery::Retrain, true);
 }
 
 #[test]

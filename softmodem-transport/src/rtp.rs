@@ -31,6 +31,13 @@ pub struct Impairment {
     pub loss: f64,
     /// Chance that a packet is held back and sent after the next one.
     pub reorder: f64,
+    /// Chance that a frame vanishes with no gap in the sequence numbers or
+    /// timestamps, so that the far end cannot fill it.
+    pub slip: f64,
+    /// Chance that the stream stops for `stall_for` before a frame, both
+    /// ways, as on a busy host.
+    pub stall: f64,
+    pub stall_for: Duration,
     pub seed: u64,
 }
 
@@ -108,6 +115,9 @@ impl Running {
                         self.hang_up().await;
                         break;
                     };
+                    if self.stalls_or_slips().await {
+                        continue;
+                    }
                     let packet = RtpPacket {
                         pt: PCMA,
                         sequence_number: sequence,
@@ -186,6 +196,15 @@ impl Running {
             Signalling::Wire { .. } => from == self.session.peer,
             Signalling::Separate => from.ip() == self.session.peer.ip(),
         }
+    }
+
+    // Whether the next frame slips out, after any stall before it.
+    async fn stalls_or_slips(&mut self) -> bool {
+        let impairment = self.session.impairment;
+        if impairment.stall > 0.0 && self.rng.f64() < impairment.stall {
+            tokio::time::sleep(impairment.stall_for).await;
+        }
+        impairment.slip > 0.0 && self.rng.f64() < impairment.slip
     }
 
     async fn send_impaired(&mut self, packet: Vec<u8>) -> io::Result<()> {

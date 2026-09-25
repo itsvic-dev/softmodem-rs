@@ -51,6 +51,9 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `kvm`, and it copies each side's WAV recordings into `result/`.
   `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
   V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.90.
+  `ppp-v90-stalls` runs V.90 through 500 ms stalls of both hosts' wire
+  (`--stall`), as on a busy host. `--slip` and `--loss` impair the wire in
+  other ways.
 - `checks.<system>.fmt` fails on code that `cargo fmt` would change.
 - GitHub Actions (`.github/workflows/ci.yml`) runs fmt, clippy, the tests
   and `reuse lint` without Nix, on the Rust of the dev shell, and sends

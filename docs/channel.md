@@ -21,6 +21,8 @@ A modem needs on top of that:
 The receiver does not play out on a local 8 kHz clock. It takes packets as
 they arrive, puts them in order by RTP sequence number in a short fixed window
 (a few packets), and fills any gap that the RTP timestamp shows with silence.
+That holds between packets in sequence too, as a relay that drops a packet
+may number the next one as if it had not.
 The demodulator then consumes samples as fast as they come.
 
 This removes clock drift between the two hosts from the problem: a sender
@@ -31,6 +33,10 @@ above.
 
 The transmitter still has to pace itself, 160 samples every 20 ms on the host
 clock, because the PBX and any ATA downstream do play out in real time.
+When the queue to the transport is full, as after a stall of the host, it
+makes no frame on that tick and sends later. A frame made and then dropped
+would take samples out of the signal with no gap in the RTP timestamps, and
+V.90 loses its data frame alignment on that.
 
 This holds only if nothing between the two ends retimes the stream. That is
 an open question.

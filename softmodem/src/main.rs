@@ -5,7 +5,7 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
@@ -71,6 +71,15 @@ struct WireArgs {
     /// Chance that an outgoing packet is sent after the next one.
     #[arg(long, default_value_t = 0.0)]
     reorder: f64,
+    /// Chance that an outgoing frame vanishes with no gap the far end could fill.
+    #[arg(long, default_value_t = 0.0)]
+    slip: f64,
+    /// Chance that the stream stops for --stall-for before a frame, as on a busy host.
+    #[arg(long, default_value_t = 0.0)]
+    stall: f64,
+    /// Length of each stall.
+    #[arg(long, value_name = "MS", default_value_t = 200)]
+    stall_for: u64,
     #[arg(long, default_value_t = 0)]
     seed: u64,
     #[command(flatten)]
@@ -117,6 +126,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             let impairment = Impairment {
                 loss: args.loss,
                 reorder: args.reorder,
+                slip: args.slip,
+                stall: args.stall,
+                stall_for: Duration::from_millis(args.stall_for),
                 seed: args.seed,
             };
             let wire = Wire::bind(args.local, args.peer, impairment).await?;

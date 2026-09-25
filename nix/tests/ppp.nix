@@ -6,6 +6,8 @@
   softmodem,
   label ? "V21",
   modulation ? "+MS=V21,0",
+  # Wire options for both ends, such as --stall, to meet what a real line does.
+  impairment ? "",
 }:
 
 let
@@ -16,7 +18,7 @@ let
   modemService = extraArgs: {
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
-      ExecStart = "${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --pty ${port} --dump /var/lib/softmodem ${extraArgs}";
+      ExecStart = "${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --pty ${port} --dump /var/lib/softmodem ${impairment} ${extraArgs}";
       RuntimeDirectory = "softmodem";
       StateDirectory = "softmodem";
     };
@@ -68,7 +70,7 @@ in
             until isp=$(getent ahostsv4 isp | head -n 1 | cut -d ' ' -f 1) && [ -n "$isp" ]; do
               sleep 1
             done
-            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem --init 'AT&C1${modulation}'
+            exec ${softmodem}/bin/softmodem wire --local 0.0.0.0:5300 --peer "$isp:5300" --pty ${port} --dump /var/lib/softmodem ${impairment} --init 'AT&C1${modulation}'
           '';
           serviceConfig = {
             RuntimeDirectory = "softmodem";

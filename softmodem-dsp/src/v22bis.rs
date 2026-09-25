@@ -231,6 +231,17 @@ impl V22bis {
             .is_some_and(|until| self.sent < until + REPLY_SAMPLES)
     }
 
+    fn add_guard(&mut self, out: &mut [i16]) {
+        let Some(guard) = &mut self.guard else {
+            return;
+        };
+        let mut tone = vec![0; out.len()];
+        guard.render(&mut tone);
+        for (sample, tone) in out.iter_mut().zip(tone) {
+            *sample = sample.saturating_add(tone);
+        }
+    }
+
     /// Starts a retrain, or a rate change to `rate`, as §§ 6.4 and 6.6 have it.
     fn initiate(&mut self, rate: Rate) {
         self.dibit = rate_dibit(rate);
@@ -508,13 +519,7 @@ impl DataPump for V22bis {
                 });
             }
         }
-        if let Some(guard) = &mut self.guard {
-            let mut tone = vec![0; out.len()];
-            guard.render(&mut tone);
-            for (sample, tone) in out.iter_mut().zip(tone) {
-                *sample = sample.saturating_add(tone);
-            }
-        }
+        self.add_guard(out);
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {

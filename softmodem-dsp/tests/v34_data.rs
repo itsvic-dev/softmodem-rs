@@ -15,7 +15,7 @@ use softmodem_dsp::v34::encoder::{Encoder, Settings};
 use softmodem_dsp::v34::framing::Framing;
 use softmodem_dsp::v34::modulator::{Modulator, SPAN};
 use softmodem_dsp::v34::mp::Trellis;
-use softmodem_dsp::v34::receiver::{DELAY, Equalizer, FrontEnd, Tracking};
+use softmodem_dsp::v34::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use softmodem_dsp::v34::training::{self, PP_SYMBOLS, Points};
 use softmodem_dsp::v34::{NOMINAL_DBM0, SymbolRate};
 
@@ -52,14 +52,18 @@ fn phase_3() -> Vec<Complex> {
         .collect()
 }
 
-fn call(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) -> (usize, usize) {
-    let framing = Framing::new(symbol_rate, bit_rate, false).unwrap();
+// Phase 3 and then data from random bits, on the line, with the bits sent.
+fn transmitted(
+    symbol_rate: SymbolRate,
+    framing: Framing,
+    known: &[Complex],
+    line: &Line,
+) -> (Vec<bool>, Vec<i16>) {
     let mut encoder = Encoder::new(framing, Settings::default());
     let scale = encoder.energy().sqrt();
     let mut noise = Noise(0x0123_4567_89AB_CDEF);
-    let known = phase_3();
     let mut sent: Vec<bool> = Vec::new();
-    let mut points = known.clone();
+    let mut points = known.to_vec();
     for _ in 0..FRAMES {
         let bits: Vec<bool> = (0..encoder.bits()).map(|_| noise.uniform() > 0.0).collect();
         sent.extend(&bits);
@@ -77,53 +81,98 @@ fn call(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) -> (usize, usize) {
     if let Some(snr) = line.snr_db {
         samples = add_noise(samples, NOMINAL_DBM0, snr);
     }
-    let samples = resample_finely(&samples, line.clock);
+    (sent, resample_finely(&samples, line.clock))
+}
 
-    let mut front_end = FrontEnd::new(symbol_rate, false);
-    let mut detector = SDetector::default();
-    let mut equalizer = Equalizer::default();
-    let mut decoder = Decoder::new(framing, Trellis::States16);
-    let mut first_s_bar = None;
-    let mut received = Vec::new();
-    let mut frame = Vec::new();
-    let mut count = 0;
-    for chunk in samples.chunks(FRAME) {
-        for symbol in front_end.process(chunk) {
-            let z = equalizer.output(&symbol);
-            if first_s_bar.is_none()
-                && let Some(Heard::SBar(at)) = detector.push(&symbol)
-            {
-                first_s_bar = Some(at);
-                front_end.track(Tracking::Train);
-            }
-            count += 1;
-            let Some(first) = first_s_bar else {
-                continue;
-            };
-            let Some(index) = (count - 1 + S).checked_sub(first + DELAY) else {
-                continue;
-            };
-            if index < S + S_BAR {
-                continue;
-            }
-            if index < TRAINING {
-                equalizer.adapt(known[index]);
-                if index == TRAINING - 1 {
-                    front_end.track(Tracking::Data);
-                }
-                continue;
-            }
-            let grid = (z.0 * scale, z.1 * scale);
-            equalizer.adapt((nearest_odd(grid.0) / scale, nearest_odd(grid.1) / scale));
-            frame.push(grid);
-            if frame.len() == 8 {
-                received.extend(decoder.decode(frame.clone().try_into().unwrap()));
-                frame.clear();
+// The receiver of data mode, trained on the known points once S̄ places them.
+struct Receiver {
+    front_end: FrontEnd,
+    detector: SDetector,
+    equalizer: Equalizer,
+    decoder: Decoder,
+    scale: f64,
+    first_s_bar: Option<usize>,
+    count: usize,
+    frame: Vec<Complex>,
+    received: Vec<bool>,
+}
+
+impl Receiver {
+    fn new(symbol_rate: SymbolRate, framing: Framing) -> Self {
+        Self {
+            front_end: FrontEnd::new(symbol_rate, false),
+            detector: SDetector::default(),
+            equalizer: Equalizer::default(),
+            decoder: Decoder::new(framing, Trellis::States16),
+            scale: Encoder::new(framing, Settings::default()).energy().sqrt(),
+            first_s_bar: None,
+            count: 0,
+            frame: Vec::new(),
+            received: Vec::new(),
+        }
+    }
+
+    fn receive(&mut self, samples: &[i16], known: &[Complex]) {
+        for chunk in samples.chunks(FRAME) {
+            for symbol in self.front_end.process(chunk) {
+                self.symbol(&symbol, known);
             }
         }
     }
-    let wrong = sent.iter().zip(&received).filter(|(a, b)| a != b).count();
-    (wrong, received.len())
+
+    fn symbol(&mut self, symbol: &Symbol, known: &[Complex]) {
+        let z = self.equalizer.output(symbol);
+        if self.first_s_bar.is_none()
+            && let Some(Heard::SBar(at)) = self.detector.push(symbol)
+        {
+            self.first_s_bar = Some(at);
+            self.front_end.track(Tracking::Train);
+        }
+        self.count += 1;
+        let Some(index) = self
+            .first_s_bar
+            .and_then(|first| (self.count - 1 + S).checked_sub(first + DELAY))
+        else {
+            return;
+        };
+        if index < S + S_BAR {
+            return;
+        }
+        if index < TRAINING {
+            self.equalizer.adapt(known[index]);
+            if index == TRAINING - 1 {
+                self.front_end.track(Tracking::Data);
+            }
+            return;
+        }
+        self.data(z);
+    }
+
+    fn data(&mut self, z: Complex) {
+        let scale = self.scale;
+        let grid = (z.0 * scale, z.1 * scale);
+        self.equalizer
+            .adapt((nearest_odd(grid.0) / scale, nearest_odd(grid.1) / scale));
+        self.frame.push(grid);
+        if self.frame.len() == 8 {
+            let points = std::mem::take(&mut self.frame).try_into().unwrap();
+            self.received.extend(self.decoder.decode(points));
+        }
+    }
+}
+
+fn call(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) -> (usize, usize) {
+    let framing = Framing::new(symbol_rate, bit_rate, false).unwrap();
+    let known = phase_3();
+    let (sent, samples) = transmitted(symbol_rate, framing, &known, line);
+    let mut far = Receiver::new(symbol_rate, framing);
+    far.receive(&samples, &known);
+    let wrong = sent
+        .iter()
+        .zip(&far.received)
+        .filter(|(a, b)| a != b)
+        .count();
+    (wrong, far.received.len())
 }
 
 fn assert_clean(symbol_rate: SymbolRate, bit_rate: u32, line: &Line) {

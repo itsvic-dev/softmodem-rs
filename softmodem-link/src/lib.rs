@@ -30,6 +30,8 @@ const ANSWERER_T400: Duration = Duration::from_millis(1500);
 const ADP_REPEATS: usize = 10;
 const OPENING_FLAGS: usize = 16;
 const FLAGS_HEARD: usize = 3;
+// Random bits make three flags in a row every few minutes at 56 000 bit/s, but never eight.
+const SOUND_FLAGS: usize = 8;
 // V.42 runs where V.14 does, so not over V.21 at 300 bit/s.
 const LOWEST_RATE: u32 = 1200;
 // Address and one control octet, the shortest a frame can be (§ 8.1.3).
@@ -114,6 +116,7 @@ pub struct Link {
     /// ADPs sent, while the answerer still sends them.
     adps: usize,
     flags_heard: bool,
+    sound_at: Option<Instant>,
     /// V.42 bis, set up once LAPM is connected.
     codec: Option<Codec>,
 }
@@ -142,6 +145,7 @@ impl Link {
             received: Vec::new(),
             adps: 0,
             flags_heard: false,
+            sound_at: None,
             codec: None,
         }
     }
@@ -231,6 +235,13 @@ impl Link {
         std::mem::take(&mut self.received)
     }
 
+    /// When LAPM last heard a good frame or a run of idle flags, which
+    /// show that the bits from the line are sound.
+    #[must_use]
+    pub fn last_sound(&self) -> Option<Instant> {
+        self.sound_at
+    }
+
     /// Drops a partly received character, for when carrier is lost.
     pub fn carrier_lost(&mut self) {
         self.decoder.reset();
@@ -277,13 +288,7 @@ impl Link {
         self.expire(now);
         for &bit in bits {
             match &mut self.phase {
-                Phase::Protocol(lapm) => {
-                    if let Some(frame) = self.deframer.push(bit) {
-                        self.flags_heard = true;
-                        lapm.receive(&frame, now);
-                    }
-                    self.flags_heard |= self.deframer.flags_in_a_row() >= FLAGS_HEARD;
-                }
+                Phase::Protocol(_) => self.hear_lapm(bit, now),
                 Phase::Normal => {
                     if let Some(byte) = self.decoder.push(bit) {
                         self.received.push(byte);
@@ -306,6 +311,23 @@ impl Link {
             }
         }
         self.expire(now);
+    }
+
+    fn hear_lapm(&mut self, bit: bool, now: Instant) {
+        let Phase::Protocol(lapm) = &mut self.phase else {
+            return;
+        };
+        let flags = self.deframer.flags_in_a_row();
+        if let Some(frame) = self.deframer.push(bit) {
+            self.flags_heard = true;
+            self.sound_at = Some(now);
+            lapm.receive(&frame, now);
+        }
+        let more_flags = self.deframer.flags_in_a_row();
+        self.flags_heard |= more_flags >= FLAGS_HEARD;
+        if more_flags > flags && more_flags >= SOUND_FLAGS {
+            self.sound_at = Some(now);
+        }
     }
 
     /// V.42 bis § 5.2: starts as LAPM connects, or ends a call that required it.
@@ -494,6 +516,28 @@ mod tests {
         call.run(Duration::from_secs(10));
         assert_eq!(call.answerer.take_received(), data);
         assert_eq!(call.caller.take_received(), b"from the answerer");
+    }
+
+    #[test]
+    fn hears_an_idle_link_as_sound_and_random_bits_as_not() {
+        let mut call = Call::new(V42, V42);
+        call.run(Duration::from_secs(1));
+        assert_eq!(call.statuses(), (Status::Reliable, Status::Reliable));
+        let sound = call.caller.last_sound().expect("idle flags are sound");
+        assert!(call.now - sound <= STEP);
+
+        let mut state = 1u32;
+        for _ in 0..200 {
+            call.now += STEP;
+            let bits: Vec<bool> = (0..STEP_BITS)
+                .map(|_| {
+                    state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    state >> 16 & 1 == 1
+                })
+                .collect();
+            call.caller.receive(&bits, call.now);
+        }
+        assert_eq!(call.caller.last_sound(), Some(sound));
     }
 
     #[test]

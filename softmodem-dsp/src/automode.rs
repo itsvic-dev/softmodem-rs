@@ -331,6 +331,12 @@ impl DataPump for Answer {
         }
     }
 
+    fn renegotiate(&mut self) {
+        if let AnswerStage::Chosen(pump) = &mut self.stage {
+            pump.renegotiate();
+        }
+    }
+
     fn clear_down(&mut self) {
         if let AnswerStage::Chosen(pump) = &mut self.stage {
             pump.clear_down();
@@ -382,9 +388,13 @@ impl DataPump for Answer {
                 // V.8 § 8.2.3 allows the end of CM in place of a lost CJ.
                 let cj = self.link.hear(input).contains(&Heard::Cj);
                 if cj || !self.link.demodulator.carrier() {
-                    self.stage = AnswerStage::Gap {
-                        until: self.sent + gap(modes),
-                        next: Some(self.offer.chosen(modes, Role::Answer)),
+                    let next = self.offer.chosen(modes, Role::Answer);
+                    self.stage = match gap(modes) {
+                        0 => AnswerStage::Chosen(next),
+                        gap => AnswerStage::Gap {
+                            until: self.sent + gap,
+                            next: Some(next),
+                        },
                     };
                 }
             }
@@ -542,6 +552,12 @@ impl DataPump for Call {
         }
     }
 
+    fn renegotiate(&mut self) {
+        if let CallStage::Chosen(pump) = &mut self.stage {
+            pump.renegotiate();
+        }
+    }
+
     fn clear_down(&mut self) {
         if let CallStage::Chosen(pump) = &mut self.stage {
             pump.clear_down();
@@ -591,9 +607,13 @@ impl DataPump for Call {
                 let modes = *modes;
                 self.link.modulator.render(out);
                 if self.link.modulator.pending() == 0 {
-                    self.stage = CallStage::Gap {
-                        until: sent + out.len() + gap(modes),
-                        next: self.offer.chosen(modes, Role::Originate),
+                    let next = self.offer.chosen(modes, Role::Originate);
+                    self.stage = match gap(modes) {
+                        0 => CallStage::Chosen(next),
+                        gap => CallStage::Gap {
+                            until: sent + out.len() + gap,
+                            next,
+                        },
                     };
                 }
             }
@@ -692,6 +712,44 @@ mod tests {
         );
     }
 
+    // One end's transmitter stopped for 200 ms from frame `at`, as on a busy host. Phase 2 is near frame 300.
+    fn connects_through_a_stall(top: Modulation, caller_stalls: bool, at: usize) -> bool {
+        let mut caller = pump(top, Role::Originate);
+        let mut answerer = pump(top, Role::Answer);
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        for frame in 0..1500 {
+            let stalled = (at..at + 10).contains(&frame);
+            if !stalled || !caller_stalls {
+                caller.transmit(&mut up);
+                answerer.receive(&up, &mut Vec::new());
+            }
+            if !stalled || caller_stalls {
+                answerer.transmit(&mut down);
+                caller.receive(&down, &mut Vec::new());
+            }
+            if caller.connected() && answerer.connected() {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn two_v90_ends_connect_through_a_stall_of_either_transmitter() {
+        let mut failed = Vec::new();
+        for caller_stalls in [false, true] {
+            for at in (266..326).step_by(6) {
+                if !connects_through_a_stall(Modulation::V90, caller_stalls, at) {
+                    failed.push((if caller_stalls { "caller" } else { "answerer" }, at));
+                }
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "no V.90 connection through a 200 ms stall of the transmitter at {failed:?}"
+        );
+    }
+
     #[test]
     fn two_v34_ends_agree_on_v34_through_v8() {
         let mut caller = pump(Modulation::V34, Role::Originate);
@@ -758,42 +816,45 @@ mod tests {
         );
     }
 
-    #[test]
-    fn two_v34_ends_connect_when_each_sends_and_hears_in_either_order() {
-        let mut failed = Vec::new();
-        for seed in 1..=40u32 {
-            let mut state = seed.wrapping_mul(2_654_435_761);
-            let mut coin = move || {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                state & 1 == 1
-            };
-            let mut ends = [
-                pump(Modulation::V34, Role::Originate),
-                pump(Modulation::V34, Role::Answer),
-            ];
-            let mut queues = [VecDeque::new(), VecDeque::new()];
-            let mut frames = 0;
-            while !ends.iter().all(|end| end.connected()) && frames < 1000 {
-                for end in 0..2 {
-                    let first = coin();
-                    for transmit in [first, !first] {
-                        if transmit {
-                            let mut frame = [0; FRAME];
-                            ends[end].transmit(&mut frame);
-                            queues[end].push_back(frame);
-                        } else if let Some(heard) = queues[1 - end].pop_front() {
-                            ends[end].receive(&heard, &mut Vec::new());
-                        }
+    // Whether two V.34 ends connect at 33 600 when a coin from `seed` picks, each frame, whether each end sends or hears first.
+    fn connects_in_order_from(seed: u32) -> bool {
+        let mut state = seed.wrapping_mul(2_654_435_761);
+        let mut coin = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state & 1 == 1
+        };
+        let mut ends = [
+            pump(Modulation::V34, Role::Originate),
+            pump(Modulation::V34, Role::Answer),
+        ];
+        let mut queues = [VecDeque::new(), VecDeque::new()];
+        for _ in 0..1000 {
+            if ends.iter().all(|end| end.connected()) {
+                break;
+            }
+            for end in 0..2 {
+                let first = coin();
+                for transmit in [first, !first] {
+                    if transmit {
+                        let mut frame = [0; FRAME];
+                        ends[end].transmit(&mut frame);
+                        queues[end].push_back(frame);
+                    } else if let Some(heard) = queues[1 - end].pop_front() {
+                        ends[end].receive(&heard, &mut Vec::new());
                     }
                 }
-                frames += 1;
-            }
-            if !(ends.iter().all(|end| end.connected()) && ends[0].bit_rate() == 33_600) {
-                failed.push(seed);
             }
         }
+        ends.iter().all(|end| end.connected()) && ends[0].bit_rate() == 33_600
+    }
+
+    #[test]
+    fn two_v34_ends_connect_when_each_sends_and_hears_in_either_order() {
+        let failed: Vec<u32> = (1..=40)
+            .filter(|&seed| !connects_in_order_from(seed))
+            .collect();
         assert!(
             failed.is_empty(),
             "no V.34 connection when each end sends and hears in either order, for seeds {failed:?}"

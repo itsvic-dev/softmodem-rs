@@ -6,19 +6,19 @@
 
 use std::collections::VecDeque;
 
-use super::Codeword;
 use super::cp::Cp;
 use super::dil::Dil;
 use super::encoder::{Encoder, FRAME, Mapping};
 use super::jd::{ALL_RATES, Jd};
 use super::training::{self, JD_PRIME_BITS, R_BAR_SYMBOLS, RI_SYMBOLS, Signs, TRN1D_SYMBOLS};
 use super::upstream::{self, Events, Upstream};
-use crate::pump::DataPump;
+use super::{Codeword, RETRAIN_TONE};
+use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
 use crate::uart::Decoder as Characters;
 use crate::v34::mp::Mp;
 use crate::v34::phase2::{PcmOutcome, Phase2};
-use crate::v34::rates;
+use crate::v34::{rates, tones};
 
 // § 9.4.1.2: TRN2d for at least 2040T.
 const TRN2D_FRAMES: usize = 340;
@@ -356,8 +356,12 @@ pub struct Digital {
     outcome: Option<PcmOutcome>,
     downstream: Option<Downstream>,
     upstream: Option<Upstream>,
-    /// Connected once, and still in the call through renegotiations.
+    /// Connected once, and still in the call through renegotiations and retrains.
     online: bool,
+    retrain_tone: tones::Detector,
+    tone_heard: usize,
+    /// The bit rate before a retrain, until the retrain sets a new one.
+    retrained_from: u32,
 }
 
 impl Default for Digital {
@@ -375,13 +379,36 @@ impl Digital {
             downstream: None,
             upstream: None,
             online: false,
+            retrain_tone: tones::Detector::new(Role::Answer),
+            tone_heard: 0,
+            retrained_from: 0,
         }
     }
 
-    /// Starts a rate renegotiation from data mode, as § 9.6.1.1 has the
-    /// digital modem do.
-    pub fn renegotiate(&mut self) {
-        self.start_renegotiation(false);
+    // § 9.5.1: phase 2 again from the tones, with the far INFO0a kept.
+    fn restart(&mut self) {
+        let Some(outcome) = self.outcome.take() else {
+            return;
+        };
+        self.retrained_from = self.bit_rate();
+        self.phase2 = Phase2::retrain_digital(outcome.far);
+        self.downstream = None;
+        self.upstream = None;
+        self.tone_heard = 0;
+    }
+
+    fn far_retrains(&mut self, input: &[i16]) -> bool {
+        if !self.connected() {
+            self.tone_heard = 0;
+            return false;
+        }
+        self.retrain_tone.process(input);
+        self.tone_heard = if self.retrain_tone.present() {
+            self.tone_heard + input.len()
+        } else {
+            0
+        };
+        self.tone_heard > RETRAIN_TONE
     }
 
     fn start_renegotiation(&mut self, clearing: bool) {
@@ -443,7 +470,9 @@ impl DataPump for Digital {
     }
 
     fn bit_rate(&self) -> u32 {
-        self.downstream.as_ref().map_or(0, |d| d.rate)
+        self.downstream
+            .as_ref()
+            .map_or(self.retrained_from, |d| d.rate)
     }
 
     fn decoder(&self) -> Characters {
@@ -473,6 +502,10 @@ impl DataPump for Digital {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        if self.far_retrains(input) {
+            self.restart();
+            return;
+        }
         let Some(upstream) = &mut self.upstream else {
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.pcm_outcome().filter(|_| self.phase2.done()) {
@@ -485,6 +518,17 @@ impl DataPump for Digital {
         upstream.receive(input, bits);
         self.agree_upstream();
         self.online |= self.connected();
+    }
+
+    fn retrain(&mut self) {
+        if self.connected() {
+            self.restart();
+        }
+    }
+
+    // § 9.6.1.1.
+    fn renegotiate(&mut self) {
+        self.start_renegotiation(false);
     }
 
     fn clear_down(&mut self) {

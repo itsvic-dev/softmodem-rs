@@ -79,6 +79,34 @@ impl Modes {
             v21: self.v21 && other.v21,
         }
     }
+
+    // A category octet, and whether it is modn0, which extension octets follow.
+    fn category(&mut self, octet: u8) -> bool {
+        let modulation = octet & 0x0F == MODULATION_TAG;
+        if modulation {
+            self.v34 = octet & V34_BIT != 0;
+        }
+        if octet & CATEGORY_MASK == PCM_TAG {
+            self.v90 = Pcm {
+                analogue: octet & PCM_ANALOGUE_BIT != 0,
+                digital: octet & PCM_DIGITAL_BIT != 0,
+            };
+        }
+        modulation
+    }
+
+    // The `n`th extension octet after modn0.
+    fn modulation_extension(&mut self, n: usize, octet: u8) {
+        match n {
+            1 => self.v22bis = octet & V22BIS_BIT != 0,
+            2 => self.v21 = octet & V21_BIT != 0,
+            _ => {}
+        }
+    }
+}
+
+fn flag(on: bool, bit: u8) -> u8 {
+    if on { bit } else { 0 }
 }
 
 /// A CM or JM, told apart by the channel it came on.
@@ -98,24 +126,15 @@ impl Menu {
     fn octets(self) -> Vec<u8> {
         let modes = self.modes;
         let call = if self.data { CALL_FUNCTION_DATA } else { 0x01 };
-        let modn0 = MODULATION_TAG
-            | if modes.v90.any() { PCM_PRESENT_BIT } else { 0 }
-            | if modes.v34 { V34_BIT } else { 0 };
-        let modn1 = EXTENSION | if modes.v22bis { V22BIS_BIT } else { 0 };
-        let modn2 = EXTENSION | if modes.v21 { V21_BIT } else { 0 };
+        let modn0 =
+            MODULATION_TAG | flag(modes.v90.any(), PCM_PRESENT_BIT) | flag(modes.v34, V34_BIT);
+        let modn1 = EXTENSION | flag(modes.v22bis, V22BIS_BIT);
+        let modn2 = EXTENSION | flag(modes.v21, V21_BIT);
         let mut octets = vec![call, modn0, modn1, modn2];
         if modes.v90.any() {
             let pcm0 = PCM_TAG
-                | if modes.v90.analogue {
-                    PCM_ANALOGUE_BIT
-                } else {
-                    0
-                }
-                | if modes.v90.digital {
-                    PCM_DIGITAL_BIT
-                } else {
-                    0
-                };
+                | flag(modes.v90.analogue, PCM_ANALOGUE_BIT)
+                | flag(modes.v90.digital, PCM_DIGITAL_BIT);
             octets.extend([ACCESS_TAG | DIGITAL_ACCESS_BIT, pcm0]);
         }
         octets
@@ -144,23 +163,10 @@ impl Menu {
             if octet & EXTENSION_MASK == EXTENSION {
                 if in_modulation {
                     extension += 1;
-                    match extension {
-                        1 => modes.v22bis = octet & V22BIS_BIT != 0,
-                        2 => modes.v21 = octet & V21_BIT != 0,
-                        _ => {}
-                    }
+                    modes.modulation_extension(extension, octet);
                 }
             } else if octet & EXTENSION == 0 {
-                in_modulation = octet & 0x0F == MODULATION_TAG;
-                if in_modulation {
-                    modes.v34 = octet & V34_BIT != 0;
-                }
-                if octet & CATEGORY_MASK == PCM_TAG {
-                    modes.v90 = Pcm {
-                        analogue: octet & PCM_ANALOGUE_BIT != 0,
-                        digital: octet & PCM_DIGITAL_BIT != 0,
-                    };
-                }
+                in_modulation = modes.category(octet);
                 extension = 0;
             }
         }

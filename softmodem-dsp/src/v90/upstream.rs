@@ -235,29 +235,37 @@ impl Upstream {
         for bit in self.sequence_bits(z) {
             self.ones = if bit { self.ones + 1 } else { 0 };
             if self.events.ja.is_none() {
-                if let Some(ja) = self.ja.push(bit) {
-                    self.events.trained = Some(rates::trained_rate(
-                        self.symbol_rate,
-                        self.equalizer.error(),
-                    ));
-                    self.events.ja = Some(ja);
-                }
-                continue;
+                self.ja_bit(bit);
+            } else {
+                self.cp_bit(bit, index);
             }
-            if let Some(cp) = self.cp.push(bit) {
-                self.events.cp_ack |= cp.acknowledge && !cp.training && !cp.silence;
-                if cp.training {
-                    self.events.cpt = Some(cp);
-                } else {
-                    self.events.cp = Some(cp);
-                }
+        }
+    }
+
+    fn ja_bit(&mut self, bit: bool) {
+        if let Some(ja) = self.ja.push(bit) {
+            self.events.trained = Some(rates::trained_rate(
+                self.symbol_rate,
+                self.equalizer.error(),
+            ));
+            self.events.ja = Some(ja);
+        }
+    }
+
+    fn cp_bit(&mut self, bit: bool, index: usize) {
+        if let Some(cp) = self.cp.push(bit) {
+            self.events.cp_ack |= cp.acknowledge && !cp.training && !cp.silence;
+            if cp.training {
+                self.events.cpt = Some(cp);
+            } else {
+                self.events.cp = Some(cp);
             }
-            // § 9.6.2.1.6: after CPs′ comes SCR, whose ones are not E.
-            let after_cp = self.events.cp.as_ref().is_some_and(|cp| !cp.silence);
-            if after_cp && self.ones == E_ONES {
-                self.events.cp_ack = true;
-                self.listen = Listen::Data { from: index + 1 };
-            }
+        }
+        // § 9.6.2.1.6: after CPs′ comes SCR, whose ones are not E.
+        let after_cp = self.events.cp.as_ref().is_some_and(|cp| !cp.silence);
+        if after_cp && self.ones == E_ONES {
+            self.events.cp_ack = true;
+            self.listen = Listen::Data { from: index + 1 };
         }
     }
 

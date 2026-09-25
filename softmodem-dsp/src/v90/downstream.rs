@@ -96,7 +96,8 @@ pub struct Downstream {
     data: Option<Mapping>,
     /// The mapping that TRN2d or MP will come with.
     next: Option<Mapping>,
-    rd_frames: usize,
+    /// Frames of Rd in a row, at each sample of the data frame they might start at.
+    rd_frames: [usize; FRAME],
     decoder: Option<Decoder>,
     descrambler: Descrambler,
     mp: mp::Deframer,
@@ -132,7 +133,7 @@ impl Downstream {
             training: None,
             data: None,
             next: None,
-            rd_frames: 0,
+            rd_frames: [0; FRAME],
             decoder: None,
             descrambler: Descrambler::with(Polynomial::V34_CALL),
             mp: mp::Deframer::default(),
@@ -216,36 +217,10 @@ impl Downstream {
         let n = self.count;
         match self.stage {
             Stage::Sd { run, last } => self.sd(n, run, last),
-            Stage::Trn { from } => {
-                if n >= from {
-                    self.gain += x.abs();
-                    self.signs.trn(x > 0.0);
-                    if n + 1 == from + TRN1D_SYMBOLS {
-                        #[expect(clippy::cast_precision_loss, reason = "2040 symbols")]
-                        let mean = self.gain / TRN1D_SYMBOLS as f64;
-                        self.gain = mean / f64::from(ucode::linear(self.uinfo, self.law));
-                        self.stage = Stage::Jd;
-                    }
-                }
-            }
+            Stage::Trn { from } => self.trn(n, from, x),
             Stage::Jd => self.jd(n, x),
             Stage::Dil { from } => self.dil(n, from, x),
-            Stage::Ri { frames } => {
-                if self.at_frame_end() {
-                    let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
-                    match self.r_like([uinfo; FRAME]) {
-                        Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
-                        Some(false) if frames >= RI_FRAMES => {
-                            self.events.r_bar = true;
-                            self.next = self.training.clone();
-                            self.stage = Stage::Training {
-                                from: n + 1 - FRAME + R_BAR_SYMBOLS,
-                            };
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            Stage::Ri { frames } => self.ri(n, frames),
             Stage::Training { from } => {
                 if n == from {
                     self.decoder = self.next.take().map(Decoder::new);
@@ -255,7 +230,11 @@ impl Downstream {
                     self.symbol(x, data);
                 }
             }
-            Stage::Data => self.symbol(x, data),
+            Stage::Data => {
+                if !self.renegotiated(n) {
+                    self.symbol(x, data);
+                }
+            }
         }
     }
 
@@ -280,6 +259,38 @@ impl Downstream {
                 run: 1,
                 last: Some(n),
             };
+        }
+    }
+
+    fn trn(&mut self, n: usize, from: usize, x: f64) {
+        if n < from {
+            return;
+        }
+        self.gain += x.abs();
+        self.signs.trn(x > 0.0);
+        if n + 1 == from + TRN1D_SYMBOLS {
+            #[expect(clippy::cast_precision_loss, reason = "2040 symbols")]
+            let mean = self.gain / TRN1D_SYMBOLS as f64;
+            self.gain = mean / f64::from(ucode::linear(self.uinfo, self.law));
+            self.stage = Stage::Jd;
+        }
+    }
+
+    fn ri(&mut self, n: usize, frames: usize) {
+        if !self.at_frame_end() {
+            return;
+        }
+        let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
+        match self.r_like([uinfo; FRAME]) {
+            Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
+            Some(false) if frames >= RI_FRAMES => {
+                self.events.r_bar = true;
+                self.next = self.training.clone();
+                self.stage = Stage::Training {
+                    from: n + 1 - FRAME + R_BAR_SYMBOLS,
+                };
+            }
+            _ => {}
         }
     }
 
@@ -373,7 +384,7 @@ impl Downstream {
         let Some(mapping) = self.decoder.as_ref().map(|d| d.mapping().clone()) else {
             return;
         };
-        if self.stage == Stage::Data && self.renegotiated(&mapping) {
+        if self.stage == Stage::Data && self.rd_frames[self.count % FRAME] > 0 {
             return;
         }
         let codewords: [Codeword; FRAME] =
@@ -411,8 +422,12 @@ impl Downstream {
         }
     }
 
-    // § 9.6.2.2.1: Rd, the largest codeword of each interval as R, holds data mode, and R̄d starts MP.
-    fn renegotiated(&mut self, data: &Mapping) -> bool {
+    // § 9.6.2.2.1: Rd holds data mode and R̄d starts MP, at any sample so that R̄d undoes a slip.
+    fn renegotiated(&mut self, n: usize) -> bool {
+        let Some(data) = self.decoder.as_ref().map(|d| d.mapping().clone()) else {
+            return false;
+        };
+        let phase = n % FRAME;
         let largest: [f64; FRAME] = std::array::from_fn(|i| {
             let ucode = data.sets[i].first().copied().unwrap_or(0);
             self.events
@@ -423,28 +438,25 @@ impl Downstream {
                 })
         });
         match self.r_like(largest) {
-            Some(true) => {
-                self.rd_frames += 1;
-                true
-            }
-            Some(false) if self.rd_frames >= RI_FRAMES => {
-                self.rd_frames = 0;
+            Some(true) => self.rd_frames[phase] += 1,
+            Some(false) if self.rd_frames[phase] >= RI_FRAMES => {
+                self.rd_frames = [0; FRAME];
                 self.expect_renegotiation();
                 self.events.renegotiations += 1;
                 self.next = self
                     .training
                     .as_ref()
-                    .map(|training| Mapping::renegotiating(training, data));
+                    .map(|training| Mapping::renegotiating(training, &data));
+                self.origin = n + 1 - FRAME;
+                self.frame.clear();
                 self.stage = Stage::Training {
-                    from: self.count + 1 - FRAME + R_BAR_SYMBOLS,
+                    from: self.origin + R_BAR_SYMBOLS,
                 };
-                true
+                return true;
             }
-            _ => {
-                self.rd_frames = 0;
-                false
-            }
+            _ => self.rd_frames[phase] = 0,
         }
+        false
     }
 
     /// Forgets the MP of data mode and listens for a new one, as § 9.6 has

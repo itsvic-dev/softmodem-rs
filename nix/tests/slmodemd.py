@@ -31,7 +31,7 @@ class Port:
         while True:
             try:
                 self.seen += os.read(self.fd, 4096)
-            except (BlockingIOError, OSError):
+            except OSError:
                 pass
             found = re.search(pattern, self.seen)
             if found:

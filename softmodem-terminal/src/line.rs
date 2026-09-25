@@ -37,10 +37,7 @@ impl LineEditor {
             if settings.echo {
                 echo.push(byte);
             }
-            let line = std::mem::take(&mut self.buffer);
-            let text = line.get(2..).filter(|_| starts_with(&line, b"AT"))?;
-            self.last = text.to_vec();
-            return Some(Input::Line(text.to_vec()));
+            return self.end_line();
         }
         if byte == settings.backspace() {
             if self.buffer.pop().is_some() && settings.echo {
@@ -59,13 +56,26 @@ impl LineEditor {
         }
         self.buffer.push(byte);
         if self.buffer.len() == 2 {
-            if byte == b'/' {
-                self.buffer.clear();
-                return Some(Input::Repeat(self.last.clone()));
-            }
-            if !byte.eq_ignore_ascii_case(&b'T') {
-                self.buffer.clear();
-            }
+            return self.after_a(byte);
+        }
+        None
+    }
+
+    fn end_line(&mut self) -> Option<Input> {
+        let line = std::mem::take(&mut self.buffer);
+        let text = line.get(2..).filter(|_| starts_with(&line, b"AT"))?;
+        self.last = text.to_vec();
+        Some(Input::Line(text.to_vec()))
+    }
+
+    // `A/` repeats the last line, and anything but `AT` starts over.
+    fn after_a(&mut self, byte: u8) -> Option<Input> {
+        if byte == b'/' {
+            self.buffer.clear();
+            return Some(Input::Repeat(self.last.clone()));
+        }
+        if !byte.eq_ignore_ascii_case(&b'T') {
+            self.buffer.clear();
         }
         None
     }
