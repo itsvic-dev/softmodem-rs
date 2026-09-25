@@ -18,8 +18,12 @@ const POWER_LIMITS: [f64; 32] = [
 ];
 // SP, the most table 12 allows.
 const DIL_SIGN_BITS: usize = 128;
-// H1 to H8: segments of 120 symbols, shorter for the loud Uchords, down to 12 at full scale.
-const DIL_LENGTHS: [u8; 8] = [19, 19, 19, 19, 19, 9, 3, 1];
+/// Uchords, the eight groups of 16 Ucodes.
+pub const UCHORDS: usize = 8;
+// H1 to H8: segments of 120 symbols, shorter for the loud Uchords, down to 24 at full scale.
+const DIL_LENGTHS: [u8; UCHORDS] = [19, 19, 19, 19, 19, 9, 3, 3];
+// Uchord 8 comes once in DIL, its even Ucodes on the way up and its odd ones on the way down.
+const LOUDEST: u8 = 112;
 // Levels this many noise deviations apart leave symbol errors below 10⁻⁷.
 const SPACING_SIGMAS: f64 = 11.0;
 // Where DIL showed no noise at all, half the smallest A-law step.
@@ -62,7 +66,7 @@ pub fn average_power(sets: &[Vec<f64>; FRAME], modulus_bits: usize) -> f64 {
     sum / (6.0 * total as f64)
 }
 
-// Pseudo-random from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, the second frame the first inverted for segments of 12.
+// Pseudo-random from x¹⁶ + x¹⁴ + x¹³ + x¹¹ + 1, the second and fourth frames the ones before inverted.
 fn dil_signs() -> Vec<bool> {
     let mut state: u16 = 0xACE1;
     let mut signs: Vec<bool> = (0..DIL_SIGN_BITS)
@@ -72,28 +76,27 @@ fn dil_signs() -> Vec<bool> {
             bit == 1
         })
         .collect();
-    for k in FRAME..2 * FRAME {
+    for k in (FRAME..2 * FRAME).chain(3 * FRAME..4 * FRAME) {
         signs[k] = !signs[k - FRAME];
     }
     signs
 }
 
-/// The DIL this modem asks for: every Ucode, with both signs in each data
-/// frame interval. The Ucodes go from UINFO up to 127, down to 0 and back
-/// up to UINFO, so the level never jumps, and TRN1d before it and Ri after
-/// it are near UINFO too. The loud Uchords have short segments.
+/// The DIL this modem asks for: every Ucode, with each sign at least twice
+/// in each data frame interval. The Ucodes go from UINFO up to 127, down to
+/// 0 and back up to UINFO, so the level never jumps, and TRN1d before it and
+/// Ri after it are near UINFO too. The loud Uchords have short segments.
 #[must_use]
 pub fn descriptor(uinfo: u8) -> Descriptor {
     let uinfo = uinfo.clamp(1, COUNT - 1);
+    let up = (uinfo..COUNT).filter(|&u| u < LOUDEST || u % 2 == 0);
+    let down = (0..COUNT).rev().filter(|&u| u < LOUDEST || u % 2 == 1);
     Descriptor {
         signs: dil_signs(),
         pattern: vec![true],
         lengths: DIL_LENGTHS,
-        references: [uinfo; 8],
-        training: (uinfo..COUNT)
-            .chain((0..COUNT - 1).rev())
-            .chain(1..uinfo)
-            .collect(),
+        references: [uinfo; UCHORDS],
+        training: up.chain(down).chain(1..uinfo).collect(),
     }
 }
 
@@ -102,8 +105,9 @@ pub fn descriptor(uinfo: u8) -> Descriptor {
 pub struct Levels {
     /// The received magnitude of each positive Ucode, by interval.
     pub levels: [[f64; COUNT as usize]; FRAME],
-    /// The RMS of the noise around those levels.
-    pub noise: f64,
+    /// The RMS of the noise around those levels, by Uchord, as a path may
+    /// add more to some levels than to others.
+    pub noise: [f64; UCHORDS],
 }
 
 impl Levels {
@@ -115,20 +119,31 @@ impl Levels {
             std::array::from_fn(|u| f64::from(ucode::linear(u8::try_from(u).unwrap_or(0), law)));
         Self {
             levels: [row; FRAME],
-            noise: 0.0,
+            noise: [0.0; UCHORDS],
         }
+    }
+
+    // Half the room a level needs from its neighbour, for the noise of its Uchord.
+    fn margin(&self, ucode: u8) -> f64 {
+        SPACING_SIGMAS / 2.0 * self.noise[usize::from(ucode / 16).min(UCHORDS - 1)]
     }
 }
 
-// `count` levels from the bottom, `spacing` apart, with room for the other sign below the first.
-fn pick(levels: &[f64; COUNT as usize], count: usize, spacing: f64) -> Option<Vec<u8>> {
+// `count` levels from the bottom, as far apart as `spacing` and their noise ask, the first clear of its other sign.
+fn pick(levels: &Levels, interval: usize, count: usize, spacing: f64) -> Option<Vec<u8>> {
+    let row = &levels.levels[interval];
     let mut chosen: Vec<u8> = Vec::with_capacity(count);
-    let mut floor = spacing / 2.0;
     for ucode in 0..COUNT {
-        let level = levels[usize::from(ucode)];
-        if level >= floor {
+        let level = row[usize::from(ucode)];
+        let room = match chosen.last() {
+            None => 2.0 * level >= spacing.max(2.0 * levels.margin(ucode)),
+            Some(&last) => {
+                let needed = spacing.max(levels.margin(last) + levels.margin(ucode));
+                level - row[usize::from(last)] >= needed
+            }
+        };
+        if room {
             chosen.push(ucode);
-            floor = level + spacing;
             if chosen.len() == count {
                 return Some(chosen);
             }
@@ -155,10 +170,10 @@ fn levels_for(modulus_bits: usize) -> usize {
 fn constellations(levels: &Levels, bits: usize, law: Law, limit: f64) -> Option<[Vec<u8>; FRAME]> {
     let modulus_bits = bits.checked_sub(FRAME)?;
     let count = levels_for(modulus_bits);
-    let least = (SPACING_SIGMAS * levels.noise).max(LEAST_SPACING);
+    let least = LEAST_SPACING;
     let fits = |spacing: f64| -> Option<[Vec<u8>; FRAME]> {
         let sets: [Option<Vec<u8>>; FRAME] =
-            std::array::from_fn(|i| pick(&levels.levels[i], count, spacing));
+            std::array::from_fn(|i| pick(levels, i, count, spacing));
         let sets: [Vec<u8>; FRAME] = sets.map(Option::unwrap_or_default);
         if sets.iter().any(|set| set.len() < count) {
             return None;
@@ -282,11 +297,30 @@ mod tests {
     #[test]
     fn falls_back_as_the_noise_grows() {
         let mut levels = Levels::table(Law::A);
-        levels.noise = 40.0;
+        levels.noise = [40.0; UCHORDS];
         let noisy = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
         assert!((28_000..56_000).contains(&noisy.bit_rate()));
-        levels.noise = 5000.0;
+        levels.noise = [5000.0; UCHORDS];
         assert!(data(&levels, Law::A, 23, 0x1FFF).is_none());
+    }
+
+    #[test]
+    fn spaces_each_level_for_the_noise_of_its_uchord() {
+        let mut levels = Levels::table(Law::A);
+        levels.noise = [80.0; UCHORDS];
+        let everywhere = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
+        levels.noise = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 80.0, 80.0];
+        let loud = data(&levels, Law::A, 23, 0x1FFF).expect("a CP");
+        assert!(loud.bit_rate() > everywhere.bit_rate());
+        let mapping = Mapping::from_cp(&loud).expect("CP carries its rate");
+        for set in &mapping.sets {
+            let mut ucodes = set.clone();
+            ucodes.sort_unstable();
+            for pair in ucodes.windows(2).filter(|pair| pair[0] >= 96) {
+                let gap = ucode::linear(pair[1], Law::A) - ucode::linear(pair[0], Law::A);
+                assert!(f64::from(gap) >= SPACING_SIGMAS * 80.0);
+            }
+        }
     }
 
     #[test]
@@ -297,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn asks_for_each_ucode_with_both_signs_in_each_interval() {
+    fn asks_for_each_ucode_with_each_sign_twice_in_each_interval() {
         let descriptor = descriptor(75);
         assert!(descriptor.training.len() <= 255);
         let mut ucodes = descriptor.training.clone();
@@ -311,16 +345,18 @@ mod tests {
                     .step_by(FRAME)
                     .map(|k| descriptor.signs[k % descriptor.signs.len()])
                     .collect();
-                assert!(signs.contains(&true) && signs.contains(&false));
+                let positive = signs.iter().filter(|&&sign| sign).count();
+                assert!(positive >= 2 && signs.len() - positive >= 2);
             }
         }
     }
 
     #[test]
-    fn moves_through_the_ucodes_one_step_at_a_time() {
+    fn moves_through_the_ucodes_in_small_steps() {
         let training = descriptor(75).training;
         assert_eq!((training[0], *training.last().unwrap_or(&0)), (75, 74));
-        assert!(training.windows(2).all(|w| w[0].abs_diff(w[1]) <= 1));
+        assert!(training.windows(2).all(|w| w[0].abs_diff(w[1]) <= 2));
+        assert_eq!(training.iter().filter(|&&u| u >= LOUDEST).count(), 16);
     }
 
     #[test]

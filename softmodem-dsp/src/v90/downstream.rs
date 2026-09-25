@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 
 use super::Codeword;
-use super::design::Levels;
+use super::design::{Levels, UCHORDS};
 use super::dil::{Descriptor, Dil};
 use super::encoder::{Decoder, FRAME, Mapping};
 use super::frames::Deframer;
@@ -333,22 +333,25 @@ impl Downstream {
 
     fn levels(&self) -> Levels {
         let mut levels = Levels::table(self.law);
-        let (mut spread, mut count) = (0.0, 0.0);
+        let mut spread = [0.0; UCHORDS];
+        let mut freedom = [0.0; UCHORDS];
         for (index, [negative, positive]) in self.stats.iter().enumerate() {
             if negative.count == 0 || positive.count == 0 {
                 continue;
             }
+            let ucode = index % usize::from(COUNT);
             let mean = |s: &Stat| s.sum / f64::from(s.count);
-            let variance = |s: &Stat| s.squares / f64::from(s.count) - mean(s).powi(2);
-            levels.levels[index / usize::from(COUNT)][index % usize::from(COUNT)] =
+            levels.levels[index / usize::from(COUNT)][ucode] =
                 (mean(positive) - mean(negative)) / 2.0;
-            spread += variance(positive).max(0.0) * f64::from(positive.count)
-                + variance(negative).max(0.0) * f64::from(negative.count);
-            count += f64::from(positive.count + negative.count);
+            for s in [negative, positive] {
+                spread[ucode / 16] += (s.squares - s.sum * mean(s)).max(0.0);
+                freedom[ucode / 16] += f64::from(s.count - 1);
+            }
         }
-        if count > 0.0 {
-            levels.noise = (spread / count).sqrt();
-        }
+        let noise: [Option<f64>; UCHORDS] =
+            std::array::from_fn(|c| (freedom[c] > 0.0).then(|| (spread[c] / freedom[c]).sqrt()));
+        let worst = noise.iter().flatten().copied().fold(0.0, f64::max);
+        levels.noise = noise.map(|n| n.unwrap_or(worst));
         levels
     }
 
