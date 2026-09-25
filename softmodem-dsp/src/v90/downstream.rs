@@ -48,11 +48,15 @@ pub struct Events {
     pub jd_prime: bool,
     /// What DIL showed, once enough of it has come.
     pub levels: Option<Levels>,
+    /// Ri, which shows that the digital modem has ended DIL.
+    pub ri: bool,
     /// The Ri to R̄i transition, which ends CPt.
     pub r_bar: bool,
     pub mp: Option<Mp>,
     /// MP′ or Ed, which ends CP′.
     pub mp_ack: bool,
+    /// Ed, which shows that the digital modem has had CP′.
+    pub ed: bool,
     /// Rate renegotiations the digital modem has started or answered, by
     /// the R̄d of each.
     pub renegotiations: u32,
@@ -282,7 +286,10 @@ impl Downstream {
         }
         let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
         match self.r_like([uinfo; FRAME]) {
-            Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
+            Some(true) => {
+                self.events.ri |= frames + 1 >= RI_FRAMES;
+                self.stage = Stage::Ri { frames: frames + 1 };
+            }
             Some(false) if frames >= RI_FRAMES => {
                 self.events.r_bar = true;
                 self.next = self.training.clone();
@@ -418,6 +425,7 @@ impl Downstream {
         self.zero_frames = if zero { self.zero_frames + 1 } else { 0 };
         if self.events.mp.is_some() && self.zero_frames == ED_FRAMES {
             self.events.mp_ack = true;
+            self.events.ed = true;
             self.stage = Stage::Data;
             self.decoder = self.data.clone().map(Decoder::new);
             self.descrambler = Descrambler::with(Polynomial::V34_CALL);
@@ -467,6 +475,7 @@ impl Downstream {
     pub fn expect_renegotiation(&mut self) {
         self.events.mp = None;
         self.events.mp_ack = false;
+        self.events.ed = false;
         self.mp = mp::Deframer::default();
         self.zero_frames = 0;
     }

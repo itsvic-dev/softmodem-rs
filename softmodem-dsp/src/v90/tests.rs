@@ -226,6 +226,50 @@ fn sends_cp_on_16_points_when_jd_asks() {
     }
 }
 
+// Connects with frame `lost` of the upstream lost, as over RTP, in at most 2000 frames.
+fn connects_losing_upstream_frame(lost: usize) -> bool {
+    let mut analogue = Analogue::new();
+    let mut digital = Digital::asking_sixteen_points();
+    let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+    for frame in 0..2000 {
+        if analogue.connected() && digital.connected() {
+            return true;
+        }
+        analogue.transmit(&mut up);
+        digital.transmit(&mut down);
+        if frame == lost {
+            up = [0; FRAME];
+        }
+        digital.receive(&up.map(alaw), &mut Vec::new());
+        analogue.receive(&down.map(alaw), &mut Vec::new());
+    }
+    false
+}
+
+#[test]
+fn connects_whichever_upstream_frame_of_phase_4_is_lost() {
+    let mut analogue = Analogue::new();
+    let mut digital = Digital::asking_sixteen_points();
+    let mut phase_4 = None;
+    let connected = (0..2000_usize).find(|&frame| {
+        exchange(&mut analogue, &mut digital, 1, &alaw);
+        if analogue.in_phase_4() {
+            phase_4.get_or_insert(frame);
+        }
+        analogue.connected() && digital.connected()
+    });
+    let (Some(from), Some(to)) = (phase_4, connected) else {
+        panic!("no V.90 connection to lose frames from");
+    };
+    let failed: Vec<usize> = (from..to)
+        .filter(|&lost| !connects_losing_upstream_frame(lost))
+        .collect();
+    assert!(
+        failed.is_empty(),
+        "losing upstream frame {failed:?} of phase 4, frames {from} to {to}, leaves no connection"
+    );
+}
+
 #[test]
 fn an_analogue_and_a_digital_modem_carry_data_at_56000_bit_s() {
     assert_eq!(connect_over(alaw), 56_000);

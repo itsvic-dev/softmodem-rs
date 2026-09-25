@@ -30,6 +30,10 @@ const S_BAR_SYMBOLS: usize = 16;
 const TRN_SYMBOLS: usize = 1024;
 // § 9.3.2.1: 70 ± 5 ms of silence after INFO1a.
 const SILENCE_MS: f64 = 70.0;
+// CP′ until Ed, or this long: one CP′ and E fit in a lost RTP packet.
+const CP_ACK_SECONDS: f64 = 0.2;
+// Past a round trip, the time the digital modem takes from S̄ to enough Ri.
+const RI_MARGIN_SECONDS: f64 = 0.5;
 
 fn sixteen(sixteen: bool) -> Points {
     if sixteen {
@@ -72,7 +76,10 @@ struct Upstream {
     points: Points,
     cpt: Option<Cp>,
     cp: Option<Cp>,
-    acks: usize,
+    /// Symbols of CP′ sent.
+    acked: f64,
+    /// Symbols of CPt sent since the last S̄.
+    cpt_sent: f64,
     encoder: Option<Encoder>,
     scale: f64,
     scrambler: Scrambler,
@@ -113,7 +120,8 @@ impl Upstream {
             points: Points::Four,
             cpt: None,
             cp: None,
-            acks: 0,
+            acked: 0.0,
+            cpt_sent: 0.0,
             encoder: None,
             scale: 1.0,
             scrambler: Scrambler::with(Polynomial::V34_ANSWER),
@@ -169,12 +177,15 @@ impl Upstream {
             Send::S => self.queue.extend((0..2).map(training::s)),
             Send::Dil => self.design(events.levels.as_ref()),
             Send::Cpt if events.r_bar => self.send = Send::Cp,
+            Send::Cpt if !events.ri && self.cpt_sent >= self.ri_wait() => self.end_dil(),
             Send::Cpt => {
                 let frame = self.cpt.as_ref().map(Cp::frame).unwrap_or_default();
-                self.queue
-                    .extend(self.training.sequence(&frame, self.points));
+                let symbols = self.training.sequence(&frame, self.points);
+                self.cpt_sent += f64::from(u32::try_from(symbols.len()).unwrap_or(u32::MAX));
+                self.queue.extend(symbols);
                 if frame.is_empty() {
                     self.queue.push_back((0.0, 0.0));
+                    self.cpt_sent += 1.0;
                 }
             }
             Send::Cp => self.cp(events),
@@ -191,7 +202,7 @@ impl Upstream {
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(Role::Answer);
         self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points_renegotiating));
-        self.acks = 0;
+        self.acked = 0.0;
         self.b1_sent = false;
         self.send = Send::Cp;
     }
@@ -206,16 +217,30 @@ impl Upstream {
         let rates = self.own_rates() >> 1;
         self.cpt = design::training(levels, law, max_power, rates);
         self.cp = design::data(levels, law, max_power, rates);
+        self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points));
+        self.send = Send::Cpt;
+        self.end_dil();
+    }
+
+    // S and S̄, again until Ri comes, as a lost S̄ leaves the digital modem in DIL.
+    fn end_dil(&mut self) {
         self.queue.extend((0..S_SYMBOLS).map(training::s));
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(Role::Answer);
-        self.points = sixteen(self.jd.is_some_and(|jd| jd.sixteen_points));
-        self.send = Send::Cpt;
+        self.cpt_sent = 0.0;
+    }
+
+    // CPt symbols to wait for Ri after S̄: a round trip and some.
+    #[expect(clippy::cast_precision_loss, reason = "a round trip in samples")]
+    fn ri_wait(&self) -> f64 {
+        let round_trip = self.outcome.round_trip as f64 / 8000.0;
+        self.outcome.upstream.symbol_rate.baud() * (round_trip + RI_MARGIN_SECONDS)
     }
 
     // § 9.4.2.3 and § 9.4.2.4: CP until MP, CP′ until MP′ or Ed, then E.
     fn cp(&mut self, events: &Events) {
-        if self.acks > 0 && events.mp_ack {
+        let enough = self.acked >= self.outcome.upstream.symbol_rate.baud() * CP_ACK_SECONDS;
+        if self.acked > 0.0 && events.mp_ack && (events.ed || enough) {
             let e = self.training.sequence(&[true; E_ONES], self.points);
             self.queue.extend(e);
             // § 9.7: after a rate sequence of 0 bit/s from either end, the call is over.
@@ -232,7 +257,6 @@ impl Upstream {
             return;
         };
         let acknowledge = events.mp.is_some();
-        self.acks += usize::from(acknowledge);
         let mut cp = Cp {
             acknowledge,
             ..cp.clone()
@@ -240,9 +264,11 @@ impl Upstream {
         if self.clearing {
             cp.rate = 0;
         }
-        let frame = cp.frame();
-        self.queue
-            .extend(self.training.sequence(&frame, self.points));
+        let symbols = self.training.sequence(&cp.frame(), self.points);
+        if acknowledge {
+            self.acked += f64::from(u32::try_from(symbols.len()).unwrap_or(u32::MAX));
+        }
+        self.queue.extend(symbols);
     }
 
     // § 9.4.2.4: the highest rate both enable, up to the maximum in MP.
@@ -339,6 +365,14 @@ impl Analogue {
             tone_heard: 0,
             retrained_from: 0,
         }
+    }
+
+    /// Whether it has ended DIL and not yet reached data mode.
+    #[cfg(test)]
+    pub(crate) fn in_phase_4(&self) -> bool {
+        self.upstream
+            .as_ref()
+            .is_some_and(|up| matches!(up.send, Send::Cpt | Send::Cp))
     }
 
     // § 9.5.2: phase 2 again from the tones, with the far INFO0d kept.
