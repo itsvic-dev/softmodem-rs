@@ -32,7 +32,8 @@ let
         modules = [ ];
       };
       x86_64-linux = {
-        qemu = "qemu-system-x86_64 -M microvm,pcie=on -cpu max -accel kvm -accel tcg";
+        # microvm's PCIe bus has no I/O window, and pci-serial has only an I/O BAR.
+        qemu = "qemu-system-x86_64 -M q35 -cpu max -accel kvm -accel tcg";
         image = "bzImage";
         console = "ttyS0";
         modules = [ "kernel/drivers/tty/serial/8250/8250_pci.ko.xz" ];
