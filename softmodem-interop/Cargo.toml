@@ -4,7 +4,7 @@
 
 [package]
 name = "softmodem-interop"
-description = "Tests the modem against spandsp's V.21, V.22, V.22bis and answer tones."
+description = "Tests the modem against spandsp."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
