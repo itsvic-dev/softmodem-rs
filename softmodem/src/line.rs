@@ -22,6 +22,8 @@ const ANSWER_TONE_DBM0: f64 = -13.0;
 // Bits kept queued in the pump, so that it never idles between frames.
 const PUMP_AHEAD: Duration = Duration::from_millis(60);
 const LOW_WATER: Duration = Duration::from_millis(67);
+// Well within the ten T401 retries after which LAPM gives up.
+const QUIET: Duration = Duration::from_secs(2);
 
 /// How a call tries V.42 in each role.
 #[derive(Debug, Clone, Copy)]
@@ -61,6 +63,49 @@ struct Handshake {
     heard_carrier: bool,
     connected: bool,
     rate: u32,
+    recovery: Recovery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Renegotiate,
+    Retrain,
+}
+
+// Data mode with no sound bits for QUIET renegotiates first, and then retrains.
+#[derive(Debug, Default)]
+struct Recovery {
+    quiet_from: Option<Instant>,
+    tried: Option<(Action, Instant)>,
+}
+
+impl Recovery {
+    fn poll(&mut self, now: Instant, in_data: bool, sound: Option<Instant>) -> Option<Action> {
+        if !in_data {
+            self.quiet_from = None;
+            return None;
+        }
+        if let (Some((_, at)), Some(sound)) = (self.tried, sound)
+            && sound > at
+        {
+            self.tried = None;
+        }
+        let from = self.quiet_from.get_or_insert(now);
+        if let Some(sound) = sound {
+            *from = (*from).max(sound);
+        }
+        if now - *from < QUIET {
+            return None;
+        }
+        let action = match self.tried {
+            None => Action::Renegotiate,
+            Some((Action::Renegotiate, _)) => Action::Retrain,
+            Some((Action::Retrain, _)) => return None,
+        };
+        self.tried = Some((action, now));
+        self.quiet_from = Some(now);
+        Some(action)
+    }
 }
 
 impl Line {
@@ -184,6 +229,7 @@ impl Handshake {
             heard_carrier: false,
             connected: false,
             rate: 0,
+            recovery: Recovery::default(),
         }
     }
 
@@ -266,6 +312,18 @@ impl Handshake {
             return received;
         };
         let status = link.status();
+        let in_data = connected && status == Status::Reliable;
+        match self.recovery.poll(now, in_data, link.last_sound()) {
+            Some(Action::Renegotiate) => {
+                info!("nothing sound from the far end, renegotiating");
+                self.pump.renegotiate();
+            }
+            Some(Action::Retrain) => {
+                info!("nothing sound from the far end after a renegotiation, retraining");
+                self.pump.retrain();
+            }
+            None => {}
+        }
         if !self.connected {
             if !matches!(status, Status::Reliable | Status::Normal) {
                 return received;
@@ -277,5 +335,110 @@ impl Handshake {
         }
         received.bytes = link.take_received();
         received
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STEP: Duration = Duration::from_millis(20);
+
+    // Polls every 20 ms for `time`, and gives each action with when it came.
+    fn watch(
+        recovery: &mut Recovery,
+        from: Instant,
+        time: Duration,
+        in_data: impl Fn(Instant) -> bool,
+        sound: impl Fn(Instant) -> Option<Instant>,
+    ) -> Vec<(Action, Duration)> {
+        let mut actions = Vec::new();
+        let mut now = from;
+        while now < from + time {
+            now += STEP;
+            if let Some(action) = recovery.poll(now, in_data(now), sound(now)) {
+                actions.push((action, now - from));
+            }
+        }
+        actions
+    }
+
+    #[test]
+    fn renegotiates_then_retrains_then_leaves_it_to_lapm() {
+        let start = Instant::now();
+        let actions = watch(
+            &mut Recovery::default(),
+            start,
+            Duration::from_secs(20),
+            |_| true,
+            |_| Some(start),
+        );
+        assert_eq!(
+            actions,
+            [
+                (Action::Renegotiate, STEP + QUIET),
+                (Action::Retrain, STEP + 2 * QUIET)
+            ]
+        );
+    }
+
+    #[test]
+    fn times_the_quiet_only_in_data_mode() {
+        let start = Instant::now();
+        let back = start + QUIET + Duration::from_secs(5);
+        let actions = watch(
+            &mut Recovery::default(),
+            start,
+            Duration::from_secs(20),
+            |now| now <= start + STEP + QUIET || now >= back,
+            |_| Some(start),
+        );
+        assert_eq!(
+            actions,
+            [
+                (Action::Renegotiate, STEP + QUIET),
+                (Action::Retrain, back - start + QUIET)
+            ]
+        );
+    }
+
+    #[test]
+    fn renegotiates_again_once_sound_came_back_in_between() {
+        let start = Instant::now();
+        let sound_again = start + QUIET + Duration::from_secs(1);
+        let actions = watch(
+            &mut Recovery::default(),
+            start,
+            Duration::from_secs(10),
+            |_| true,
+            |now| {
+                Some(if now >= sound_again {
+                    sound_again
+                } else {
+                    start
+                })
+            },
+        );
+        assert_eq!(
+            actions,
+            [
+                (Action::Renegotiate, STEP + QUIET),
+                (Action::Renegotiate, sound_again - start + QUIET),
+                (Action::Retrain, sound_again - start + 2 * QUIET)
+            ]
+        );
+    }
+
+    #[test]
+    fn never_acts_while_sound_comes() {
+        let start = Instant::now();
+        let actions = watch(
+            &mut Recovery::default(),
+            start,
+            Duration::from_secs(20),
+            |_| true,
+            Some,
+        );
+        assert!(actions.is_empty());
     }
 }

@@ -202,6 +202,27 @@ fn stalled(after: usize, stall: Duration) -> impl FnMut(Call, Role) -> Call + Se
     }
 }
 
+// Drops `count` frames of the call's audio once `after` have gone, and leaves no gap for them.
+fn dropping(after: usize, count: usize) -> impl FnMut(Call, Role) -> Call + Send + 'static {
+    move |mut call, _| {
+        let (dropping_out, mut outgoing) = mpsc::channel(8);
+        let audio_out = std::mem::replace(&mut call.audio_out, dropping_out);
+        tokio::spawn(async move {
+            let mut frames = 0;
+            while let Some(frame) = outgoing.recv().await {
+                frames += 1;
+                if (after..after + count).contains(&frames) {
+                    continue;
+                }
+                if audio_out.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+        call
+    }
+}
+
 fn two_modems(caller: &str, answerer: &str) -> (Computer, Computer) {
     let (a, b) = loopback::pair();
     (
@@ -498,6 +519,22 @@ async fn a_v90_call_carries_data_after_the_digital_modem_stalls() {
 
     b.send(b"after the stall").await;
     a.expect("after the stall").await;
+    a.send(b"and back").await;
+    b.expect("and back").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_v90_call_renegotiates_after_samples_go_missing() {
+    let (a, b) = loopback::pair();
+    let mut a = attach(a, profile("ATE0+MS=V90").unwrap());
+    let mut b = attach_with(b, profile("ATE0S0=1+MS=V90").unwrap(), dropping(900, 2));
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 56000\r\n").await;
+    b.expect("CONNECT 56000\r\n").await;
+    sleep(Duration::from_secs(10)).await;
+
+    b.send(b"after the loss").await;
+    a.expect("after the loss").await;
     a.send(b"and back").await;
     b.expect("and back").await;
 }
