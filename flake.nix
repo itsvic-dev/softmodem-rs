@@ -75,6 +75,14 @@
               modulation = "+MS=V90,0";
             }
           );
+          ppp-v90-stalls = pkgs.testers.runNixOSTest (
+            import ./nix/tests/ppp.nix {
+              inherit softmodem;
+              label = "V90-stalls";
+              modulation = "+MS=V90,0";
+              impairment = "--stall 0.005 --stall-for 500";
+            }
+          );
           ppp-automode = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
               inherit softmodem;
