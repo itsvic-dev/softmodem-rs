@@ -16,6 +16,7 @@ softmodem-transport.workspace = true
 
 anyhow.workspace = true
 clap.workspace = true
+rustix.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

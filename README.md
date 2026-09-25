@@ -41,6 +41,9 @@ Over SIP, registered with a PBX:
 softmodem sip --registrar pbx.example.org --user 1001 --password-env SIP_PASSWORD --pty /tmp/modem
 ```
 
+The password can also come from `--password` or `--password-file`. Without
+any of the three, the modem asks for it on stdin.
+
 The serial port can be a pseudoterminal (`--pty`), a TCP listener (`--tcp`),
 a character device with DCD and RI through CUSE on Linux (`--cuse`), or
 stdin and stdout. `--dump` records each call as WAV files, and `--speaker`

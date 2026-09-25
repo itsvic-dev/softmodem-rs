@@ -5573,6 +5573,11 @@ rec {
             features = [ "derive" ];
           }
           {
+            name = "rustix";
+            packageId = "rustix";
+            features = [ "fs" "pty" "termios" ];
+          }
+          {
             name = "softmodem-dsp";
             packageId = "softmodem-dsp";
           }

@@ -22,6 +22,8 @@ use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{info, warn};
 
+mod password;
+
 /// A modem that places real calls.
 #[derive(Parser)]
 #[command(version)]
@@ -35,6 +37,9 @@ enum Command {
     /// Use a direct UDP wire to another softmodem as the phone line.
     Wire(WireArgs),
     /// Register with a SIP registrar over TCP and use it as the phone line.
+    #[command(
+        after_help = "Without --password, --password-env or --password-file, the modem asks for the password on stdin."
+    )]
     Sip(SipArgs),
 }
 
@@ -46,9 +51,8 @@ struct SipArgs {
     /// User name, which is also the number the modem answers on.
     #[arg(long)]
     user: String,
-    /// Environment variable that holds the password.
-    #[arg(long, value_name = "VARIABLE")]
-    password_env: String,
+    #[command(flatten)]
+    password: password::Source,
     #[command(flatten)]
     modem: ModemArgs,
 }
@@ -119,12 +123,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             serve(wire, args.modem).await
         }
         Command::Sip(args) => {
-            let password = std::env::var(&args.password_env)
-                .with_context(|| format!("reading the password from ${}", args.password_env))?;
             let sip = Sip::register(Account {
                 registrar: args.registrar,
                 user: args.user,
-                password,
+                password: args.password.read()?,
             })
             .await
             .context("registering")?;
