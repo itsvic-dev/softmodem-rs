@@ -225,6 +225,8 @@ pub struct Phase2 {
     detector: tones::Detector,
     analyser: Analyser,
     reversals: Vec<f64>,
+    // Tone B held past the call modem's reversal must stop before a tone B can end L2.
+    tone_b_gone: bool,
     far: Option<Info0>,
     far_info0d: Option<Info0d>,
     far_at: usize,
@@ -291,6 +293,7 @@ impl Phase2 {
             detector: tones::Detector::new(far),
             analyser: Analyser::new(L2_DBM0),
             reversals: Vec::new(),
+            tone_b_gone: false,
             far: None,
             far_info0d: None,
             far_at: 0,
@@ -523,6 +526,7 @@ impl Phase2 {
             Some(self.reversals.remove(0).round() as usize)
         }
         .filter(|&at| self.far.is_some() && at >= self.far_at + AFTER_INFO);
+        self.tone_b_gone |= !self.detector.present();
         match self.step {
             Step::ToneA
                 if self.far.is_some()
@@ -549,16 +553,17 @@ impl Phase2 {
                         Role::Answer => {
                             self.reverse_at(at + ANSWER_DELAY);
                             self.step = Step::Probe;
+                            self.tone_b_gone = false;
                         }
                         Role::Originate => self.measure_from(at),
                     }
                 }
             }
-            Step::Probe if self.tx == Tx::L2 && self.detector.present() => {
+            Step::Probe if self.tx == Tx::L2 && self.tone_b_gone && self.detector.present() => {
                 self.start(Tx::Tone, None);
                 self.step = Step::AwaitProbe { reversed: false };
             }
-            Step::LateToneB if self.detector.present() => {
+            Step::LateToneB if self.tone_b_gone && self.detector.present() => {
                 self.tone_from = self.sent;
                 self.step = Step::AwaitProbe { reversed: false };
             }
