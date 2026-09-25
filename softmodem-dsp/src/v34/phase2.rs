@@ -306,15 +306,34 @@ impl Phase2 {
     /// the far INFO0 heard before.
     #[must_use]
     pub fn retrain(role: Role, far: Info0) -> Self {
-        let mut phase2 = Self::new(role);
-        phase2.info = dpsk::Modulator::new(role);
-        phase2.far = Some(far);
-        phase2.step = match role {
+        Self::new(role).retraining(far)
+    }
+
+    /// Phase 2 of V.90 again from the digital modem (§ 9.5.1), with the far
+    /// INFO0a heard before.
+    #[must_use]
+    pub fn retrain_digital(far: Info0) -> Self {
+        Self::digital().retraining(far)
+    }
+
+    /// Phase 2 of V.90 again from the analogue modem (§ 9.5.2), with the far
+    /// INFO0d heard before.
+    #[must_use]
+    pub fn retrain_analogue(far: Info0d) -> Self {
+        let mut phase2 = Self::analogue().retraining(far.v34);
+        phase2.far_info0d = Some(far);
+        phase2
+    }
+
+    fn retraining(mut self, far: Info0) -> Self {
+        self.info = dpsk::Modulator::new(self.role);
+        self.far = Some(far);
+        self.step = match self.role {
             Role::Answer => Step::ToneA,
             Role::Originate => Step::ToneB,
         };
-        phase2.tx_until = Some(RETRAIN_SILENCE);
-        phase2
+        self.tx_until = Some(RETRAIN_SILENCE);
+        self
     }
 
     /// What phase 2 settled, once it has.
@@ -849,6 +868,34 @@ mod tests {
                 answer.step
             );
         }
+    }
+
+    #[test]
+    fn a_digital_and_an_analogue_modem_retrain_phase_2_of_v90() {
+        let (digital, analogue, _) = run_between(Phase2::digital(), Phase2::analogue(), 0);
+        let (digital, analogue) = (
+            digital.pcm_outcome().unwrap(),
+            analogue.pcm_outcome().unwrap(),
+        );
+        let (again_digital, again_analogue, frames) = run_between(
+            Phase2::retrain_digital(digital.far),
+            Phase2::retrain_analogue(analogue.digital),
+            0,
+        );
+        let (Some(again_digital), Some(again_analogue)) =
+            (again_digital.pcm_outcome(), again_analogue.pcm_outcome())
+        else {
+            panic!(
+                "a V.90 retrain did not finish phase 2 in {} ms: digital {:?}, analogue {:?}",
+                frames * 20,
+                again_digital.step,
+                again_analogue.step
+            );
+        };
+        assert_eq!(again_digital.upstream, digital.upstream);
+        assert_eq!(again_analogue.upstream, analogue.upstream);
+        assert_eq!((again_digital.uinfo, again_analogue.uinfo), (75, 75));
+        assert_eq!(again_analogue.digital, analogue.digital);
     }
 
     #[test]
