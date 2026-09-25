@@ -1,6 +1,6 @@
 # softmodem
 
-A V.21, V.22, V.22bis and V.34 modem with V.42 and V.42bis that places real calls
+A V.21, V.22, V.22bis, V.34 and V.90 modem with V.42 and V.42bis that places real calls
 over SIP. The design is in `docs/`, starting at `docs/README.md`.
 
 - `softmodem-dsp`: modulators, demodulators and tones over linear 8 kHz
