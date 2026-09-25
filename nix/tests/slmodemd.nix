@@ -33,6 +33,8 @@ in
   nodes.machine =
     { pkgs, ... }:
     {
+      # Under TCG one CPU cannot run slmodemd's V.90 and the softmodem in real time.
+      virtualisation.cores = 4;
       environment.systemPackages = [
         pkgs.python3
         pkgs.sox
