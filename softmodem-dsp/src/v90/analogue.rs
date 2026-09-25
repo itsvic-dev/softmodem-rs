@@ -388,8 +388,9 @@ impl Analogue {
         self.tone_heard = 0;
     }
 
+    // § 9.3.2 and § 9.4.2: from phase 3 on, tone B starts a retrain.
     fn far_retrains(&mut self, input: &[i16]) -> bool {
-        if !self.connected() {
+        if self.upstream.is_none() {
             self.tone_heard = 0;
             return false;
         }
