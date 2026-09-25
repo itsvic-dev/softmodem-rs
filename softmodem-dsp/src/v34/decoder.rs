@@ -150,28 +150,37 @@ impl Decoder {
                 continue;
             }
             let parity = self.trellis.output(state) ^ inversion;
-            for first in 0..8u8 {
-                for second in 0..8u8 {
-                    if ((first ^ second) & 1 == 1) != parity {
-                        continue;
-                    }
-                    let next =
-                        usize::from(self.trellis.next(state, trellis::inputs(first, second)));
-                    let (a, b) = (best[0][usize::from(first)], best[1][usize::from(second)]);
-                    let candidate = metric + a.1 + b.1;
-                    if candidate < metrics[next] {
-                        metrics[next] = candidate;
-                        survivors[next] = Survivor {
-                            from: state,
-                            points: [a.0, b.0],
-                        };
-                    }
-                }
-            }
+            self.extend(state, metric, parity, &best, &mut metrics, &mut survivors);
         }
         let floor = metrics.iter().copied().fold(f64::INFINITY, f64::min);
         self.metrics = metrics.into_iter().map(|m| m - floor).collect();
         self.survivors.push_back(survivors);
+    }
+
+    // Each pair of labels that `parity` allows from `state`, kept where it is the best way in.
+    fn extend(
+        &self,
+        state: u8,
+        metric: f64,
+        parity: bool,
+        best: &[[(Point, f64); 8]; 2],
+        metrics: &mut [f64],
+        survivors: &mut [Survivor],
+    ) {
+        for first in 0..8u8 {
+            for second in (0..8u8).filter(|second| ((first ^ second) & 1 == 1) == parity) {
+                let next = usize::from(self.trellis.next(state, trellis::inputs(first, second)));
+                let (a, b) = (best[0][usize::from(first)], best[1][usize::from(second)]);
+                let candidate = metric + a.1 + b.1;
+                if candidate < metrics[next] {
+                    metrics[next] = candidate;
+                    survivors[next] = Survivor {
+                        from: state,
+                        points: [a.0, b.0],
+                    };
+                }
+            }
+        }
     }
 
     fn trace_back(&mut self) -> [Point; 2] {
