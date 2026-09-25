@@ -207,14 +207,12 @@ impl Sip {
         ));
         let config = RegistrarConfig::new(account.user.clone(), registrar)
             .with_override_contact(Contact::new(NameAddr::uri(ours)));
-        // ezk panics when the registrar never answers, so the task isolates it.
-        let registration = tokio::spawn(Registration::register(
+        let registration = Registration::register(
             endpoint.clone(),
             config,
             DigestAuthenticator::new(credentials.clone()),
-        ))
+        )
         .await
-        .map_err(|_| other("the registrar did not answer"))?
         .map_err(other)?;
         info!(user = account.user, registrar = account.registrar, protocol = param, %bound, "registered");
 
