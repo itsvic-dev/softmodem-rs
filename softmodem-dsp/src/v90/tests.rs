@@ -7,6 +7,7 @@
 use super::analogue::Analogue;
 use super::digital::Digital;
 use crate::pump::DataPump;
+use crate::v34::mp::{Asks, Trellis};
 
 const FRAME: usize = 160;
 
@@ -535,6 +536,33 @@ fn enables_no_upstream_rate_above_its_limit() {
         );
         assert_eq!(analogue.upstream_bit_rate(), expected, "up to {limit:?}");
         assert_eq!(carries_data(&mut analogue, &mut digital), (true, true));
+    }
+}
+
+// What an ISP's digital modem asked of this one's upstream, with coefficients of its size.
+const ALL_OF_MP: Asks = Asks {
+    trellis: Trellis::States16,
+    nonlinear: true,
+    expanded_shaping: true,
+    precoding: [(6000, -1500), (-2500, 800), (700, 300)],
+};
+
+#[test]
+fn carries_data_up_with_precoding_expanded_shaping_and_theta() {
+    for (limit, expected) in [(Some(28_800), 28_800), (None, 33_600)] {
+        let mut analogue = Analogue::up_to(limit);
+        let mut digital = Digital::new().asking(ALL_OF_MP);
+        let up = (0..2000).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            analogue.connected() && digital.connected()
+        });
+        assert!(up.is_some(), "no connection up to {limit:?}");
+        assert_eq!(analogue.upstream_bit_rate(), expected);
+        assert_eq!(
+            carries_data(&mut analogue, &mut digital),
+            (true, true),
+            "{expected} bit/s up with all of MP"
+        );
     }
 }
 

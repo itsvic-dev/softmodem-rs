@@ -8,6 +8,7 @@
 use std::collections::VecDeque;
 
 use super::bits::{self, Reader, Writer};
+use super::encoder::Settings;
 
 const SYNC_ONES: usize = 17;
 const WORD: usize = 16;
@@ -29,6 +30,42 @@ pub enum Trellis {
 /// h(1) to h(3) of § 9.6.2, real and imaginary, with 14 bits after the
 /// binary point.
 pub type Precoding = [(i16, i16); 3];
+
+/// What a receiver asks of the far transmitter in its MP, other than the rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Asks {
+    pub trellis: Trellis,
+    /// Θ = 0.3125, else 0.
+    pub nonlinear: bool,
+    /// Expanded shaping, else minimum.
+    pub expanded_shaping: bool,
+    /// All zero for none.
+    pub precoding: Precoding,
+}
+
+impl Asks {
+    /// `mp` with these choices.
+    #[must_use]
+    pub fn ask(self, mp: Mp) -> Mp {
+        Mp {
+            trellis: self.trellis,
+            nonlinear: self.nonlinear,
+            expanded_shaping: self.expanded_shaping,
+            precoding: (self.precoding != Precoding::default()).then_some(self.precoding),
+            ..mp
+        }
+    }
+
+    /// What the far transmitter's encoder does, and so what the decoder undoes.
+    #[must_use]
+    pub fn settings(self) -> Settings {
+        Settings {
+            trellis: self.trellis,
+            nonlinear: self.nonlinear,
+            precoding: self.precoding,
+        }
+    }
+}
 
 /// Tables 20 and 21. The choices marked "far" are what this end's receiver
 /// asks of the far transmitter.

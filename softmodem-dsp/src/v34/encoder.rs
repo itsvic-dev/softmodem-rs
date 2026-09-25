@@ -8,6 +8,7 @@
 use super::constellation::{self, Point};
 use super::framing::Framing;
 use super::mp::{Precoding, Trellis};
+use super::precoder::{self, Fixed, Precoder};
 use super::shell::ShellMapper;
 use super::trellis;
 use crate::passband::Complex;
@@ -16,28 +17,14 @@ use crate::passband::Complex;
 const INVERSIONS_7: u16 = 0b01_11_01_11_11_11_10;
 const INVERSIONS_8: u16 = 0b0111_0111_1111_1010;
 
-// x(n) and p(n) are multiples of 2⁻⁷, and h(p) has 14 bits after the point.
-const FRACTION: u32 = 7;
-const COEFFICIENT_FRACTION: u32 = 14;
-
-// § 9.7.
-const THETA: f64 = 0.3125;
-
-type Fixed = (i64, i64);
-
-/// What the far receiver asked this transmitter for in its MP.
+/// What the far receiver asked this transmitter for in its MP, and so what
+/// its decoder takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Settings {
     pub trellis: Trellis,
     /// Θ = 0.3125 rather than 0.
     pub nonlinear: bool,
     pub precoding: Precoding,
-}
-
-// § 9.6.2 rounds halves towards the smaller magnitude.
-fn round_div(value: i64, divisor: i64) -> i64 {
-    let magnitude = (value.abs() + divisor / 2 - 1) / divisor;
-    if value < 0 { -magnitude } else { magnitude }
 }
 
 /// Turns scrambled data bits into the points of data mode.
@@ -50,9 +37,7 @@ pub struct Encoder {
     frame: usize,
     quadrant: u8,
     state: u8,
-    history: [Fixed; 3],
-    next_c: Point,
-    next_p: Fixed,
+    precoder: Precoder,
 }
 
 impl Encoder {
@@ -63,15 +48,13 @@ impl Encoder {
         let shell = ShellMapper::new(framing.rings);
         Self {
             energy: average_energy(&framing, &shell),
+            precoder: Precoder::new(settings.precoding, framing.precoder_modulo()),
             framing,
             shell,
             settings,
             frame: 0,
             quadrant: 0,
             state: 0,
-            history: [(0, 0); 3],
-            next_c: (0, 0),
-            next_p: (0, 0),
         }
     }
 
@@ -145,41 +128,21 @@ impl Encoder {
         let label = |half: usize| group.q[half] + (usize::from(rings[half]) << q);
         let u_first = constellation::rotate(constellation::point(label(0)), self.quadrant);
 
-        let (c_first, p_first) = (self.next_c, self.next_p);
+        let c_first = self.precoder.c();
         let y_first = add(u_first, c_first);
-        let x_first = subtract(y_first, p_first);
-        self.precode(x_first);
+        let x_first = self.precoder.push(y_first);
 
-        let (c_second, p_second) = (self.next_c, self.next_p);
+        let c_second = self.precoder.c();
         let c0 = parity(c_first) != parity(c_second);
         let u0 = self.settings.trellis.output(self.state) ^ c0 ^ self.inversion(m);
         let turns = self.quadrant + 2 * u8::from(group.i1) + u8::from(u0);
         let u_second = constellation::rotate(constellation::point(label(1)), turns);
         let y_second = add(u_second, c_second);
-        let x_second = subtract(y_second, p_second);
-        self.precode(x_second);
+        let x_second = self.precoder.push(y_second);
 
         let inputs = trellis::inputs(trellis::subset(y_first), trellis::subset(y_second));
         self.state = self.settings.trellis.next(self.state, inputs);
         [x_first, x_second]
-    }
-
-    // Takes x(n), and works out c(n + 1) and p(n + 1) from it.
-    fn precode(&mut self, x: Fixed) {
-        self.history = [x, self.history[0], self.history[1]];
-        let mut sum = (0i64, 0i64);
-        for ((xr, xi), (hr, hi)) in self.history.iter().zip(self.settings.precoding) {
-            let (hr, hi) = (i64::from(hr), i64::from(hi));
-            sum.0 += xr * hr - xi * hi;
-            sum.1 += xr * hi + xi * hr;
-        }
-        let divisor = 1 << COEFFICIENT_FRACTION;
-        let p = (round_div(sum.0, divisor), round_div(sum.1, divisor));
-        let modulo = self.framing.precoder_modulo();
-        let step = modulo << FRACTION;
-        let c = |value: i64| i32::try_from(round_div(value, step) * modulo).unwrap_or(0);
-        self.next_p = p;
-        self.next_c = (c(p.0), c(p.1));
     }
 
     // V0(m) of table 12, with B1 as the last data frame of a superframe.
@@ -197,16 +160,13 @@ impl Encoder {
         pattern >> (length - 1 - index) & 1 == 1
     }
 
-    #[expect(clippy::cast_precision_loss, reason = "x(n) stays far below 2⁵²")]
-    fn nonlinear(&self, (re, im): Fixed) -> Complex {
-        let scale = f64::from(1 << FRACTION);
-        let x = (re as f64 / scale, im as f64 / scale);
-        if !self.settings.nonlinear {
-            return x;
+    fn nonlinear(&self, x: Fixed) -> Complex {
+        let x = precoder::to_complex(x);
+        if self.settings.nonlinear {
+            precoder::warp(x, self.energy)
+        } else {
+            x
         }
-        let zeta = THETA * (x.0 * x.0 + x.1 * x.1) / self.energy;
-        let phi = 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
-        (x.0 * phi, x.1 * phi)
     }
 }
 
@@ -222,13 +182,6 @@ fn add(u: Point, c: Point) -> Point {
     (u.0 + c.0, u.1 + c.1)
 }
 
-fn subtract(y: Point, p: Fixed) -> Fixed {
-    (
-        (i64::from(y.0) << FRACTION) - p.0,
-        (i64::from(y.1) << FRACTION) - p.1,
-    )
-}
-
 // For the modulo encoder: whether c/2 has an odd sum of components.
 fn parity(c: Point) -> bool {
     (c.0 / 2 + c.1 / 2).rem_euclid(2) == 1
@@ -236,7 +189,7 @@ fn parity(c: Point) -> bool {
 
 // Rings as the shell mapper spreads evenly spread bits, in the high and the low mapping frames.
 #[expect(clippy::cast_precision_loss, reason = "small counts")]
-fn average_energy(framing: &Framing, shell: &ShellMapper) -> f64 {
+pub(crate) fn average_energy(framing: &Framing, shell: &ShellMapper) -> f64 {
     let per_ring = 1 << framing.q;
     let ring_energy: Vec<f64> = (0..usize::from(framing.rings))
         .map(|ring| {
@@ -384,16 +337,6 @@ mod tests {
             }
         }
         assert!(differs, "the precoder would do nothing");
-    }
-
-    #[test]
-    fn rounds_halves_towards_the_smaller_magnitude() {
-        assert_eq!(round_div(3, 2), 1);
-        assert_eq!(round_div(-3, 2), -1);
-        assert_eq!(round_div(5, 2), 2);
-        assert_eq!(round_div(7, 4), 2);
-        assert_eq!(round_div(-6, 4), -1);
-        assert_eq!(round_div(0, 4), 0);
     }
 
     #[test]

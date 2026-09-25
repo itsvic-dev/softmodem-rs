@@ -16,7 +16,7 @@ use crate::v34::decoder::Decoder;
 use crate::v34::detect::{Heard, SDetector};
 use crate::v34::encoder::{Encoder, Settings};
 use crate::v34::framing::Framing;
-use crate::v34::mp::{E_ONES, Trellis};
+use crate::v34::mp::{Asks, E_ONES};
 use crate::v34::phase2::Direction;
 use crate::v34::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use crate::v34::training::{self, PP_SYMBOLS, Points};
@@ -29,9 +29,6 @@ const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const SIXTEEN_ENERGY: f64 = 10.0;
 // S and S̄ come before CP on 4 points, which lie between the 16, so the equaliser skips them.
 const SIXTEEN_TRUST: f64 = 0.05;
-
-/// What the digital modem asks of the analogue modem's transmitter, in MP.
-pub const TRELLIS: Trellis = Trellis::States16;
 
 fn nearest_odd(value: f64) -> f64 {
     2.0 * ((value - 1.0) / 2.0).round() + 1.0
@@ -92,7 +89,7 @@ pub struct Upstream {
     ones: usize,
     decoder: Option<Decoder>,
     scale: f64,
-    frame: Vec<Complex>,
+    symbols: usize,
     data_descrambler: Descrambler,
     skip_bits: usize,
     events: Events,
@@ -127,7 +124,7 @@ impl Upstream {
             ones: 0,
             decoder: None,
             scale: 1.0,
-            frame: Vec::new(),
+            symbols: 0,
             data_descrambler: Descrambler::with(Polynomial::V34_ANSWER),
             skip_bits: 0,
             events: Events::default(),
@@ -217,7 +214,7 @@ impl Upstream {
         self.cp = Deframer::default();
         self.ones = 0;
         self.decoder = None;
-        self.frame.clear();
+        self.symbols = 0;
         self.points = self.renegotiation_points;
     }
 
@@ -332,36 +329,32 @@ impl Upstream {
         self.decoder.is_none()
     }
 
-    /// Starts decoding data mode at `bit_rate`, from after B1.
-    pub fn start_data(&mut self, bit_rate: u32) {
-        let Some(framing) = Framing::new(self.symbol_rate, bit_rate, false) else {
+    /// Starts decoding data mode at `bit_rate`, from after B1, from a
+    /// transmitter asked for `asks`.
+    pub fn start_data(&mut self, bit_rate: u32, asks: Asks) {
+        let Some(framing) = Framing::new(self.symbol_rate, bit_rate, asks.expanded_shaping) else {
             return;
         };
         self.scale = Encoder::new(framing, Settings::default()).energy().sqrt();
-        self.decoder = Some(Decoder::new(framing, TRELLIS));
+        self.decoder = Some(Decoder::new(framing, asks.settings()));
         self.data_descrambler = Descrambler::with(Polynomial::V34_ANSWER);
         self.skip_bits = framing.p * framing.b - (framing.p - framing.r);
     }
 
     fn data(&mut self, z: Complex, data: &mut Vec<bool>) {
-        if self.frame.is_empty() && self.skip_bits > 0 {
+        if self.symbols.is_multiple_of(8) && self.skip_bits > 0 {
             self.front_end.track(Tracking::Data);
         }
+        self.symbols += 1;
         let scale = self.scale;
         let grid = (z.0 * scale, z.1 * scale);
-        self.equalizer
-            .adapt((nearest_odd(grid.0) / scale, nearest_odd(grid.1) / scale));
-        self.frame.push(grid);
-        if self.frame.len() < 8 {
-            return;
-        }
-        let points: [Complex; 8] = std::mem::take(&mut self.frame)
-            .try_into()
-            .unwrap_or_default();
-        let Some(decoder) = &mut self.decoder else {
-            return;
+        let mut bits = Vec::new();
+        let target = match &mut self.decoder {
+            Some(decoder) => decoder.push(grid, &mut bits),
+            None => (nearest_odd(grid.0), nearest_odd(grid.1)),
         };
-        for bit in decoder.decode(points) {
+        self.equalizer.adapt((target.0 / scale, target.1 / scale));
+        for bit in bits {
             let bit = self.data_descrambler.descramble(bit);
             if self.skip_bits > 0 {
                 self.skip_bits -= 1;

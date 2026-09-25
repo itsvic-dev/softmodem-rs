@@ -11,12 +11,12 @@ use super::dil::Dil;
 use super::encoder::{Encoder, FRAME, Mapping};
 use super::jd::{ALL_RATES, Jd};
 use super::training::{self, JD_PRIME_BITS, R_BAR_SYMBOLS, RI_SYMBOLS, Signs, TRN1D_SYMBOLS};
-use super::upstream::{self, Events, Upstream};
+use super::upstream::{Events, Upstream};
 use super::{Codeword, RETRAIN_TONE};
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Polynomial, Scrambler};
 use crate::uart::Decoder as Characters;
-use crate::v34::mp::Mp;
+use crate::v34::mp::{Asks, Mp};
 use crate::v34::phase2::{PcmOutcome, Phase2};
 use crate::v34::{rates, tones};
 
@@ -356,6 +356,7 @@ pub struct Digital {
     tone_heard: usize,
     /// The bit rate before a retrain, until the retrain sets a new one.
     retrained_from: u32,
+    asks: Asks,
 }
 
 impl Default for Digital {
@@ -382,7 +383,15 @@ impl Digital {
             retrain_tone: tones::Detector::new(Role::Answer),
             tone_heard: 0,
             retrained_from: 0,
+            asks: Asks::default(),
         }
+    }
+
+    /// Asking the analogue modem's transmitter for `asks` in MP.
+    #[must_use]
+    pub fn asking(mut self, asks: Asks) -> Self {
+        self.asks = asks;
+        self
     }
 
     /// As a digital modem that has CP and E sent on 16 points, as many do.
@@ -443,17 +452,17 @@ impl Digital {
             .events()
             .trained
             .unwrap_or(outcome.upstream.max_rate);
-        Mp {
+        self.asks.ask(Mp {
             max_answer_to_call: trained.min(14),
             rates: rates::mask(upstream.symbol_rate(), 14) & !1,
-            trellis: upstream::TRELLIS,
             ..Mp::default()
-        }
+        })
     }
 
     // § 9.4.2.4: the highest rate both enable, up to the maximum in MP.
     fn agree_upstream(&mut self) {
         let mp = self.mp();
+        let asks = self.asks;
         let Some(upstream) = &mut self.upstream else {
             return;
         };
@@ -469,7 +478,7 @@ impl Digital {
             .find(|&n| both >> (n - 1) & 1 == 1)
             .unwrap_or(0);
         if rate > 0 {
-            upstream.start_data(u32::from(rate) * 2400);
+            upstream.start_data(u32::from(rate) * 2400, asks);
         }
     }
 }
