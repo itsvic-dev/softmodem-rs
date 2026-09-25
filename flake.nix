@@ -108,6 +108,17 @@
               ours = "+MS=V90,0";
               theirs = "+MS=90";
             };
+            slmodemd-v90-renegotiate = peer {
+              label = "V90-renegotiate";
+              ours = "+MS=V90,0";
+              theirs = "+MS=90";
+              noise = {
+                after = 40;
+                rms = 10;
+                later = 30;
+                way = "to-slmodemd";
+              };
+            };
             slmodemd-v34-retrain = peer {
               label = "V34-retrain";
               ours = "+MS=V34,0";
