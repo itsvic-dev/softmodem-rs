@@ -193,7 +193,7 @@ enum Step {
     RepeatInfo0,
     /// Answer: tone A, waiting for the call's INFO0 and tone B.
     ToneA,
-    /// Waiting for the far reversal that answers ours.
+    /// Waiting for the far reversal that answers ours, which is at `ours` in samples heard.
     AwaitReply {
         ours: usize,
     },
@@ -437,6 +437,11 @@ impl Phase2 {
         self.tx_until = until;
     }
 
+    // The sample that goes out as sample `heard` comes in, as the two counts stand now.
+    fn sent_at(&self, heard: usize) -> usize {
+        (heard + self.sent).saturating_sub(self.heard)
+    }
+
     // Reverses the tone at sample `at`, and stops it `TAIL` later.
     fn reverse_at(&mut self, at: usize) {
         self.tone.reverse_after(at.saturating_sub(self.sent));
@@ -666,9 +671,10 @@ impl Phase2 {
     }
 
     fn await_reply(&mut self, ours: usize, reversal: Option<usize>) {
-        if let Some(at) = reversal.filter(|&at| at > ours) {
+        // After the far reversal that ours answers: a stall can bring the reply in before ours.
+        if let Some(at) = reversal.filter(|&at| at + ANSWER_DELAY > ours) {
             self.replied(ours, at);
-        } else if self.role == Role::Answer && self.sent >= ours + REPLY_MOST {
+        } else if self.role == Role::Answer && self.heard >= ours + REPLY_MOST {
             self.step = Step::ToneA;
         }
     }
@@ -695,15 +701,15 @@ impl Phase2 {
                     && self.far_tone_alone()
                     && self.sent >= self.tone_from + TONE_FIRST =>
             {
-                let at = self.sent;
                 self.tone.reverse_after(0);
-                self.step = Step::AwaitReply { ours: at };
+                self.step = Step::AwaitReply { ours: self.heard };
             }
             Step::ToneB if self.far.is_some() => {
                 if let Some(at) = reversal {
                     let ours = at + ANSWER_DELAY;
-                    self.reverse_at(ours);
-                    self.tx_until = Some(ours.max(self.sent) + HELD_TAIL);
+                    let send = self.sent_at(ours);
+                    self.reverse_at(send);
+                    self.tx_until = Some(send.max(self.sent) + HELD_TAIL);
                     self.step = Step::AwaitReply { ours };
                 }
             }
@@ -733,7 +739,7 @@ impl Phase2 {
             Step::AwaitInfo1a => self.await_info1a(),
             Step::AfterProbe if self.role == Role::Originate => {
                 if let Some(at) = reversal {
-                    self.reverse_at(at + ANSWER_DELAY);
+                    self.reverse_at(self.sent_at(at + ANSWER_DELAY));
                     self.step = Step::ProbeFar;
                 }
             }
@@ -753,7 +759,7 @@ impl Phase2 {
         self.round_trip = at.saturating_sub(ours + ANSWER_DELAY);
         match self.role {
             Role::Answer => {
-                self.reverse_at(at + ANSWER_DELAY);
+                self.reverse_at(self.sent_at(at + ANSWER_DELAY));
                 self.step = Step::Probe;
                 self.tone_b_gone = false;
             }
@@ -984,6 +990,33 @@ mod tests {
         (call, answer, frames)
     }
 
+    // As `run_between`, with both ends first hearing the line `late` frames after they start sending.
+    fn run_hearing_late(
+        mut call: Phase2,
+        mut answer: Phase2,
+        delay: usize,
+        late: usize,
+    ) -> (Phase2, Phase2, usize) {
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
+        let mut down_line = up_line.clone();
+        let mut frames = 0;
+        while !(call.done() && answer.done()) && frames < 400 {
+            call.transmit(&mut up);
+            answer.transmit(&mut down);
+            up_line.extend(up);
+            down_line.extend(down);
+            let heard_up: Vec<i16> = up_line.drain(..FRAME).collect();
+            let heard_down: Vec<i16> = down_line.drain(..FRAME).collect();
+            if frames >= late {
+                answer.receive(&heard_up);
+                call.receive(&heard_down);
+            }
+            frames += 1;
+        }
+        (call, answer, frames)
+    }
+
     // As `run_between`, with the first INFO0 of the call, or of the answer, lost on the line.
     fn run_losing_info0(
         call: Phase2,
@@ -1186,6 +1219,33 @@ mod tests {
                     "the round trip delay would be {measured} samples, not {}",
                     2 * delay
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn measures_the_round_trip_on_a_line_heard_late() {
+        for delay in [0, 400] {
+            let pairs = [
+                (Phase2::new(Role::Originate), Phase2::new(Role::Answer)),
+                (Phase2::digital(), Phase2::analogue()),
+            ];
+            for (call, answer) in pairs {
+                let (call, answer, frames) = run_hearing_late(call, answer, delay, 3);
+                assert!(
+                    call.done() && answer.done(),
+                    "phase 2 did not finish in {} ms: call {:?}, answer {:?}",
+                    frames * 20,
+                    call.step,
+                    answer.step
+                );
+                for measured in [call.round_trip, answer.round_trip] {
+                    assert!(
+                        measured.abs_diff(2 * delay) <= 8,
+                        "the round trip delay would be {measured} samples, not {}",
+                        2 * delay
+                    );
+                }
             }
         }
     }
