@@ -194,6 +194,7 @@ pub struct Reader {
     octets: Vec<u8>,
     // The last 30 bits, newest lowest, as CJ may follow a menu or the preamble of the next.
     recent: u32,
+    syncs: u32,
 }
 
 const CJ_BITS: usize = 30;
@@ -215,7 +216,15 @@ impl Reader {
             state: State::Hunt { ones: 0 },
             octets: Vec::new(),
             recent: u32::MAX,
+            syncs: 0,
         }
+    }
+
+    /// How many times the synchronisation of CM and JM has come, whether a
+    /// menu that could be read followed it or not.
+    #[must_use]
+    pub fn syncs(&self) -> u32 {
+        self.syncs
     }
 
     pub fn push(&mut self, bit: bool) -> Option<Heard> {
@@ -272,6 +281,7 @@ impl Reader {
         }
         if at + 1 == SYNC.len() {
             self.octets.clear();
+            self.syncs += 1;
             State::Octets
         } else {
             State::Sync { at: at + 1 }
@@ -410,6 +420,18 @@ mod tests {
         assert!(read([true; 200]).is_empty());
         let noise = (0u32..2000).map(|n| n.wrapping_mul(2_654_435_761) >> 31 == 1);
         assert!(!read(noise).iter().any(|h| matches!(h, Heard::Cj)));
+    }
+
+    #[test]
+    fn counts_the_sync_of_a_menu_it_cannot_read() {
+        let mut bits = Menu::data(BOTH).sequence();
+        let last = bits.len() - 3;
+        bits[last] = !bits[last];
+        bits.extend(Menu::data(BOTH).sequence());
+        let mut reader = Reader::new();
+        let heard: Vec<Heard> = bits.iter().filter_map(|&b| reader.push(b)).collect();
+        assert_eq!(reader.syncs(), 2);
+        assert!(heard.len() < 2);
     }
 
     #[test]

@@ -145,7 +145,7 @@ struct MenuLink {
     demodulator: fsk::Demodulator,
     reader: v8::Reader,
     repeats: Repeats,
-    bits_without_menu: usize,
+    bits_without_sync: usize,
 }
 
 impl MenuLink {
@@ -159,13 +159,13 @@ impl MenuLink {
             demodulator: fsk::Demodulator::new(receive),
             reader: v8::Reader::new(),
             repeats: Repeats::default(),
-            bits_without_menu: 0,
+            bits_without_sync: 0,
         }
     }
 
-    // A V.21 caller's mark or data rather than CM, which repeats every 60 bits.
+    // A V.21 caller's mark or data rather than CM, whose sync comes again within 100 bits.
     fn plain_v21(&self) -> bool {
-        self.bits_without_menu >= SIGC_BITS
+        self.bits_without_sync >= SIGC_BITS
     }
 
     fn take_v21(&mut self, role: Role) -> Box<dyn DataPump> {
@@ -184,16 +184,20 @@ impl MenuLink {
         self.modulator.render(out);
     }
 
+    // A menu that a lost frame spoils still starts with its sync, which a V.21 caller never sends.
     fn hear(&mut self, input: &[i16]) -> Vec<Heard> {
         let mut bits = Vec::new();
         self.demodulator.process(input, &mut bits);
-        self.bits_without_menu += bits.len();
-        let heard: Vec<Heard> = bits
-            .into_iter()
-            .filter_map(|b| self.reader.push(b))
-            .collect();
-        if heard.iter().any(|h| matches!(h, Heard::Menu(_))) {
-            self.bits_without_menu = 0;
+        let mut heard = Vec::new();
+        for bit in bits {
+            let syncs = self.reader.syncs();
+            let found = self.reader.push(bit);
+            self.bits_without_sync = if self.reader.syncs() == syncs {
+                self.bits_without_sync + 1
+            } else {
+                0
+            };
+            heard.extend(found);
         }
         heard
     }
