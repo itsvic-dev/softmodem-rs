@@ -555,32 +555,40 @@ impl Sink {
         self.equalizer.adapt(Self::corner(Self::quarter(z)));
         for bit in self.sequence_bits(z) {
             self.window = self.window << 1 | u32::from(bit);
-            // J repeats, and J′ follows one: a single 16-bit match can come from errors in a long TRN.
-            let (earlier, last) = (self.window >> J_BITS, self.window & 0xFFFF);
-            if self.phase == 3 {
-                for (j, points) in [(J_4_CODE, Points::Four), (J_16_CODE, Points::Sixteen)] {
-                    if earlier == j && last == j {
-                        far.j = Some(points);
-                    }
+            self.j(index, far);
+            self.mp_bit(bit, index, far);
+        }
+    }
+
+    // J repeats, and J′ follows one: a single 16-bit match can come from errors in a long TRN.
+    fn j(&mut self, index: usize, far: &mut Far) {
+        let (earlier, last) = (self.window >> J_BITS, self.window & 0xFFFF);
+        if self.phase == 3 {
+            for (j, points) in [(J_4_CODE, Points::Four), (J_16_CODE, Points::Sixteen)] {
+                if earlier == j && last == j {
+                    far.j = Some(points);
                 }
-                if far.j.is_some() {
-                    self.phase = 4;
-                }
-            } else if self.far_role == Role::Originate
-                && !far.trn
-                && last == J_PRIME_CODE
-                && (earlier == J_4_CODE || earlier == J_16_CODE)
-            {
-                self.listen = Listen::Trn { from: index + 1 };
             }
-            if let Some(mp) = self.deframer.push(bit) {
-                far.ack |= mp.acknowledge;
-                far.mp = Some(mp);
+            if far.j.is_some() {
+                self.phase = 4;
             }
-            if far.mp.is_some() && self.deframer.ones() == mp::E_ONES {
-                far.ack = true;
-                self.listen = Listen::Data { from: index + 1 };
-            }
+        } else if self.far_role == Role::Originate
+            && !far.trn
+            && last == J_PRIME_CODE
+            && (earlier == J_4_CODE || earlier == J_16_CODE)
+        {
+            self.listen = Listen::Trn { from: index + 1 };
+        }
+    }
+
+    fn mp_bit(&mut self, bit: bool, index: usize, far: &mut Far) {
+        if let Some(mp) = self.deframer.push(bit) {
+            far.ack |= mp.acknowledge;
+            far.mp = Some(mp);
+        }
+        if far.mp.is_some() && self.deframer.ones() == mp::E_ONES {
+            far.ack = true;
+            self.listen = Listen::Data { from: index + 1 };
         }
     }
 
