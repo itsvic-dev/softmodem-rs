@@ -45,6 +45,8 @@ const CONFIRM: usize = 160;
 const LONE_BEFORE: usize = 160;
 // § 11.2.2.2.2: the answer reverses tone A again after 2 s with no reply.
 const REPLY_MOST: usize = 16_000;
+// § 11.2.2.2.4: the answer waits 2 s and two round trips for the far INFO1.
+const INFO1_MOST: usize = 16_000;
 // The far tone counts as alone after this long with no 1s, which no INFO0 has.
 const QUIET: usize = 320;
 const LONE_ONES: usize = 2;
@@ -264,6 +266,11 @@ pub struct Phase2 {
     // Far INFO0 sequences that lack our own, heard since this end last started its tone.
     far_repeats: usize,
     far_acknowledged: bool,
+    // Where the answer began to wait for the far INFO1.
+    info1_from: usize,
+    // How long the far tone has been missing, and whether it went for long enough to start a retrain.
+    far_absent: usize,
+    far_went_quiet: bool,
     round_trip: usize,
     probing: Option<Probing>,
     outcome: Option<Outcome>,
@@ -331,6 +338,9 @@ impl Phase2 {
             far_at: 0,
             far_repeats: 0,
             far_acknowledged: false,
+            info1_from: 0,
+            far_absent: 0,
+            far_went_quiet: false,
             round_trip: 0,
             probing: None,
             outcome: None,
@@ -360,6 +370,22 @@ impl Phase2 {
         let mut phase2 = Self::analogue().retraining(far.v34);
         phase2.far_info0d = Some(far);
         phase2
+    }
+
+    // Phase 2 again from the tones, which the far end answers if it starts it and this end if the far end does.
+    fn restart(&mut self) {
+        let Some(far) = self.far else {
+            return;
+        };
+        let again = match self.mode {
+            Mode::Analogue => match self.far_info0d {
+                Some(digital) => Self::retrain_analogue(digital),
+                None => return,
+            },
+            Mode::Digital => Self::retrain_digital(far),
+            Mode::V34 => Self::retrain(self.role, far),
+        };
+        *self = again;
     }
 
     fn retraining(mut self, far: Info0) -> Self {
@@ -492,6 +518,7 @@ impl Phase2 {
                     Role::Answer => Step::Done,
                     Role::Originate => Step::AwaitInfo1a,
                 };
+                self.far_went_quiet = false;
             }
             _ => self.start(Tx::Silence, None),
         }
@@ -559,6 +586,11 @@ impl Phase2 {
             self.info1_bit(bit);
         }
         self.reversals.extend(self.detector.process(input));
+        self.far_absent = if self.detector.present() {
+            0
+        } else {
+            self.far_absent + input.len()
+        };
         if let Step::Measure { from } = self.step {
             let start = from.saturating_sub(self.heard).min(input.len());
             let end = (from + L2_MEASURED)
@@ -675,6 +707,21 @@ impl Phase2 {
                 self.probing = self.analyser.result();
                 self.start(Tx::Tone, None);
                 self.step = Step::AfterProbe;
+                self.info1_from = self.heard;
+            }
+            // § 11.2.2.2.4 and § 9.2.2.2.4/V.90: no INFO1 in time, so a retrain.
+            Step::AfterProbe
+                if self.role == Role::Answer
+                    && self.heard >= self.info1_from + INFO1_MOST + 2 * self.round_trip =>
+            {
+                self.restart();
+            }
+            // § 11.2.2.1.6 and § 9.2.1.2.6/V.90: the far end retrains, as silence and then its tone show.
+            Step::AwaitInfo1a => {
+                self.far_went_quiet |= self.far_absent >= RETRAIN_SILENCE / 2;
+                if self.far_went_quiet && self.far_tone_alone() {
+                    self.restart();
+                }
             }
             Step::AfterProbe if self.role == Role::Originate => {
                 if let Some(at) = reversal {
@@ -931,20 +978,33 @@ mod tests {
 
     // As `run_between`, with the first INFO0 of the call, or of the answer, lost on the line.
     fn run_losing_info0(
+        call: Phase2,
+        answer: Phase2,
+        delay: usize,
+        from_call: bool,
+    ) -> (Phase2, Phase2, usize) {
+        run_losing(call, answer, delay, from_call, Step::SendInfo0)
+    }
+
+    // As `run_between`, with what the call, or the answer, sends in `step` lost on the line the first time.
+    fn run_losing(
         mut call: Phase2,
         mut answer: Phase2,
         delay: usize,
         from_call: bool,
+        step: Step,
     ) -> (Phase2, Phase2, usize) {
         let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
         let mut up_line = std::collections::VecDeque::from(vec![0; delay]);
         let mut down_line = up_line.clone();
         let mut frames = 0;
-        while !(call.done() && answer.done()) && frames < 400 {
-            let (lose_up, lose_down) = (
-                from_call && call.step == Step::SendInfo0,
-                !from_call && answer.step == Step::SendInfo0,
-            );
+        let (mut losing, mut lost) = (false, false);
+        while !(call.done() && answer.done()) && frames < 1000 {
+            let side = if from_call { &call } else { &answer };
+            let now = side.step == step && !lost;
+            lost |= losing && !now;
+            losing = now;
+            let (lose_up, lose_down) = (from_call && losing, !from_call && losing);
             call.transmit(&mut up);
             answer.transmit(&mut down);
             if lose_up {
@@ -990,6 +1050,27 @@ mod tests {
                         2 * delay
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn retrains_when_the_calls_info1_is_lost_on_the_line() {
+        for delay in [0, 1200] {
+            let pairs = [
+                (Phase2::new(Role::Originate), Phase2::new(Role::Answer)),
+                (Phase2::digital(), Phase2::analogue()),
+            ];
+            for (call, answer) in pairs {
+                let (call, answer, frames) = run_losing(call, answer, delay, true, Step::SendInfo1);
+                assert!(
+                    call.done() && answer.done(),
+                    "losing the call's INFO1 over {delay} samples, phase 2 did not finish in {} ms: \
+                     call {:?}, answer {:?}",
+                    frames * 20,
+                    call.step,
+                    answer.step
+                );
             }
         }
     }
