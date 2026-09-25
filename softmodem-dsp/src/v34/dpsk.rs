@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! INFO sequences on the line: binary DPSK at 600 bit/s (§ 10.1.2.3.1).
 
 use std::collections::VecDeque;

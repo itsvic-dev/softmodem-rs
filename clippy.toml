@@ -1,1 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 doc-valid-idents = ["..", "INFO0a", "INFO0d", "INFO1a", "INFO1c", "INFO1d", "TRN1d", "TRN2d", "B1d", "UINFO", "CPt", "CPs", "Sd", "Ri", "Rd", "Rt", "Ed", "Jd", "Ja"]

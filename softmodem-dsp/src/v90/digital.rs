@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The digital modem: V.34 up from the analogue modem, PCM codewords down.
 
 use std::collections::VecDeque;

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LAPM procedures of V.42 § 8 over whole frames: negotiation with XID,
 //! establishment, numbered data transfer with REJ and timer recovery, and
 //! release. Selective reject, TEST and the 32-bit FCS are never agreed.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The MP sequences of § 10.1.3.9, which carry the data mode parameters in
 //! phase 4 and in a rate renegotiation.
 

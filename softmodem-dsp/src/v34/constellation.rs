@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 1664-point superconstellation of § 9.1 and figure 5.
 
 use std::collections::HashMap;

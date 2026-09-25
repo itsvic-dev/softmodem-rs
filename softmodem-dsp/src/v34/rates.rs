@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Choosing a carrier and a data rate from what line probing and training
 //! measured, for this modem's receiver: the 16-state trellis and minimum
 //! shaping.

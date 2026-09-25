@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The universal codes of table 1: one number for each positive PCM
 //! codeword, in the order of its magnitude, for A-law and µ-law alike.
 

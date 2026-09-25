@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The line signal of phases 3 and 4 and of data mode: points shaped at the
 //! symbol rate onto the carrier of table 2, through the pre-emphasis of
 //! § 5.4.

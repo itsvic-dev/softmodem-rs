@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Between 8000 and 9600 samples/s, through one windowed-sinc prototype at
 //! 48 000 samples/s, the rate both reach.
 

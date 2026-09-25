@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Our V.42 against spandsp's, bit for bit with no modulation under them.
 
 use std::time::{Duration, Instant};

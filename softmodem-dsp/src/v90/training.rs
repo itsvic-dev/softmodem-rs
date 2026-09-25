@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The PCM signals of phases 3 and 4 (§ 8.4 and § 8.6): Sd and S̄d, TRN1d,
 //! Jd and Jd′ as signs of UINFO, and R and R̄, with the receiver's
 //! inverse of the sign modulation.

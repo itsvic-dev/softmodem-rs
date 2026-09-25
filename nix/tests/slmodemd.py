@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Dials the softmodem from slmodemd's port and passes text both ways,
 reading both serial ports."""
 

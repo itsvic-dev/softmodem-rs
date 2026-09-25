@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! V.34 data mode on the line: encoder, modulator, front end, equaliser and
 //! decoder, after the S, S̄, PP and TRN of phase 3.
 

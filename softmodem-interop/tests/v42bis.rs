@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Our V.42bis codec against spandsp's, one direction at a time.
 
 use softmodem_interop::{CompressionMode, V42bis};

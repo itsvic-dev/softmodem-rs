@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The data mode encoder of § 9: scrambled bits to the points x′(n) that
 //! the modulator sends, eight to a mapping frame.
 

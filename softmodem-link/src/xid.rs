@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The information field of an XID frame, which negotiates LAPM's parameters
 //! and optional procedures (V.42 § 12.2).
 

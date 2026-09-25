@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The line probing signals L1 and L2 of § 10.1.2.4, and what a receiver
 //! measures from them.
 

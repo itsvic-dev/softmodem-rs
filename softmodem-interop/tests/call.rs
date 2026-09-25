@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Whole calls between our modem and a modem built from spandsp's parts, the
 //! nearest thing to a real modem that runs in a test.
 

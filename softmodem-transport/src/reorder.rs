@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The receive path: puts RTP packets back in order and fills gaps with
 //! silence. There is no playout clock, so samples leave as soon as their
 //! order is known.

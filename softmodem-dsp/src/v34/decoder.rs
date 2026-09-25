@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The data mode decoder: a Viterbi decoder over the trellis of § 9.6.3,
 //! then the inverse of the mapper, the differential encoder, the shell
 //! mapper and the parser. It takes points with no precoding and Θ = 0, as

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The trellis code of § 9.6.3: the subset labels of figure 9, the bits of
 //! table 13, and the convolutional encoders of figures 10 to 12.
 

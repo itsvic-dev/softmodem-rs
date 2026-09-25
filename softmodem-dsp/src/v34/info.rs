@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The INFO sequences of § 10.1.2.3, which carry capabilities and the
 //! results of line probing in phase 2.
 

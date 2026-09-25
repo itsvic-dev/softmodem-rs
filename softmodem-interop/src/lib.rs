@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Safe wrappers around the few spandsp parts the interop tests use: V.21
 //! and V.22 with spandsp's own async framing, modem answer tones, and V.42.
 

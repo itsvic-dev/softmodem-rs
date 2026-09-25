@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # slmodemd from Aon's D-Modem, a V.22bis and V.34 peer for checks only.
 {
   lib,

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! V.22bis: 2400 bit/s QAM, full duplex on the V.22 channels, with the
 //! handshake of its § 6.3.1 that falls back to V.22, the retrain of § 6.4 and
 //! the rate change of § 6.6.

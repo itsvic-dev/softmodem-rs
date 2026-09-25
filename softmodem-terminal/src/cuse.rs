@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A serial port served as a character device through CUSE, for programs
 //! that read the modem lines with `TIOCMGET`, such as QEMU's and 86Box's host
 //! serial backends. Opening one needs Linux and access to `/dev/cuse`.

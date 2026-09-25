@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Symbols shaped by a square root raised cosine on one carrier, as the V.22
 //! family and V.34 send them, and the receiver front end that mixes them
 //! down, filters them, detects carrier and recovers symbol timing.

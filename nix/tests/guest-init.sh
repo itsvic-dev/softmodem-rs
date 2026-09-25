@@ -1,4 +1,9 @@
 #!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Runs as /init in a QEMU guest whose 16550 is the softmodem's CUSE port.
 mount -t proc proc /proc
 mount -t sysfs sys /sys

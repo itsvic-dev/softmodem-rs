@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Finds S and the start of S̄ in front-end symbols, before the equaliser
 //! has trained. S repeats every two symbols and S̄ is S turned by 180°,
 //! which a linear channel and any timing phase keep.

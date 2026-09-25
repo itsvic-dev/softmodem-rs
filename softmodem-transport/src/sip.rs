@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Calls through a SIP registrar over TCP, as one of its users. Audio is
 //! PCMA only, on the same RTP session as the wire, with no playout clock.
 

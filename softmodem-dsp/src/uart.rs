@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 8N1 asynchronous framing: a start bit, eight data bits LSB first, a stop
 //! bit. The idle line is mark, which is `true`.
 

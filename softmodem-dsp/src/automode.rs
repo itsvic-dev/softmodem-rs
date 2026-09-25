@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Automode: V.8 bis, then V.8 to agree on a modulation, and Annex A of
 //! V.32 bis with one step of this modem's own for a far end that does not
 //! speak V.8.

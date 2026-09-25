@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The encoder of the digital modem (§ 5.4), which turns each data frame
 //! of D bits into six PCM codewords, and its inverse for the analogue
 //! modem.

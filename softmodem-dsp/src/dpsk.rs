@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Differential 4-phase PSK at 600 baud, as V.22 uses it.
 
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};

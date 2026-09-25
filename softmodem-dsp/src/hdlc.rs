@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! HDLC framing as V.42 § 8.1 and V.8 bis § 7.2 use it: flags, zero-bit
 //! insertion, aborts and the 16-bit FCS.
 

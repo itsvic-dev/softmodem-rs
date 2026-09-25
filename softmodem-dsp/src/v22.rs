@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! V.22: 1200 bit/s DPSK, full duplex on two channels, with the constant
 //! carrier handshake of its § 6.3.1.
 

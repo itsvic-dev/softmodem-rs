@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Fields that go least significant bit first, and the CRC of § 10.1.2.3.2.
 
 /// x¹⁶ + x¹² + x⁵ + 1, shifted towards bit 0 as figure 14 draws it.

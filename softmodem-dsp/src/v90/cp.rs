@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CP of § 8.5.2: the constellations and spectral shaping that the analogue
 //! modem asks the digital modem to send with.
 

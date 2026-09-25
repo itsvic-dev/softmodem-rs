@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 [workspace]
 resolver = "3"
 members = ["softmodem", "softmodem-dsp", "softmodem-interop", "softmodem-link", "softmodem-slmodem", "softmodem-terminal", "softmodem-transport"]

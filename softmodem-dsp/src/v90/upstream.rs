@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The digital modem's receiver of the V.34 signal from the analogue
 //! modem, from phase 3 on (§ 9.3.1, § 9.4.1).
 

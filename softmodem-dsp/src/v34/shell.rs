@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The shell mapper of § 9.4, and its inverse for the receiver.
 
 /// Maps K bits to eight ring indices below M, cheaper rings for smaller

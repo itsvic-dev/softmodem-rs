@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The V.34 data pump: phase 2, the training of phases 3 and 4 as the
 //! error-free procedures of § 11.3 and § 11.4 give it, and data mode.
 

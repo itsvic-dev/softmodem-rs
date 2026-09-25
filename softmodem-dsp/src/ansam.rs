@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The answer tones: ANS of V.25 and `ANSam` of V.8, each with or without the
 //! phase reversals that disable echo cancellers, and a detector that tells
 //! them apart.

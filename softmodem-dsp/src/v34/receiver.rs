@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The receiver of phases 3 and 4 and of data mode: a front end that mixes
 //! the far carrier down and samples the matched filter twice a symbol,
 //! following the far symbol clock, and an equaliser with a phase locked

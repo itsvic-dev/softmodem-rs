@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Self-synchronising scramblers: 1 + x⁻¹⁴ + x⁻¹⁷ of V.22 § 5, and the two of
 //! V.34 § 7.
 

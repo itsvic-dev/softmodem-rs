@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Joins slmodemd, from Aon's D-Modem, to a softmodem over its UDP wire, to
 //! test against the Smart Link DSP. slmodemd runs this on ATD as
 //! `slmodem-bridge NUMBER FD`, where FD is its audio socket, and it dials

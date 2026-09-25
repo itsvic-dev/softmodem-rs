@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Jd of § 8.4.2, which the digital modem repeats at the end of phase 3.
 
 use super::frames::{self, Words};

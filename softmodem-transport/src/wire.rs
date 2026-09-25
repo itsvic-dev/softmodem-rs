@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Two instances talking directly over UDP, for development. Audio is A-law
 //! RTP. Call setup is text messages on the same socket, which cannot be
 //! mistaken for RTP because RTP's first byte has the version bits set:

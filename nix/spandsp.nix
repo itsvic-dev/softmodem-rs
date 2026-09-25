@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # spandsp's last release, with its V.34 modem, as a second interop target.
 { spandsp3, fetchFromGitHub }:
 

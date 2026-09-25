@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The patterns of the V.42 detection phase (§ 7.2.1): the originator's ODP
 //! and the answerer's ADP, sent and heard as start-stop characters.
 

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Uses a serial port the way QEMU's host serial backend does, and checks
 the modem lines it reads with TIOCMGET."""
 

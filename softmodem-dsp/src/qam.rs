@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 16-point QAM of V.22bis at 600 baud, and its 4-point 1200 bit/s form.
 
 use std::collections::VecDeque;

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Calls through a real SIP registrar. Ignored unless asked for, and then
 //! needs `SOFTMODEM_PBX`, `USER1`, `USER1_PASS`, `USER2` and `USER2_PASS`.
 

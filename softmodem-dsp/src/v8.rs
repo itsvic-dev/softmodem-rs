@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The V.8 menus: CM from the caller, JM from the answering modem, and CJ, as
 //! bit sequences for V.21 at 300 bit/s.
 

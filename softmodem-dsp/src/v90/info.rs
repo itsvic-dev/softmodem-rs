@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The INFO sequences of § 8.2.3 that differ from those of V.34: INFO0d
 //! from the digital modem, and INFO1a when the analogue modem picks V.90.
 //! INFO0a has the layout of the V.34 INFO0, and INFO1d that of INFO1c.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(spandsp_3_1)");
     let spandsp = match pkg_config::probe_library("spandsp") {

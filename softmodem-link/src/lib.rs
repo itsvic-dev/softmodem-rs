@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! V.42 error correction over a data pump's bits, with plain start-stop
 //! characters as V.14 carries them when the far end has no V.42. No IO.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Finds the `+++` escape in data mode: a guard time with no data, three
 //! escape characters each within the guard time of the last, and another
 //! guard time with no data.

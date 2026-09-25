@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The data mode framing of § 8 and the mapping parameters of § 9.2, for a
 //! symbol rate and a data rate.
 

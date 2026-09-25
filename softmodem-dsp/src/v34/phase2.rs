@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Phase 2 of § 11.2, as its error-free procedures give it: INFO0, the round
 //! trip delay from the phase reversals of tones A and B, line probing with
 //! L1 and L2, and INFO1, which fixes the symbol rate and carrier each way.

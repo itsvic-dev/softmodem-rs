@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The training signals of phases 3 and 4 (§ 10.1.3): S and S̄, PP, TRN,
 //! and the sequences J, J′, MP and E, as points of unit mean power.
 

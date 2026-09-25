@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tones A and B of § 10.1.2.1 and § 10.1.2.2, whose phase reversals time
 //! the round trip in phase 2.
 

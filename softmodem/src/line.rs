@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! One call's audio: the answer sequence, then a data pump, and over it V.42
 //! or plain start-stop characters.
 

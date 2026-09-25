@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 {
   # x86-64, where slmodemd's 32-bit x86 runs natively, under TCG on any host.
   guestPkgs,

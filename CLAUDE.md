@@ -51,9 +51,13 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `kvm`, and it copies each side's WAV recordings into `result/`.
   `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
   V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.90.
-- The project is GPL-3.0-or-later under REUSE: `REUSE.toml` covers every
-  file, and `checks.<system>.reuse` runs `reuse lint`. A file under another
-  licence needs its own annotation there and its text in `LICENSES/`.
+- The project is GPL-3.0-or-later under REUSE, and `checks.<system>.reuse`
+  runs `reuse lint`. Every file that takes a comment starts with the SPDX
+  header, and a new one without it fails the check: `reuse annotate
+  --copyright "Wiktor Bryk <contact@itsvic.dev>" --year 2026 --license
+  GPL-3.0-or-later <file>`. `REUSE.toml` covers only the files that cannot
+  carry it, the Markdown, the lock files and `nix/Cargo.nix`. A file under
+  another licence needs its own header and its text in `LICENSES/`.
 - spandsp is LGPL-2.1: call it through `softmodem-interop` only, never read
   its source to shape our code. Its installed headers may be read to write
   the binding. The ITU texts in `docs/specs/` are the reference.

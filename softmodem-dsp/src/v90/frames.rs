@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The framing of Ja, Jd and CP: 17 ones, then 16-bit words, each after a
 //! 0 start bit, and a CRC word over the words, as MP has in V.34.
 

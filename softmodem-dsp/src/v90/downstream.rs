@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The analogue modem's receiver of the digital modem's PCM signal, from
 //! phase 3 on (§ 9.3.2, § 9.4.2). The path to it is digital, so each sample
 //! is one symbol.

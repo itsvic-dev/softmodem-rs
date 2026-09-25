@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The digital impairment learning sequence of § 8.4.1, and the DIL
 //! descriptor of § 8.3.1 that the analogue modem repeats in Ja to ask for
 //! it.
