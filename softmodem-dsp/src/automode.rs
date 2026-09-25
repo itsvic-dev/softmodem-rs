@@ -816,42 +816,45 @@ mod tests {
         );
     }
 
-    #[test]
-    fn two_v34_ends_connect_when_each_sends_and_hears_in_either_order() {
-        let mut failed = Vec::new();
-        for seed in 1..=40u32 {
-            let mut state = seed.wrapping_mul(2_654_435_761);
-            let mut coin = move || {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                state & 1 == 1
-            };
-            let mut ends = [
-                pump(Modulation::V34, Role::Originate),
-                pump(Modulation::V34, Role::Answer),
-            ];
-            let mut queues = [VecDeque::new(), VecDeque::new()];
-            let mut frames = 0;
-            while !ends.iter().all(|end| end.connected()) && frames < 1000 {
-                for end in 0..2 {
-                    let first = coin();
-                    for transmit in [first, !first] {
-                        if transmit {
-                            let mut frame = [0; FRAME];
-                            ends[end].transmit(&mut frame);
-                            queues[end].push_back(frame);
-                        } else if let Some(heard) = queues[1 - end].pop_front() {
-                            ends[end].receive(&heard, &mut Vec::new());
-                        }
+    // Whether two V.34 ends connect at 33 600 when a coin from `seed` picks, each frame, whether each end sends or hears first.
+    fn connects_in_order_from(seed: u32) -> bool {
+        let mut state = seed.wrapping_mul(2_654_435_761);
+        let mut coin = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state & 1 == 1
+        };
+        let mut ends = [
+            pump(Modulation::V34, Role::Originate),
+            pump(Modulation::V34, Role::Answer),
+        ];
+        let mut queues = [VecDeque::new(), VecDeque::new()];
+        for _ in 0..1000 {
+            if ends.iter().all(|end| end.connected()) {
+                break;
+            }
+            for end in 0..2 {
+                let first = coin();
+                for transmit in [first, !first] {
+                    if transmit {
+                        let mut frame = [0; FRAME];
+                        ends[end].transmit(&mut frame);
+                        queues[end].push_back(frame);
+                    } else if let Some(heard) = queues[1 - end].pop_front() {
+                        ends[end].receive(&heard, &mut Vec::new());
                     }
                 }
-                frames += 1;
-            }
-            if !(ends.iter().all(|end| end.connected()) && ends[0].bit_rate() == 33_600) {
-                failed.push(seed);
             }
         }
+        ends.iter().all(|end| end.connected()) && ends[0].bit_rate() == 33_600
+    }
+
+    #[test]
+    fn two_v34_ends_connect_when_each_sends_and_hears_in_either_order() {
+        let failed: Vec<u32> = (1..=40)
+            .filter(|&seed| !connects_in_order_from(seed))
+            .collect();
         assert!(
             failed.is_empty(),
             "no V.34 connection when each end sends and hears in either order, for seeds {failed:?}"
