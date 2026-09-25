@@ -1480,22 +1480,21 @@ rec {
       "ezk-internal" = rec {
         crateName = "ezk-internal";
         version = "0.2.0";
-        edition = "2021";
-        sha256 = "0ral31s3x51qlg3wcaq4jmpdmb3wjbyznf744b183hkdi5fvyi4a";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_internal";
         authors = [
           "kbalt"
         ];
         dependencies = [
           {
-            name = "anyhow";
-            packageId = "anyhow";
-          }
-          {
             name = "nom";
             packageId = "nom";
-            usesDefaultFeatures = false;
-            features = [ "alloc" ];
           }
         ];
 
@@ -1541,7 +1540,12 @@ rec {
         crateName = "ezk-sdp-types";
         version = "0.6.1";
         edition = "2024";
-        sha256 = "08p3aphg0qbhz2x7ykcbqfpxmg7b2qb3xh16fn38m9mv2ww2w4kw";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_sdp_types";
         authors = [
           "kbalt"
@@ -1574,8 +1578,13 @@ rec {
       "ezk-sip-auth" = rec {
         crateName = "ezk-sip-auth";
         version = "0.5.0";
-        edition = "2021";
-        sha256 = "18bvxv2wfwwdyzp3gafyms1dqbsfbbbdlbn9pg0g4k5maba0g21l";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_sip_auth";
         authors = [
           "kbalt"
@@ -1618,7 +1627,12 @@ rec {
         crateName = "ezk-sip-core";
         version = "0.9.2";
         edition = "2024";
-        sha256 = "04rn8030m7iawjb5y8rwhzcnkq77z9qi6pyf73ngb61r30lmx3r1";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_sip_core";
         authors = [
           "kbalt"
@@ -1712,7 +1726,12 @@ rec {
         crateName = "ezk-sip-types";
         version = "0.6.5";
         edition = "2024";
-        sha256 = "11vm6yzg0xhwby3kkk1s953j9azc5hk0hspdd6mi6p70qv8xmdg7";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_sip_types";
         authors = [
           "kbalt"
@@ -1758,7 +1777,12 @@ rec {
         crateName = "ezk-sip-ua";
         version = "0.9.1";
         edition = "2024";
-        sha256 = "1qhsbpssw5wc3fk5yckifm81mvs09nlia5xdwgzh12vfqhplq0mm";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_sip_ua";
         authors = [
           "kbalt"
@@ -1833,8 +1857,13 @@ rec {
       "ezk-stun" = rec {
         crateName = "ezk-stun";
         version = "0.4.0";
-        edition = "2021";
-        sha256 = "1fnwj751rqx51ymvnxhqwlpadl8dfkhmxj2x0fybnc55n3a94l67";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_stun";
         authors = [
           "kbalt"
@@ -1868,8 +1897,13 @@ rec {
       "ezk-stun-types" = rec {
         crateName = "ezk-stun-types";
         version = "0.3.0";
-        edition = "2021";
-        sha256 = "1fszdd80za2djiwg8xckbzzdaixrwgbgpdnyv163f5n8n3gj8963";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/itsvic-dev/ezk";
+          rev = "36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2";
+          sha256 = "1zrpfnwci0d045shbxy22x0rdg7yjfqf7fpfcm52gph73b98qp2l";
+        };
         libName = "ezk_stun_types";
         authors = [
           "kbalt"

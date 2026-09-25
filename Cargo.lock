@@ -472,10 +472,8 @@ dependencies = [
 [[package]]
 name = "ezk-internal"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a44bf5d896dc281c222e438fbfd927cacda6e95042bc6c7a338943e74185465"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
- "anyhow",
  "nom",
 ]
 
@@ -496,8 +494,7 @@ dependencies = [
 [[package]]
 name = "ezk-sdp-types"
 version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c122e3817bba68a867526c03e1616ebbcdaafc38b4d7fbaf87061f0e055e322"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "bytes",
  "bytesstr",
@@ -509,8 +506,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-auth"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "348807d452b54cf2c0bbc92edad65a4e2fdc82aedea937eef78d73c7c5ee7ba1"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "bytesstr",
  "ezk-sip-types",
@@ -524,8 +520,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-core"
 version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "218f5e29183998f5ec38ce5f1371fae7e069d9873c235f96e42a9e0a06403613"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -550,8 +545,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-types"
 version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7b5dad1c6e05c13ab69ed6a08262cecab2447493acc39875f1c76f0be377587"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -566,8 +560,7 @@ dependencies = [
 [[package]]
 name = "ezk-sip-ua"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5024c2fc46e8b00ffe3ad1715a94d40ef1a507571325fa61b8c17aef55d1ae2"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -588,8 +581,7 @@ dependencies = [
 [[package]]
 name = "ezk-stun"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c75092d4b0a530bbbc035dc85ee1740dd1a62ee51876bbab0fa5e31cca91dcba"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "async-trait",
  "ezk-stun-types",
@@ -601,8 +593,7 @@ dependencies = [
 [[package]]
 name = "ezk-stun-types"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c32424dfb0c816374cd8deb6fbd6e3b947d5fe5f9375f478944da80f506b5fbb"
+source = "git+https://github.com/itsvic-dev/ezk?rev=36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2#36b10d90b7890fa7a18f248521a5b4e2a9a9f7c2"
 dependencies = [
  "bitfield",
  "byteorder",
