@@ -288,19 +288,7 @@ impl Link {
         self.expire(now);
         for &bit in bits {
             match &mut self.phase {
-                Phase::Protocol(lapm) => {
-                    let flags = self.deframer.flags_in_a_row();
-                    if let Some(frame) = self.deframer.push(bit) {
-                        self.flags_heard = true;
-                        self.sound_at = Some(now);
-                        lapm.receive(&frame, now);
-                    }
-                    let more_flags = self.deframer.flags_in_a_row();
-                    self.flags_heard |= more_flags >= FLAGS_HEARD;
-                    if more_flags > flags && more_flags >= SOUND_FLAGS {
-                        self.sound_at = Some(now);
-                    }
-                }
+                Phase::Protocol(_) => self.hear_lapm(bit, now),
                 Phase::Normal => {
                     if let Some(byte) = self.decoder.push(bit) {
                         self.received.push(byte);
@@ -323,6 +311,23 @@ impl Link {
             }
         }
         self.expire(now);
+    }
+
+    fn hear_lapm(&mut self, bit: bool, now: Instant) {
+        let Phase::Protocol(lapm) = &mut self.phase else {
+            return;
+        };
+        let flags = self.deframer.flags_in_a_row();
+        if let Some(frame) = self.deframer.push(bit) {
+            self.flags_heard = true;
+            self.sound_at = Some(now);
+            lapm.receive(&frame, now);
+        }
+        let more_flags = self.deframer.flags_in_a_row();
+        self.flags_heard |= more_flags >= FLAGS_HEARD;
+        if more_flags > flags && more_flags >= SOUND_FLAGS {
+            self.sound_at = Some(now);
+        }
     }
 
     /// V.42 bis § 5.2: starts as LAPM connects, or ends a call that required it.

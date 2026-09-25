@@ -274,6 +274,24 @@ impl Handshake {
         self.sent += samples.len();
     }
 
+    fn recover(&mut self, now: Instant, connected: bool) {
+        let Some(link) = &self.link else {
+            return;
+        };
+        let in_data = connected && link.status() == Status::Reliable;
+        match self.recovery.poll(now, in_data, link.last_sound()) {
+            Some(Action::Renegotiate) => {
+                info!("nothing sound from the far end, renegotiating");
+                self.pump.renegotiate();
+            }
+            Some(Action::Retrain) => {
+                info!("nothing sound from the far end after a renegotiation, retraining");
+                self.pump.retrain();
+            }
+            None => {}
+        }
+    }
+
     fn receive(&mut self, samples: &[i16], now: Instant) -> Received {
         let mut received = Received::default();
         if self.role == Role::Originate
@@ -308,22 +326,11 @@ impl Handshake {
             }
         }
         self.heard_carrier |= carrier;
+        self.recover(now, connected);
         let Some(link) = &mut self.link else {
             return received;
         };
         let status = link.status();
-        let in_data = connected && status == Status::Reliable;
-        match self.recovery.poll(now, in_data, link.last_sound()) {
-            Some(Action::Renegotiate) => {
-                info!("nothing sound from the far end, renegotiating");
-                self.pump.renegotiate();
-            }
-            Some(Action::Retrain) => {
-                info!("nothing sound from the far end after a renegotiation, retraining");
-                self.pump.retrain();
-            }
-            None => {}
-        }
         if !self.connected {
             if !matches!(status, Status::Reliable | Status::Normal) {
                 return received;

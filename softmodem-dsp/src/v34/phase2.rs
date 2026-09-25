@@ -548,15 +548,7 @@ impl Phase2 {
             }
             Step::AwaitReply { ours } => {
                 if let Some(at) = reversal.filter(|&at| at > ours) {
-                    self.round_trip = at.saturating_sub(ours + ANSWER_DELAY);
-                    match self.role {
-                        Role::Answer => {
-                            self.reverse_at(at + ANSWER_DELAY);
-                            self.step = Step::Probe;
-                            self.tone_b_gone = false;
-                        }
-                        Role::Originate => self.measure_from(at),
-                    }
+                    self.replied(ours, at);
                 }
             }
             Step::Probe if self.tx == Tx::L2 && self.tone_b_gone && self.detector.present() => {
@@ -567,17 +559,7 @@ impl Phase2 {
                 self.tone_from = self.sent;
                 self.step = Step::AwaitProbe { reversed: false };
             }
-            Step::AwaitProbe { reversed } => {
-                if !reversed && self.sent >= self.tone_from + TONE_FIRST {
-                    self.tone.reverse_after(0);
-                    self.tx_until = Some(self.sent + HELD_TAIL);
-                    self.step = Step::AwaitProbe { reversed: true };
-                }
-                if let Some(at) = reversal {
-                    self.start(Tx::Silence, None);
-                    self.measure_from(at);
-                }
-            }
+            Step::AwaitProbe { reversed } => self.await_probe(reversed, reversal),
             Step::Measure { from } if self.heard >= from + L2_MEASURED => {
                 self.probing = self.analyser.result();
                 self.start(Tx::Tone, None);
@@ -597,6 +579,31 @@ impl Phase2 {
                 self.send_info1();
             }
             _ => {}
+        }
+    }
+
+    // The far reversal at `at` that answers ours at `ours` gives the round trip.
+    fn replied(&mut self, ours: usize, at: usize) {
+        self.round_trip = at.saturating_sub(ours + ANSWER_DELAY);
+        match self.role {
+            Role::Answer => {
+                self.reverse_at(at + ANSWER_DELAY);
+                self.step = Step::Probe;
+                self.tone_b_gone = false;
+            }
+            Role::Originate => self.measure_from(at),
+        }
+    }
+
+    fn await_probe(&mut self, reversed: bool, reversal: Option<usize>) {
+        if !reversed && self.sent >= self.tone_from + TONE_FIRST {
+            self.tone.reverse_after(0);
+            self.tx_until = Some(self.sent + HELD_TAIL);
+            self.step = Step::AwaitProbe { reversed: true };
+        }
+        if let Some(at) = reversal {
+            self.start(Tx::Silence, None);
+            self.measure_from(at);
         }
     }
 

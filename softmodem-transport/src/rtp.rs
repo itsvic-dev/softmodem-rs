@@ -115,11 +115,7 @@ impl Running {
                         self.hang_up().await;
                         break;
                     };
-                    let impairment = self.session.impairment;
-                    if impairment.stall > 0.0 && self.rng.f64() < impairment.stall {
-                        tokio::time::sleep(impairment.stall_for).await;
-                    }
-                    if impairment.slip > 0.0 && self.rng.f64() < impairment.slip {
+                    if self.stalls_or_slips().await {
                         continue;
                     }
                     let packet = RtpPacket {
@@ -200,6 +196,15 @@ impl Running {
             Signalling::Wire { .. } => from == self.session.peer,
             Signalling::Separate => from.ip() == self.session.peer.ip(),
         }
+    }
+
+    // Whether the next frame slips out, after any stall before it.
+    async fn stalls_or_slips(&mut self) -> bool {
+        let impairment = self.session.impairment;
+        if impairment.stall > 0.0 && self.rng.f64() < impairment.stall {
+            tokio::time::sleep(impairment.stall_for).await;
+        }
+        impairment.slip > 0.0 && self.rng.f64() < impairment.slip
     }
 
     async fn send_impaired(&mut self, packet: Vec<u8>) -> io::Result<()> {

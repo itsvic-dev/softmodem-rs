@@ -217,36 +217,10 @@ impl Downstream {
         let n = self.count;
         match self.stage {
             Stage::Sd { run, last } => self.sd(n, run, last),
-            Stage::Trn { from } => {
-                if n >= from {
-                    self.gain += x.abs();
-                    self.signs.trn(x > 0.0);
-                    if n + 1 == from + TRN1D_SYMBOLS {
-                        #[expect(clippy::cast_precision_loss, reason = "2040 symbols")]
-                        let mean = self.gain / TRN1D_SYMBOLS as f64;
-                        self.gain = mean / f64::from(ucode::linear(self.uinfo, self.law));
-                        self.stage = Stage::Jd;
-                    }
-                }
-            }
+            Stage::Trn { from } => self.trn(n, from, x),
             Stage::Jd => self.jd(n, x),
             Stage::Dil { from } => self.dil(n, from, x),
-            Stage::Ri { frames } => {
-                if self.at_frame_end() {
-                    let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
-                    match self.r_like([uinfo; FRAME]) {
-                        Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
-                        Some(false) if frames >= RI_FRAMES => {
-                            self.events.r_bar = true;
-                            self.next = self.training.clone();
-                            self.stage = Stage::Training {
-                                from: n + 1 - FRAME + R_BAR_SYMBOLS,
-                            };
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            Stage::Ri { frames } => self.ri(n, frames),
             Stage::Training { from } => {
                 if n == from {
                     self.decoder = self.next.take().map(Decoder::new);
@@ -285,6 +259,38 @@ impl Downstream {
                 run: 1,
                 last: Some(n),
             };
+        }
+    }
+
+    fn trn(&mut self, n: usize, from: usize, x: f64) {
+        if n < from {
+            return;
+        }
+        self.gain += x.abs();
+        self.signs.trn(x > 0.0);
+        if n + 1 == from + TRN1D_SYMBOLS {
+            #[expect(clippy::cast_precision_loss, reason = "2040 symbols")]
+            let mean = self.gain / TRN1D_SYMBOLS as f64;
+            self.gain = mean / f64::from(ucode::linear(self.uinfo, self.law));
+            self.stage = Stage::Jd;
+        }
+    }
+
+    fn ri(&mut self, n: usize, frames: usize) {
+        if !self.at_frame_end() {
+            return;
+        }
+        let uinfo = self.gain * f64::from(ucode::linear(self.uinfo, self.law));
+        match self.r_like([uinfo; FRAME]) {
+            Some(true) => self.stage = Stage::Ri { frames: frames + 1 },
+            Some(false) if frames >= RI_FRAMES => {
+                self.events.r_bar = true;
+                self.next = self.training.clone();
+                self.stage = Stage::Training {
+                    from: n + 1 - FRAME + R_BAR_SYMBOLS,
+                };
+            }
+            _ => {}
         }
     }
 
