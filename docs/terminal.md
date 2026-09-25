@@ -14,7 +14,8 @@ answers, as one modem on one line does.
 - **Dialling and handshake.** After `ATD` or `ATA`. Any byte from the
   computer aborts with `NO CARRIER`, and so does no `CONNECT` within `S7`.
 - **Data mode.** Bytes pass to and from the line. `+++` with guard times
-  goes to online command mode.
+  goes to online command mode. `RUST_LOG=softmodem=trace` logs them in
+  hex, which shows what the computer sends to log in, password included.
 - **Online command mode.** The call stays up, the line idles on mark. `ATO`
   goes back to data mode, `ATH` hangs up.
 
