@@ -388,9 +388,13 @@ impl DataPump for Answer {
                 // V.8 § 8.2.3 allows the end of CM in place of a lost CJ.
                 let cj = self.link.hear(input).contains(&Heard::Cj);
                 if cj || !self.link.demodulator.carrier() {
-                    self.stage = AnswerStage::Gap {
-                        until: self.sent + gap(modes),
-                        next: Some(self.offer.chosen(modes, Role::Answer)),
+                    let next = self.offer.chosen(modes, Role::Answer);
+                    self.stage = match gap(modes) {
+                        0 => AnswerStage::Chosen(next),
+                        gap => AnswerStage::Gap {
+                            until: self.sent + gap,
+                            next: Some(next),
+                        },
                     };
                 }
             }
@@ -603,9 +607,13 @@ impl DataPump for Call {
                 let modes = *modes;
                 self.link.modulator.render(out);
                 if self.link.modulator.pending() == 0 {
-                    self.stage = CallStage::Gap {
-                        until: sent + out.len() + gap(modes),
-                        next: self.offer.chosen(modes, Role::Originate),
+                    let next = self.offer.chosen(modes, Role::Originate);
+                    self.stage = match gap(modes) {
+                        0 => CallStage::Chosen(next),
+                        gap => CallStage::Gap {
+                            until: sent + out.len() + gap,
+                            next,
+                        },
                     };
                 }
             }
@@ -701,6 +709,44 @@ mod tests {
             frames * 20 < 8000,
             "V.8 bis and V.8 took {} ms",
             frames * 20
+        );
+    }
+
+    // One end's transmitter stopped for 200 ms from frame `at`, as on a busy host. Phase 2 is near frame 300.
+    fn connects_through_a_stall(top: Modulation, caller_stalls: bool, at: usize) -> bool {
+        let mut caller = pump(top, Role::Originate);
+        let mut answerer = pump(top, Role::Answer);
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        for frame in 0..1500 {
+            let stalled = (at..at + 10).contains(&frame);
+            if !stalled || !caller_stalls {
+                caller.transmit(&mut up);
+                answerer.receive(&up, &mut Vec::new());
+            }
+            if !stalled || caller_stalls {
+                answerer.transmit(&mut down);
+                caller.receive(&down, &mut Vec::new());
+            }
+            if caller.connected() && answerer.connected() {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn two_v90_ends_connect_through_a_stall_of_either_transmitter() {
+        let mut failed = Vec::new();
+        for caller_stalls in [false, true] {
+            for at in (266..326).step_by(6) {
+                if !connects_through_a_stall(Modulation::V90, caller_stalls, at) {
+                    failed.push((if caller_stalls { "caller" } else { "answerer" }, at));
+                }
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "no V.90 connection through a 200 ms stall of the transmitter at {failed:?}"
         );
     }
 
