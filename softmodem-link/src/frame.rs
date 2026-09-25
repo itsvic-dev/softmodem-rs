@@ -130,41 +130,9 @@ impl Frame {
         }
         let cr = address & 2 != 0;
         let (control, info) = if first & 1 == 0 || first & 3 == 1 {
-            let [second, info @ ..] = rest else {
-                return Err(Rejected::Invalid);
-            };
-            let nr = second >> 1;
-            let pf = second & 1 == 1;
-            let control = if first & 1 == 0 {
-                Control::I {
-                    ns: first >> 1,
-                    nr,
-                    poll: pf,
-                }
-            } else {
-                let kind = match first {
-                    0x01 => Supervisory::Rr,
-                    0x05 => Supervisory::Rnr,
-                    0x09 => Supervisory::Rej,
-                    0x0d => Supervisory::Srej,
-                    _ => return Err(Rejected::Undefined),
-                };
-                if !info.is_empty() && kind != Supervisory::Srej {
-                    return Err(Rejected::Undefined);
-                }
-                Control::S { kind, nr, pf }
-            };
-            (control, info)
+            numbered(*first, rest)?
         } else {
-            let kind = Unnumbered::ALL
-                .into_iter()
-                .find(|k| k.code() == first & !0x10)
-                .ok_or(Rejected::Undefined)?;
-            if !rest.is_empty() && !kind.takes_info() {
-                return Err(Rejected::Undefined);
-            }
-            let pf = first & 0x10 != 0;
-            (Control::U { kind, pf }, rest)
+            unnumbered(*first, rest)?
         };
         Ok(Self {
             cr,
@@ -172,6 +140,46 @@ impl Frame {
             info: info.to_vec(),
         })
     }
+}
+
+// An I or S frame, whose control field takes two octets, and its information field.
+fn numbered(first: u8, rest: &[u8]) -> Result<(Control, &[u8]), Rejected> {
+    let [second, info @ ..] = rest else {
+        return Err(Rejected::Invalid);
+    };
+    let nr = second >> 1;
+    let pf = second & 1 == 1;
+    if first & 1 == 0 {
+        let control = Control::I {
+            ns: first >> 1,
+            nr,
+            poll: pf,
+        };
+        return Ok((control, info));
+    }
+    let kind = match first {
+        0x01 => Supervisory::Rr,
+        0x05 => Supervisory::Rnr,
+        0x09 => Supervisory::Rej,
+        0x0d => Supervisory::Srej,
+        _ => return Err(Rejected::Undefined),
+    };
+    if !info.is_empty() && kind != Supervisory::Srej {
+        return Err(Rejected::Undefined);
+    }
+    Ok((Control::S { kind, nr, pf }, info))
+}
+
+fn unnumbered(first: u8, rest: &[u8]) -> Result<(Control, &[u8]), Rejected> {
+    let kind = Unnumbered::ALL
+        .into_iter()
+        .find(|k| k.code() == first & !0x10)
+        .ok_or(Rejected::Undefined)?;
+    if !rest.is_empty() && !kind.takes_info() {
+        return Err(Rejected::Undefined);
+    }
+    let pf = first & 0x10 != 0;
+    Ok((Control::U { kind, pf }, rest))
 }
 
 #[cfg(test)]
