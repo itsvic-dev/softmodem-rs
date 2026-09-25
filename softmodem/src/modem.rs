@@ -22,7 +22,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
 use tracing::{debug, info, warn};
 
-use crate::line::{Line, Setups};
+use crate::line::{Line, Received, Setups};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const RING_INTERVAL: Duration = Duration::from_secs(6);
@@ -582,33 +582,38 @@ where
         }
         if received.connected && matches!(self.mode, Mode::Handshake { .. }) {
             let bit_rate = line.bit_rate().unwrap_or_default();
-            let protocol = if received.reliable { "LAPM" } else { "NONE" };
-            let compression = match received.compression.map(|c| (c.transmit, c.receive)) {
-                Some((true, true)) => "V42B",
-                Some((false, true)) => "V42B RD",
-                Some((true, false)) => "V42B TD",
-                _ => "NONE",
-            };
-            info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}");
-            self.mode = Mode::Data {
-                escape: EscapeDetector::new(Instant::now().into_std()),
-            };
-            self.carrier_lost_at = None;
-            if self.settings.error_control.report && !self.settings.quiet {
-                let text = format!("+ER: {protocol}");
-                self.write(&self.settings.line(&text)).await?;
-            }
-            if self.settings.compression.report && !self.settings.quiet {
-                let text = format!("+DR: {compression}");
-                self.write(&self.settings.line(&text)).await?;
-            }
-            self.report(ResultCode::connect(bit_rate)).await?;
-            self.sync_dcd().await?;
+            self.enter_data(&received, bit_rate).await?;
         }
         if matches!(self.mode, Mode::Data { .. }) && !received.bytes.is_empty() {
             self.write(&received.bytes).await?;
         }
         Ok(())
+    }
+
+    // Reports CONNECT, with +ER and +DR where asked for, as data mode starts.
+    async fn enter_data(&mut self, received: &Received, bit_rate: u32) -> io::Result<()> {
+        let protocol = if received.reliable { "LAPM" } else { "NONE" };
+        let compression = match received.compression.map(|c| (c.transmit, c.receive)) {
+            Some((true, true)) => "V42B",
+            Some((false, true)) => "V42B RD",
+            Some((true, false)) => "V42B TD",
+            _ => "NONE",
+        };
+        info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}");
+        self.mode = Mode::Data {
+            escape: EscapeDetector::new(Instant::now().into_std()),
+        };
+        self.carrier_lost_at = None;
+        if self.settings.error_control.report && !self.settings.quiet {
+            let text = format!("+ER: {protocol}");
+            self.write(&self.settings.line(&text)).await?;
+        }
+        if self.settings.compression.report && !self.settings.quiet {
+            let text = format!("+DR: {compression}");
+            self.write(&self.settings.line(&text)).await?;
+        }
+        self.report(ResultCode::connect(bit_rate)).await?;
+        self.sync_dcd().await
     }
 
     async fn clear_down(&mut self) {
