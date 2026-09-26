@@ -439,6 +439,79 @@ async fn reads_and_lists_the_modulation() {
     a.expect_next(b"\r\nERROR\r\n").await;
 }
 
+// Keeps a copy of what the modem hears.
+fn overheard(heard: Arc<Mutex<Vec<i16>>>) -> impl FnMut(Call, Role) -> Call + Send + 'static {
+    move |mut call, _| {
+        let (tapped_in, audio_in) = mpsc::channel(8);
+        let mut original = std::mem::replace(&mut call.audio_in, audio_in);
+        let heard = heard.clone();
+        tokio::spawn(async move {
+            while let Some(frame) = original.recv().await {
+                heard.lock().unwrap().extend_from_slice(&frame);
+                if tapped_in.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+        call
+    }
+}
+
+#[expect(clippy::cast_precision_loss, reason = "blocks of 200 samples")]
+fn dtmf_keys(samples: &[i16]) -> String {
+    const LOW: [f64; 4] = [697.0, 770.0, 852.0, 941.0];
+    const HIGH: [f64; 4] = [1209.0, 1336.0, 1477.0, 1633.0];
+    const KEYS: [&str; 4] = ["123A", "456B", "789C", "*0#D"];
+    let power = |block: &[i16], hz: f64| {
+        let w = std::f64::consts::TAU * hz / 8000.0;
+        let (re, im) = block
+            .iter()
+            .enumerate()
+            .fold((0.0, 0.0), |(re, im), (n, &s)| {
+                let x = f64::from(s);
+                (re + x * (w * n as f64).cos(), im - x * (w * n as f64).sin())
+            });
+        (re * re + im * im) / (block.len() as f64).powi(2)
+    };
+    let strongest = |block: &[i16], group: &[f64; 4]| {
+        let powers = group.map(|hz| power(block, hz));
+        let (index, &best) = powers
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap();
+        let others = powers.iter().sum::<f64>() - best;
+        (best > 1e5 && best > 10.0 * others).then_some(index)
+    };
+    let mut keys = String::new();
+    let mut last = None;
+    for block in samples.as_chunks::<200>().0 {
+        let key = strongest(block, &LOW)
+            .zip(strongest(block, &HIGH))
+            .map(|(row, column)| KEYS[row].as_bytes()[column] as char);
+        if let Some(key) = key
+            && last != Some(key)
+        {
+            keys.push(key);
+        }
+        last = key;
+    }
+    keys
+}
+
+#[tokio::test(start_paused = true)]
+async fn sends_the_digits_after_a_comma_once_answered_then_connects() {
+    let (a, b) = loopback::pair();
+    let heard = Arc::<Mutex<Vec<i16>>>::default();
+    let mut caller = attach(a, profile("ATE0S8=1").unwrap());
+    let mut answerer = attach_with(b, profile("ATE0S0=1").unwrap(), overheard(heard.clone()));
+    caller.command("ATDT0300,,1234#").await;
+    caller.expect("CONNECT").await;
+    answerer.expect("CONNECT").await;
+    // Two pauses of a second, then five digits of 200 ms, before the handshake.
+    assert_eq!(dtmf_keys(&heard.lock().unwrap()[..32_000]), "1234#");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_v22_call_connects_at_1200_and_carries_data_both_ways() {
     let (mut a, mut b) = two_modems("ATE0+MS=V22", "ATE0S0=1+MS=V22");

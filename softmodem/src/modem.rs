@@ -8,6 +8,7 @@ use std::io;
 use std::pin::pin;
 use std::time::Duration;
 
+use softmodem_dsp::dtmf::DtmfSender;
 use softmodem_dsp::pump::{Modulation, Offer, Role};
 use softmodem_link::v42bis::{Directions, Parameters};
 use softmodem_link::{CompressionSetup, Setup};
@@ -55,7 +56,7 @@ pub struct Modem<T: Transport, P, F> {
     profile: Settings,
     settings: Settings,
     editor: LineEditor,
-    last_number: Option<String>,
+    last_number: Option<(String, String)>,
     off_hook: bool,
     ringing: Option<Ringing<T::Caller>>,
     line: Option<Line>,
@@ -322,6 +323,7 @@ where
                     call,
                     Some(Role::Answer),
                     Instant::now() + self.settings.carrier_wait(),
+                    None,
                 );
                 Ok(())
             }
@@ -339,19 +341,19 @@ where
         let number = if dial.redial {
             self.last_number.clone()
         } else {
-            Some(dial.number.clone())
+            Some((dial.number.clone(), dial.after_answer.clone()))
         };
-        let Some(number) = number.filter(|n| !n.is_empty()) else {
+        let Some((number, after_answer)) = number.filter(|(n, _)| !n.is_empty()) else {
             return self.report(ResultCode::NoCarrier).await;
         };
-        self.last_number = Some(number.clone());
+        self.last_number = Some((number.clone(), after_answer.clone()));
         if let Some(ringing) = self.ringing.take() {
             self.transport.reject(&ringing.caller).await?;
         }
 
         let deadline = Instant::now() + self.settings.carrier_wait();
         let wait = self.settings.blind_dial_wait() + self.settings.comma_pause() * dial.pauses;
-        info!(number, "dialling");
+        info!(number, after_answer, "dialling");
         let transport = &mut self.transport;
         let input = &mut self.port;
         let mut abort = [0];
@@ -371,12 +373,15 @@ where
                 } else {
                     Role::Originate
                 };
+                let digits = (!after_answer.is_empty()).then(|| {
+                    DtmfSender::new(&after_answer, self.settings.comma_pause().as_secs_f64())
+                });
                 if dial.stay_in_command_mode {
-                    self.attach(call, None, deadline);
+                    self.attach(call, None, deadline, digits);
                     self.mode = Mode::OnlineCommand;
                     self.report(ResultCode::Ok).await
                 } else {
-                    self.attach(call, Some(role), deadline);
+                    self.attach(call, Some(role), deadline, digits);
                     Ok(())
                 }
             }
@@ -389,7 +394,13 @@ where
         }
     }
 
-    fn attach(&mut self, call: Call, role: Option<Role>, deadline: Instant) {
+    fn attach(
+        &mut self,
+        call: Call,
+        role: Option<Role>,
+        deadline: Instant,
+        digits: Option<DtmfSender>,
+    ) {
         let call = (self.on_call)(call, role.unwrap_or(Role::Originate));
         let chosen = self.settings.modulation;
         let offer = Offer {
@@ -430,7 +441,7 @@ where
                 compression,
             },
         };
-        self.line = Some(Line::new(call, offer, setups, role));
+        self.line = Some(Line::new(call, offer, setups, role, digits));
         self.mode = Mode::Handshake { deadline };
         self.carrier_lost_at = None;
         self.ticker.reset();

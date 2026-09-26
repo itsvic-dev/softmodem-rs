@@ -7,6 +7,7 @@
 
 use std::time::{Duration, Instant};
 
+use softmodem_dsp::dtmf::DtmfSender;
 use softmodem_dsp::pump::{DataPump, Offer, Role};
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_link::v42bis::Directions;
@@ -48,6 +49,7 @@ pub(crate) struct Line {
     offer: Offer,
     setups: Setups,
     handshake: Option<Handshake>,
+    digits: Option<(DtmfSender, Option<Role>)>,
 }
 
 #[derive(Debug)]
@@ -110,13 +112,33 @@ impl Recovery {
 
 impl Line {
     /// A line in `role`, or silent with no handshake for a call placed with
-    /// `;`, until [`Line::start`] is called.
-    pub(crate) fn new(call: Call, offer: Offer, setups: Setups, role: Option<Role>) -> Self {
-        Self {
-            call,
-            offer,
-            setups,
-            handshake: role.map(|role| Handshake::new(offer, setups, role)),
+    /// `;`, until [`Line::start`] is called. With `digits`, it sends them
+    /// first and deaf, and takes up `role` after them.
+    pub(crate) fn new(
+        call: Call,
+        offer: Offer,
+        setups: Setups,
+        role: Option<Role>,
+        digits: Option<DtmfSender>,
+    ) -> Self {
+        match digits {
+            Some(digits) => {
+                info!("sending digits after the answer");
+                Self {
+                    call,
+                    offer,
+                    setups,
+                    handshake: None,
+                    digits: Some((digits, role)),
+                }
+            }
+            None => Self {
+                call,
+                offer,
+                setups,
+                handshake: role.map(|role| Handshake::new(offer, setups, role)),
+                digits: None,
+            },
         }
     }
 
@@ -200,6 +222,18 @@ impl Line {
     /// The next 20 ms to send.
     pub(crate) fn transmit(&mut self, now: Instant) -> Vec<i16> {
         let mut samples = vec![0; FRAME_SAMPLES];
+        if let Some((digits, role)) = &mut self.digits {
+            digits.render(&mut samples);
+            if digits.done() {
+                info!("digits sent");
+                let role = *role;
+                self.digits = None;
+                if let Some(role) = role {
+                    self.start(role);
+                }
+            }
+            return samples;
+        }
         if let Some(handshake) = &mut self.handshake {
             handshake.fill(now);
             handshake.transmit(&mut samples);
