@@ -155,7 +155,7 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
 fn attach_with(
     transport: Loopback,
     settings: Settings,
-    on_call: impl FnMut(Call, Role) -> Call + Send + 'static,
+    mut on_call: impl FnMut(Call, Role) -> Call + Send + 'static,
 ) -> Computer {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (computer, modem_side) = duplex(4096);
@@ -168,8 +168,10 @@ fn attach_with(
     };
     let speaker = Arc::<Mutex<Vec<f32>>>::default();
     let gains = speaker.clone();
-    let modem = Modem::new(transport, port, settings, on_call)
-        .with_speaker(move |gain| gains.lock().unwrap().push(gain));
+    let modem = Modem::new(transport, port, settings, move |call, role| {
+        (on_call(call, role), None)
+    })
+    .with_speaker(move |gain| gains.lock().unwrap().push(gain));
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
     Computer {
         port: computer,

@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use softmodem::{Modem, Role};
+use softmodem::{Journal, Modem, Role};
 use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
@@ -133,7 +133,7 @@ struct ModemArgs {
     /// Commands for the stored profile that ATZ restores, such as "ATS0=1".
     #[arg(long, default_value = "")]
     init: String,
-    /// Directory to record each call into, as one WAV file per direction.
+    /// Directory to record each call into, as one WAV file per direction and a journal for `replay`.
     #[arg(long)]
     dump: Option<PathBuf>,
     /// Play each call on the default sound output, as ATL and ATM set.
@@ -243,14 +243,15 @@ impl<T: Transport> Station<T> {
         let dump = self.dump;
         let speaker = self.speaker.clone();
         let on_call = move |call: Call, role: Role| {
-            let call = match &dump {
+            let (call, journal) = match &dump {
                 Some(directory) => record(call, directory, role),
-                None => call,
+                None => (call, None),
             };
-            match &speaker {
+            let call = match &speaker {
                 Some(speaker) => speaker.play(call),
                 None => call,
-            }
+            };
+            (call, journal)
         };
         let mut modem = Modem::new(self.transport, port, self.profile, on_call);
         if let Some(speaker) = self.speaker {
@@ -261,7 +262,7 @@ impl<T: Transport> Station<T> {
     }
 }
 
-fn record(call: Call, directory: &Path, role: Role) -> Call {
+fn record(call: Call, directory: &Path, role: Role) -> (Call, Option<Journal>) {
     let started = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
@@ -270,11 +271,19 @@ fn record(call: Call, directory: &Path, role: Role) -> Call {
         Role::Answer => "answer",
     };
     let prefix = directory.join(format!("{started}-{name}"));
-    match wav::Recorder::create(&prefix) {
+    let call = match wav::Recorder::create(&prefix) {
         Ok(recorder) => recorder.record(call),
         Err(error) => {
             warn!(%error, prefix = %prefix.display(), "not recording this call");
-            call
+            return (call, None);
+        }
+    };
+    let path = prefix.with_extension("journal");
+    match Journal::create(&path) {
+        Ok(journal) => (call, Some(journal)),
+        Err(error) => {
+            warn!(%error, path = %path.display(), "no journal for this call");
+            (call, None)
         }
     }
 }

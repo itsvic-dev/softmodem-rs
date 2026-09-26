@@ -14,6 +14,8 @@ use softmodem_link::{Link, Setup, Status};
 use softmodem_transport::{Call, FRAME_SAMPLES};
 use tracing::info;
 
+use crate::journal::{Event, Header, Journal};
+
 // V.25: silence, answer tone, a short gap, then the data pump.
 const ANSWER_SILENCE: usize = 16_000;
 const ANSWER_TONE: usize = 26_400;
@@ -26,7 +28,7 @@ const LOW_WATER: Duration = Duration::from_millis(67);
 const QUIET: Duration = Duration::from_secs(2);
 
 /// How a call tries V.42 in each role.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Setups {
     pub(crate) originate: Setup,
     pub(crate) answer: Setup,
@@ -42,12 +44,14 @@ pub(crate) struct Received {
     pub(crate) compression: Option<Directions>,
 }
 
+/// A call's line, or for a replay a line with no call under it.
 #[derive(Debug)]
-pub(crate) struct Line {
-    pub(crate) call: Call,
+pub(crate) struct Line<C = Call> {
+    pub(crate) call: C,
     offer: Offer,
     setups: Setups,
     handshake: Option<Handshake>,
+    journal: Option<Journal>,
 }
 
 #[derive(Debug)]
@@ -64,6 +68,7 @@ struct Handshake {
     connected: bool,
     rate: u32,
     recovery: Recovery,
+    stage: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,23 +113,41 @@ impl Recovery {
     }
 }
 
-impl Line {
+impl<C> Line<C> {
     /// A line in `role`, or silent with no handshake for a call placed with
-    /// `;`, until [`Line::start`] is called.
-    pub(crate) fn new(call: Call, offer: Offer, setups: Setups, role: Option<Role>) -> Self {
+    /// `;`, until [`Line::start`] is called, that writes all it is given to
+    /// `journal`.
+    pub(crate) fn new(call: C, header: Header, mut journal: Option<Journal>) -> Self {
+        if let Some(journal) = &mut journal {
+            journal.header(&header);
+        }
+        let Header {
+            offer,
+            setups,
+            role,
+        } = header;
         Self {
             call,
             offer,
             setups,
             handshake: role.map(|role| Handshake::new(offer, setups, role)),
+            journal,
         }
     }
 
-    pub(crate) fn start(&mut self, role: Role) {
+    fn note(&mut self, now: Instant, event: &Event) {
+        if let Some(journal) = &mut self.journal {
+            journal.event(now, event);
+        }
+    }
+
+    pub(crate) fn start(&mut self, role: Role, now: Instant) {
+        self.note(now, &Event::Start(role));
         self.handshake = Some(Handshake::new(self.offer, self.setups, role));
     }
 
-    pub(crate) fn retrain(&mut self) {
+    pub(crate) fn retrain(&mut self, now: Instant) {
+        self.note(now, &Event::Retrain);
         if let Some(handshake) = &mut self.handshake {
             handshake.pump.retrain();
         }
@@ -132,7 +155,8 @@ impl Line {
 
     /// Starts ending the call with the far end, and says whether the
     /// modulation can, so that the modem waits for [`Line::cleared`].
-    pub(crate) fn clear_down(&mut self) -> bool {
+    pub(crate) fn clear_down(&mut self, now: Instant) -> bool {
+        self.note(now, &Event::ClearDown);
         let Some(handshake) = &mut self.handshake else {
             return false;
         };
@@ -177,6 +201,7 @@ impl Line {
     }
 
     pub(crate) fn send(&mut self, bytes: &[u8], now: Instant) {
+        self.note(now, &Event::Send(bytes.to_vec()));
         if let Some(handshake) = &mut self.handshake
             && let Some(link) = &mut handshake.link
         {
@@ -199,19 +224,29 @@ impl Line {
 
     /// The next 20 ms to send.
     pub(crate) fn transmit(&mut self, now: Instant) -> Vec<i16> {
+        self.note(now, &Event::Tx);
         let mut samples = vec![0; FRAME_SAMPLES];
         if let Some(handshake) = &mut self.handshake {
             handshake.fill(now);
             handshake.transmit(&mut samples);
+            handshake.follow_stage();
         }
         samples
     }
 
+    /// The frame from [`Line::transmit`] was not sent after all.
+    pub(crate) fn dropped(&mut self, now: Instant) {
+        self.note(now, &Event::Dropped);
+    }
+
     pub(crate) fn receive(&mut self, samples: &[i16], now: Instant) -> Received {
-        self.handshake
-            .as_mut()
-            .map(|h| h.receive(samples, now))
-            .unwrap_or_default()
+        self.note(now, &Event::Rx(samples.len()));
+        let Some(handshake) = &mut self.handshake else {
+            return Received::default();
+        };
+        let received = handshake.receive(samples, now);
+        handshake.follow_stage();
+        received
     }
 }
 
@@ -234,6 +269,25 @@ impl Handshake {
             connected: false,
             rate: 0,
             recovery: Recovery::default(),
+            stage: String::new(),
+        }
+    }
+
+    fn follow_stage(&mut self) {
+        let answer_tone = self.role == Role::Answer && !self.pump.sends_own_answer_tone();
+        let stage = match self.sent {
+            sent if answer_tone && sent <= ANSWER_SILENCE => "V.25 silence".into(),
+            sent if answer_tone && sent <= ANSWER_SILENCE + ANSWER_TONE => {
+                "V.25 answer tone".into()
+            }
+            sent if answer_tone && sent <= ANSWER_SILENCE + ANSWER_TONE + ANSWER_GAP => {
+                "V.25 gap".into()
+            }
+            _ => self.pump.stage(),
+        };
+        if stage != self.stage {
+            info!(stage, "handshake");
+            self.stage = stage;
         }
     }
 

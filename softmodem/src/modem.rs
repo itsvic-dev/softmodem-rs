@@ -22,6 +22,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
 use tracing::{debug, info, trace, warn};
 
+use crate::journal::{Header, Journal};
 use crate::line::{Line, Received, Setups};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
@@ -78,10 +79,11 @@ impl<T, P, F> Modem<T, P, F>
 where
     T: Transport,
     P: SerialPort,
-    F: FnMut(Call, Role) -> Call,
+    F: FnMut(Call, Role) -> (Call, Option<Journal>),
 {
     /// A modem that starts from `profile`, the settings `ATZ` returns to.
-    /// `on_call` sees every call as it is placed or answered, to record it.
+    /// `on_call` sees every call as it is placed or answered, to record it,
+    /// and may give a journal for the call's line.
     pub fn new(transport: T, port: P, profile: Settings, on_call: F) -> Self {
         Self {
             transport,
@@ -390,47 +392,8 @@ where
     }
 
     fn attach(&mut self, call: Call, role: Option<Role>, deadline: Instant) {
-        let call = (self.on_call)(call, role.unwrap_or(Role::Originate));
-        let chosen = self.settings.modulation;
-        let offer = Offer {
-            top: match chosen.carrier {
-                Carrier::V21 => Modulation::V21,
-                Carrier::V22 => Modulation::V22,
-                Carrier::V22bis => Modulation::V22bis,
-                Carrier::V34 => Modulation::V34,
-                Carrier::V90 => Modulation::V90,
-            },
-            automode: chosen.automode,
-            max_transmit: chosen.max_transmit,
-        };
-        let control = self.settings.error_control;
-        let asked = self.settings.compression;
-        let compression = (asked.direction != 0).then_some(CompressionSetup {
-            offer: Directions {
-                transmit: asked.transmit(),
-                receive: asked.receive(),
-                parameters: Parameters {
-                    codewords: asked.max_dict,
-                    max_string: asked.max_string,
-                },
-            },
-            required: asked.required,
-        });
-        let setups = Setups {
-            originate: Setup {
-                lapm: control.originator_tries(),
-                detection: control.originator_detects(),
-                required: control.originator_requires(),
-                compression,
-            },
-            answer: Setup {
-                lapm: control.answerer_tries(),
-                detection: true,
-                required: control.answerer_requires(),
-                compression,
-            },
-        };
-        self.line = Some(Line::new(call, offer, setups, role));
+        let (call, journal) = (self.on_call)(call, role.unwrap_or(Role::Originate));
+        self.line = Some(Line::new(call, header(&self.settings, role), journal));
         self.mode = Mode::Handshake { deadline };
         self.carrier_lost_at = None;
         self.ticker.reset();
@@ -441,14 +404,14 @@ where
             return self.report(ResultCode::NoCarrier).await;
         };
         if !line.has_handshake() {
-            line.start(Role::Originate);
+            line.start(Role::Originate, Instant::now().into_std());
             self.mode = Mode::Handshake {
                 deadline: Instant::now() + self.settings.carrier_wait(),
             };
             return Ok(());
         }
         if retrain {
-            line.retrain();
+            line.retrain(Instant::now().into_std());
         }
         let code = ResultCode::connect(line.bit_rate().unwrap_or_default());
         self.mode = Mode::Data {
@@ -522,7 +485,10 @@ where
             match line.call.audio_out.try_send(samples) {
                 Ok(()) => {}
                 // Blocking here would stop this modem draining its own receive queue.
-                Err(TrySendError::Full(_)) => debug!("audio queue full, frame dropped"),
+                Err(TrySendError::Full(_)) => {
+                    debug!("audio queue full, frame dropped");
+                    line.dropped(Instant::now().into_std());
+                }
                 Err(TrySendError::Closed(_)) => {
                     info!("far end hung up");
                     return self.hang_up_with(ResultCode::NoCarrier).await;
@@ -630,7 +596,7 @@ where
         let Some(line) = &mut self.line else {
             return;
         };
-        if !line.clear_down() {
+        if !line.clear_down(Instant::now().into_std()) {
             return;
         }
         let deadline = Instant::now() + CLEARDOWN_WAIT;
@@ -640,6 +606,7 @@ where
                 _ = ticker.tick() => {
                     let samples = line.transmit(Instant::now().into_std());
                     if line.call.audio_out.try_send(samples).is_err() {
+                        line.dropped(Instant::now().into_std());
                         break;
                     }
                 }
@@ -727,7 +694,7 @@ async fn receive(line: &mut Option<Line>) -> Option<Vec<i16>> {
     }
 }
 
-struct Hex<'a>(&'a [u8]);
+pub(crate) struct Hex<'a>(pub(crate) &'a [u8]);
 
 impl std::fmt::Display for Hex<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -750,6 +717,54 @@ fn identify(n: u8) -> Option<String> {
                 .into(),
         ),
         _ => None,
+    }
+}
+
+/// What a line starts with in `role` under `settings`.
+pub(crate) fn header(settings: &Settings, role: Option<Role>) -> Header {
+    let chosen = settings.modulation;
+    let offer = Offer {
+        top: match chosen.carrier {
+            Carrier::V21 => Modulation::V21,
+            Carrier::V22 => Modulation::V22,
+            Carrier::V22bis => Modulation::V22bis,
+            Carrier::V34 => Modulation::V34,
+            Carrier::V90 => Modulation::V90,
+        },
+        automode: chosen.automode,
+        max_transmit: chosen.max_transmit,
+    };
+    let control = settings.error_control;
+    let asked = settings.compression;
+    let compression = (asked.direction != 0).then_some(CompressionSetup {
+        offer: Directions {
+            transmit: asked.transmit(),
+            receive: asked.receive(),
+            parameters: Parameters {
+                codewords: asked.max_dict,
+                max_string: asked.max_string,
+            },
+        },
+        required: asked.required,
+    });
+    let setups = Setups {
+        originate: Setup {
+            lapm: control.originator_tries(),
+            detection: control.originator_detects(),
+            required: control.originator_requires(),
+            compression,
+        },
+        answer: Setup {
+            lapm: control.answerer_tries(),
+            detection: true,
+            required: control.answerer_requires(),
+            compression,
+        },
+    };
+    Header {
+        offer,
+        setups,
+        role,
     }
 }
 
