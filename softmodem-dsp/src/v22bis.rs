@@ -7,7 +7,9 @@
 //! the rate change of § 6.6.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
+use crate::SAMPLE_RATE;
 use crate::dpsk::{self, V22_HIGH_HZ, V22_LOW_HZ, quarter_turns};
 use crate::pump::{DataPump, Role};
 use crate::qam::{self, Modulator, Rate};
@@ -166,6 +168,7 @@ pub(crate) struct V22bis {
     retrained_at: Option<usize>,
     ready: bool,
     connected: bool,
+    round_trip: Option<usize>,
 }
 
 impl V22bis {
@@ -215,6 +218,7 @@ impl V22bis {
             retrained_at: None,
             ready: false,
             connected: false,
+            round_trip: None,
         }
     }
 
@@ -267,8 +271,11 @@ impl V22bis {
         self.heard_dibits = RateDibits::default();
         match self.exchange {
             _ if !self.connected => {
-                if self.s1_sent_until.is_none() {
-                    self.send_s1();
+                match self.s1_sent_until {
+                    Some(until) => {
+                        self.round_trip = Some(self.sent.saturating_sub(until + S1_SAMPLES));
+                    }
+                    None => self.send_s1(),
                 }
                 self.train_from(self.sent);
             }
@@ -560,6 +567,12 @@ impl DataPump for V22bis {
 
     fn connected(&self) -> bool {
         self.connected
+    }
+
+    #[expect(clippy::cast_precision_loss, reason = "a few seconds of samples")]
+    fn round_trip(&self) -> Option<Duration> {
+        self.round_trip
+            .map(|samples| Duration::from_secs_f64(samples as f64 / SAMPLE_RATE))
     }
 
     fn stage(&self) -> String {

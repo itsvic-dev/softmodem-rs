@@ -403,6 +403,19 @@ async fn connects_with_v42_at_v22_up_to_a_mobile_round_trip_of_1_7_s() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn connects_with_v42_at_v22bis_up_to_a_mobile_round_trip_of_1_7_s() {
+    for one_way in [0, 400, 850].map(Duration::from_millis) {
+        let (a, b) = loopback::pair();
+        let late = move |call: Call, _| (call.delayed(one_way), None);
+        let mut a = attach_with(a, profile("ATE0+ER=1;+MS=V22B,0").unwrap(), late);
+        let mut b = attach_with(b, profile("ATE0S0=1+ER=1").unwrap(), late);
+        a.command("ATDT0300").await;
+        a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
+        b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn falls_back_to_plain_data_when_one_end_has_no_v42() {
     for (caller, answerer) in [("\\N0", ""), ("", "\\N0"), ("+ES=1", "+ES=,,2")] {
         let (mut a, mut b) = two_modems(
