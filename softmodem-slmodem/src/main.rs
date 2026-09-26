@@ -5,8 +5,10 @@
 //! Joins slmodemd, from Aon's D-Modem, to a softmodem over its UDP wire, to
 //! test against the Smart Link DSP. slmodemd runs this on ATD as
 //! `slmodem-bridge NUMBER FD`, where FD is its audio socket, and it dials
-//! `SOFTMODEM_PEER`. `SOFTMODEM_NOISE_AFTER` and `SOFTMODEM_NOISE_RMS` add
-//! noise both ways from that many seconds after the answer.
+//! `SOFTMODEM_PEER`. On ATA the number is empty, and it answers the first
+//! call to `SOFTMODEM_LISTEN` instead. `SOFTMODEM_NOISE_AFTER` and
+//! `SOFTMODEM_NOISE_RMS` add noise both ways from that many seconds after
+//! the answer.
 //!
 //! The socket carries 16-bit samples at 9600 Hz, and slmodemd answers each
 //! block it reads with a block of the same length. So the far softmodem's
@@ -22,7 +24,7 @@ use std::os::fd::FromRawFd;
 
 use anyhow::{Context, bail};
 use softmodem_transport::wire::{Impairment, Wire};
-use softmodem_transport::{FRAME_SAMPLES, Transport};
+use softmodem_transport::{Call, FRAME_SAMPLES, Incoming, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tracing::info;
@@ -39,26 +41,47 @@ fn main() -> anyhow::Result<()> {
         bail!("usage: slmodem-bridge NUMBER FD");
     };
     let fd: i32 = fd.parse().context("reading the socket descriptor")?;
-    let peer: SocketAddr = std::env::var("SOFTMODEM_PEER")
-        .context("reading $SOFTMODEM_PEER")?
-        .parse()
-        .context("parsing $SOFTMODEM_PEER")?;
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run(&number, fd, peer))
+        .block_on(run(&number, fd))
 }
 
-async fn run(number: &str, fd: i32, peer: SocketAddr) -> anyhow::Result<()> {
+fn address(variable: &str) -> anyhow::Result<SocketAddr> {
+    std::env::var(variable)
+        .with_context(|| format!("reading ${variable}"))?
+        .parse()
+        .with_context(|| format!("parsing ${variable}"))
+}
+
+async fn connect(number: &str) -> anyhow::Result<Call> {
+    if number.is_empty() {
+        let local = address("SOFTMODEM_LISTEN")?;
+        let mut wire = Wire::bind(local, None, Impairment::default()).await?;
+        info!(%local, "waiting for a call");
+        loop {
+            if let Incoming::Ringing { caller, number } = wire.incoming().await? {
+                info!(%caller, number, "answering");
+                return Ok(wire.answer(&caller).await?);
+            }
+        }
+    }
+    let peer = address("SOFTMODEM_PEER")?;
+    let mut wire = Wire::bind("127.0.0.1:0".parse()?, Some(peer), Impairment::default()).await?;
+    info!(number, %peer, "dialling");
+    let call = wire.dial(number).await.context("dialling")?;
+    info!("answered");
+    Ok(call)
+}
+
+async fn run(number: &str, fd: i32) -> anyhow::Result<()> {
     // SAFETY: slmodemd hands this descriptor to the program it runs, to own.
     let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
     socket.set_nonblocking(true)?;
     let (mut from_slmodemd, mut to_slmodemd) = UnixStream::from_std(socket)?.into_split();
 
-    let mut wire = Wire::bind("127.0.0.1:0".parse()?, Some(peer), Impairment::default()).await?;
-    info!(number, %peer, "dialling");
-    let mut call = wire.dial(number).await.context("dialling")?;
-    info!("answered");
+    // Nothing goes to slmodemd before the call, as its answer timers count the samples it reads.
+    let mut call = connect(number).await?;
 
     let mut up = Resampler::up();
     let mut down = Resampler::down();
