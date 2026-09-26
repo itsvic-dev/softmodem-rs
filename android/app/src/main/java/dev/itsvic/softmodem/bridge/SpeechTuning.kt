@@ -42,7 +42,7 @@ class SpeechTuning(private val setParameters: (String) -> Unit, private val exec
     fun restore() {
         val custom = File(CUSTOM)
         if (!custom.exists() || !custom.readText().contains(MARKER)) return
-        custom.delete()
+        if (!custom.delete()) exec(arrayOf("rm", "-f", CUSTOM))
         setParameters("SET_CUST_XML_ENABLE=0")
     }
 
