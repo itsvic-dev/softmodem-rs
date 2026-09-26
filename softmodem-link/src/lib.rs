@@ -116,6 +116,7 @@ pub struct Link {
     /// ADPs sent, while the answerer still sends them.
     adps: usize,
     flags_heard: bool,
+    round_trip: Duration,
     sound_at: Option<Instant>,
     /// V.42 bis, set up once LAPM is connected.
     codec: Option<Codec>,
@@ -145,9 +146,19 @@ impl Link {
             received: Vec::new(),
             adps: 0,
             flags_heard: false,
+            round_trip: Duration::ZERO,
             sound_at: None,
             codec: None,
         }
+    }
+
+    /// The same link, for a line whose round trip is `round_trip`. The
+    /// originator waits that much longer for the answerer's ADP, as § 9.1.1
+    /// lets it set T400.
+    #[must_use]
+    pub fn with_round_trip(mut self, round_trip: Duration) -> Self {
+        self.round_trip = round_trip;
+        self
     }
 
     /// Starts the link once the data pump is connected at `bit_rate`.
@@ -169,7 +180,7 @@ impl Link {
                     detection: true, ..
                 },
                 Role::Originate,
-            ) => Phase::Originating(now + T400),
+            ) => Phase::Originating(now + T400 + self.round_trip),
             (_, Role::Originate) => self.protocol(Lapm::originate(self.t401, self.setup.offer())),
             (_, Role::Answer) => Phase::Listening(now + ANSWERER_T400),
         };

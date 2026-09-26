@@ -348,8 +348,13 @@ impl Handshake {
 
     fn link(&mut self) -> &mut Link {
         let (role, setup, pump) = (self.role, self.setup, &self.pump);
-        self.link
-            .get_or_insert_with(|| Link::new(role, setup, pump.decoder()))
+        self.link.get_or_insert_with(|| {
+            let link = Link::new(role, setup, pump.decoder());
+            match pump.round_trip() {
+                Some(round_trip) => link.with_round_trip(round_trip),
+                None => link,
+            }
+        })
     }
 
     /// Tops up the pump's queue from the link.
