@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 {
-  # x86-64, where slmodemd's 32-bit x86 runs natively, under TCG on any host.
   guestPkgs,
+  # Whether the guest runs slmodemd's 32-bit x86 under qemu-user.
+  emulated,
   softmodem,
   bridge,
   slmodemd,
@@ -44,8 +45,10 @@ in
   nodes.machine =
     { pkgs, ... }:
     {
-      # Under TCG one CPU cannot run slmodemd's V.90 and the softmodem in real time.
+      # Emulated, one CPU cannot run slmodemd's V.90 and the softmodem in real time.
       virtualisation.cores = 4;
+      # Not i686-linux, whose magic is EM_486: slmodemd's ELF says EM_386.
+      boot.binfmt.emulatedSystems = guestPkgs.lib.optional emulated "i386-linux";
       environment.systemPackages = [
         pkgs.python3
         pkgs.sox
@@ -62,7 +65,7 @@ in
 
       systemd.services.slmodemd = {
         wantedBy = [ "multi-user.target" ];
-        after = [ "softmodem.service" ];
+        after = [ "softmodem.service" ] ++ guestPkgs.lib.optional emulated "systemd-binfmt.service";
         environment = {
           SOFTMODEM_PEER = "127.0.0.1:5300";
           SOFTMODEM_LISTEN = "127.0.0.1:5301";
@@ -72,7 +75,13 @@ in
           SOFTMODEM_NOISE_RMS = toString noise.rms;
           SOFTMODEM_NOISE_WAY = noise.way or "both";
         };
-        serviceConfig.ExecStart = "${slmodemd}/bin/slmodemd -d9 -e ${bridge}/bin/slmodem-bridge";
+        serviceConfig = {
+          ExecStart = "${slmodemd}/bin/slmodemd -d9 -e ${bridge}/bin/slmodem-bridge";
+        }
+        // guestPkgs.lib.optionalAttrs emulated {
+          # slmodemd locks all its future memory, and under qemu-user that includes the translated code.
+          LimitMEMLOCK = "infinity";
+        };
       };
     };
 

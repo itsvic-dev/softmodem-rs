@@ -66,12 +66,14 @@ dials a softmodem over the UDP wire and carries the audio between them.
 call to `SOFTMODEM_LISTEN`.
 
 - The Smart Link DSP is a 32-bit x86 object, so slmodemd is built with
-  `pkgsCross.gnu32` (`nix/slmodemd.nix`), and the checks run it in an x86-64
-  guest under TCG. It is GPL-2.0, and only the checks use it.
+  `pkgsCross.gnu32` (`nix/slmodemd.nix`). The checks run it natively in an
+  x86-64 guest, or under qemu-user in an aarch64 one, where it needs
+  `LimitMEMLOCK=infinity`: it locks all its future memory, and qemu-user's
+  translated code with it. It is GPL-2.0, and only the checks use it.
 - The socket carries 16-bit samples at 9600 Hz. slmodemd answers each block
   it reads with a block of the same length, so the softmodem's 20 ms frames
   set the clock, resampled between 8000 and 9600 samples/s.
-- Its V.90 takes several times the CPU of its V.34. Under TCG the guest
+- Its V.90 takes several times the CPU of its V.34. Emulated, the guest
   has four CPUs, and with one the calls fail in a different place each
   time: slmodemd misses Jd, reads MP with a bad CRC, or loses data.
 - Noise toward it in V.90 data mode makes it renegotiate with CPs, to

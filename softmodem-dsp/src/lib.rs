@@ -9,6 +9,7 @@ pub mod automode;
 mod correlator;
 pub mod dpsk;
 pub mod dtmf;
+pub mod echo;
 pub mod fsk;
 pub mod hdlc;
 mod passband;

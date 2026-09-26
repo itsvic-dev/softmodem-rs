@@ -169,6 +169,18 @@ fn times_reversals_through_noise_and_the_echo_of_its_own_tone() {
 }
 
 #[test]
+fn times_reversals_under_a_guard_tone_louder_than_tone_a() {
+    let sent = [2000, 5000];
+    let mut guard = vec![0; 8000];
+    Tone::new(GUARD_HZ, NOMINAL_DBM0 + 5.0).render(&mut guard);
+    let heard = reversals(Role::Answer, &mix(&tone(Role::Answer, 8000, &sent), &guard));
+    assert!(
+        within_a_sample(&heard, &sent),
+        "a loud guard tone would hide tone A: {heard:?}"
+    );
+}
+
+#[test]
 fn a_tone_that_stops_is_not_a_reversal() {
     let mut line = tone(Role::Originate, 3000, &[]);
     line.extend([0; 2000]);

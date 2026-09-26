@@ -41,6 +41,16 @@ pub struct SDetector {
 }
 
 impl SDetector {
+    /// Takes the next front-end symbol when it is too faint to be the far
+    /// end's, as the echo of this end's own S is: it ends any S heard so far.
+    pub fn skip(&mut self, symbol: &Symbol) {
+        let [_, old] = self.history;
+        self.history = [old, symbol.symbol];
+        self.count += 1;
+        self.run = 0;
+        self.reversed = 0;
+    }
+
     /// Takes the next front-end symbol.
     pub fn push(&mut self, symbol: &Symbol) -> Option<Heard> {
         let z = symbol.symbol;
