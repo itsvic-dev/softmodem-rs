@@ -11,6 +11,7 @@ use super::cp::Cp;
 use super::design::{self, Levels, UCHORDS};
 use super::downstream::{Downstream, Events};
 use super::encoder::{FRAME, Mapping};
+use super::fallback::Settles;
 use super::jd::Jd;
 use super::ucode::COUNT;
 use crate::passband::Complex;
@@ -22,6 +23,7 @@ use crate::v34::framing::Framing;
 use crate::v34::modulator::Modulator;
 use crate::v34::mp::{E_ONES, Mp};
 use crate::v34::phase2::{PcmOutcome, Phase2};
+use crate::v34::pump::V34;
 use crate::v34::training::{self, PP_SYMBOLS, Points};
 use crate::v34::{NOMINAL_DBM0, rates, tones};
 
@@ -423,6 +425,14 @@ impl Analogue {
         }
     }
 
+    /// An analogue modem that asks for V.34 in INFO1a, in phase 2 and in each retrain.
+    #[cfg(test)]
+    pub(crate) fn picking_v34() -> Self {
+        let mut analogue = Self::new();
+        analogue.phase2 = Phase2::analogue().picking_v34();
+        analogue
+    }
+
     /// The upstream rate in data mode, in bit/s, which the digital modem's
     /// MP set, or 0 before data mode.
     #[must_use]
@@ -670,5 +680,19 @@ impl DataPump for Analogue {
     fn connected(&self) -> bool {
         self.upstream.as_ref().is_some_and(|up| up.b1_sent)
             && self.downstream.as_ref().is_some_and(Downstream::in_data)
+    }
+}
+
+// § 9.2.2.1.9: V.34 as the answer modem, where this end asked for it in INFO1a.
+impl Settles for Analogue {
+    fn settled_on_v34(&self) -> Option<V34> {
+        let outcome = self.phase2.settled_on_v34()?;
+        Some(V34::after_v90(Role::Answer, outcome))
+    }
+
+    fn retrain_from_v34(&mut self, rate: u32, online: bool) {
+        self.retrained_from = rate;
+        self.online |= online;
+        self.phase2 = self.phase2.again().unwrap_or_else(Phase2::analogue);
     }
 }

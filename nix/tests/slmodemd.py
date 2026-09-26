@@ -7,6 +7,7 @@ reading both serial ports."""
 
 import os
 import re
+import select
 import sys
 import termios
 import time
@@ -17,6 +18,9 @@ TEXT_DOWN = b"And back from the softmodem, ZYXWVUTSRQPONMLKJIHGFEDCBA\r\n"
 
 
 class Port:
+    # slmodemd exits just after NO CARRIER, and its pty's hangup drops unread text.
+    ports = []
+
     def __init__(self, name, path):
         self.name = name
         self.fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
@@ -25,22 +29,34 @@ class Port:
         attributes[2] |= termios.CLOCAL
         termios.tcsetattr(self.fd, termios.TCSANOW, attributes)
         self.seen = b""
+        self.open = True
+        Port.ports.append(self)
+
+    def read(self):
+        try:
+            data = os.read(self.fd, 4096)
+        except BlockingIOError:
+            return
+        except OSError:
+            data = b""
+        self.seen += data
+        self.open = bool(data)
 
     def expect(self, pattern, timeout):
         deadline = time.monotonic() + timeout
         while True:
-            try:
-                self.seen += os.read(self.fd, 4096)
-            except OSError:
-                pass
             found = re.search(pattern, self.seen)
             if found:
                 self.seen = self.seen[found.end():]
                 print(f"{self.name}: {found.group(0).decode(errors='replace')}", flush=True)
                 return found.group(0)
-            if time.monotonic() > deadline:
+            left = deadline - time.monotonic()
+            if left <= 0:
                 sys.exit(f"{self.name} never sent {pattern!r}, sent {self.seen!r}")
-            time.sleep(0.05)
+            ready, _, _ = select.select([p.fd for p in Port.ports if p.open], [], [], left)
+            for port in Port.ports:
+                if port.fd in ready:
+                    port.read()
 
     def send(self, data):
         os.write(self.fd, data)

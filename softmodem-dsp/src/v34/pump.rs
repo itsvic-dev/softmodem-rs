@@ -736,6 +736,17 @@ pub struct V34 {
     tone_heard: usize,
     monitor: Monitor,
     asks: Asks,
+    retrains: Retrains,
+}
+
+/// Whose phase 2 a retrain runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Retrains {
+    Here,
+    /// Phase 2 was that of V.90, which a retrain must use again, once `asked`.
+    InV90 {
+        asked: bool,
+    },
 }
 
 impl V34 {
@@ -757,7 +768,25 @@ impl V34 {
             tone_heard: 0,
             monitor: Monitor::default(),
             asks: Asks::default(),
+            retrains: Retrains::Here,
         }
+    }
+
+    /// V.34 from phase 3, where phase 2 of V.90 settled on V.34
+    /// (§ 9.2.1.1.8/V.90 and § 9.2.2.1.9/V.90). A retrain goes back to
+    /// phase 2 of V.90, which [`V34::retrain_asked`] leaves to the V.90 modem.
+    #[must_use]
+    pub fn after_v90(role: Role, outcome: Outcome) -> Self {
+        let mut v34 = Self::new(role);
+        v34.retrains = Retrains::InV90 { asked: false };
+        v34.start_training(outcome);
+        v34
+    }
+
+    /// Whether either end has started a retrain that phase 2 of V.90 must carry.
+    #[must_use]
+    pub fn retrain_asked(&self) -> bool {
+        self.retrains == Retrains::InV90 { asked: true }
     }
 
     /// Asking the far transmitter for `asks` in MP.
@@ -793,6 +822,10 @@ impl V34 {
         let Some(outcome) = self.outcome else {
             return;
         };
+        if let Retrains::InV90 { asked } = &mut self.retrains {
+            *asked = true;
+            return;
+        }
         self.phase2 = Phase2::retrain(self.role, outcome.far);
         self.outcome = None;
         self.modulator = None;

@@ -14,6 +14,7 @@ use crate::v22bis::V22bis;
 use crate::v34::pump::V34;
 use crate::v90::analogue::Analogue;
 use crate::v90::digital::Digital;
+use crate::v90::fallback::Fallback;
 
 /// Which end of the link this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +53,8 @@ impl Modulation {
             (Self::V22, _) => Box::new(V22::new(role)),
             (Self::V22bis, _) => Box::new(V22bis::new(role)),
             (Self::V34, _) => Box::new(V34::new(role)),
-            (Self::V90, Role::Answer) => Box::new(Digital::new()),
-            (Self::V90, Role::Originate) => Box::new(Analogue::up_to(max_transmit)),
+            (Self::V90, Role::Answer) => Box::new(Fallback::new(Digital::new())),
+            (Self::V90, Role::Originate) => Box::new(Fallback::new(Analogue::up_to(max_transmit))),
         }
     }
 }

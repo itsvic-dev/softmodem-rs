@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use super::cp::Cp;
 use super::dil::Dil;
 use super::encoder::{Encoder, FRAME, Mapping};
+use super::fallback::Settles;
 use super::jd::{ALL_RATES, Jd};
 use super::training::{self, JD_PRIME_BITS, R_BAR_SYMBOLS, RI_SYMBOLS, Signs, TRN1D_SYMBOLS};
 use super::upstream::{Events, Upstream};
@@ -18,6 +19,7 @@ use crate::scrambler::{Polynomial, Scrambler};
 use crate::uart::Decoder as Characters;
 use crate::v34::mp::{Asks, Mp};
 use crate::v34::phase2::{PcmOutcome, Phase2};
+use crate::v34::pump::V34;
 use crate::v34::{rates, tones};
 
 // § 9.4.1.2: TRN2d for at least 2040T.
@@ -567,5 +569,19 @@ impl DataPump for Digital {
     fn connected(&self) -> bool {
         self.downstream.as_ref().is_some_and(|d| d.b1_sent)
             && self.upstream.as_ref().is_some_and(Upstream::in_data)
+    }
+}
+
+// § 9.2.1.1.8: V.34 as the call modem, where INFO1a asks for it.
+impl Settles for Digital {
+    fn settled_on_v34(&self) -> Option<V34> {
+        let outcome = self.phase2.settled_on_v34()?;
+        Some(V34::after_v90(Role::Originate, outcome))
+    }
+
+    fn retrain_from_v34(&mut self, rate: u32, online: bool) {
+        self.retrained_from = rate;
+        self.online |= online;
+        self.phase2 = self.phase2.again().unwrap_or_else(Phase2::digital);
     }
 }

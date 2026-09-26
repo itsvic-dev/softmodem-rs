@@ -6,6 +6,7 @@
 
 use super::analogue::Analogue;
 use super::digital::Digital;
+use super::fallback::Fallback;
 use crate::pump::DataPump;
 use crate::v34::mp::{Asks, Trellis};
 
@@ -42,8 +43,8 @@ fn padded(gain: f64) -> impl Fn(i16) -> i16 {
 }
 
 fn exchange(
-    analogue: &mut Analogue,
-    digital: &mut Digital,
+    analogue: &mut impl DataPump,
+    digital: &mut impl DataPump,
     frames: usize,
     line: &impl Fn(i16) -> i16,
 ) -> (Vec<bool>, Vec<bool>) {
@@ -100,8 +101,25 @@ fn connected_pair() -> (Analogue, Digital) {
     (analogue, digital)
 }
 
+// A pair that phase 2 settled on V.34, as the analogue modem asked in INFO1a.
+fn connected_on_v34() -> (Fallback<Analogue>, Fallback<Digital>) {
+    let mut analogue = Fallback::new(Analogue::picking_v34());
+    let mut digital = Fallback::new(Digital::new());
+    for _ in 0..2000 {
+        if analogue.connected() && digital.connected() {
+            break;
+        }
+        exchange(&mut analogue, &mut digital, 1, &alaw);
+    }
+    assert!(
+        analogue.connected() && digital.connected(),
+        "no V.34 connection after phase 2 of V.90: digital {digital:?}"
+    );
+    (analogue, digital)
+}
+
 // Whether data crosses down and up.
-fn carries_data(analogue: &mut Analogue, digital: &mut Digital) -> (bool, bool) {
+fn carries_data(analogue: &mut impl DataPump, digital: &mut impl DataPump) -> (bool, bool) {
     let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
     analogue.push_bits(&message);
     digital.push_bits(&message);
@@ -415,6 +433,46 @@ fn a_renegotiation_finds_the_data_frames_again_after_a_slip() {
 #[test]
 fn retrains_from_either_end_after_a_slip_and_carries_data_after() {
     recovers_from_either_end(Recovery::Retrain, true);
+}
+
+#[test]
+fn falls_back_to_v34_when_the_analogue_modem_asks_for_it() {
+    let (mut analogue, mut digital) = connected_on_v34();
+    assert_eq!(analogue.bit_rate(), digital.bit_rate());
+    assert!(
+        (2400..=33_600).contains(&digital.bit_rate()),
+        "V.34 at {} bit/s",
+        digital.bit_rate()
+    );
+    assert_eq!(carries_data(&mut analogue, &mut digital), (true, true));
+}
+
+#[test]
+fn retrains_through_phase_2_of_v90_after_falling_back() {
+    for from_analogue in [true, false] {
+        let end = if from_analogue { "analogue" } else { "digital" };
+        let (mut analogue, mut digital) = connected_on_v34();
+        let from: &mut dyn DataPump = if from_analogue {
+            &mut analogue
+        } else {
+            &mut digital
+        };
+        from.retrain();
+        assert!(!(analogue.connected() && digital.connected()));
+        let back = (0..2000).find(|_| {
+            exchange(&mut analogue, &mut digital, 1, &alaw);
+            analogue.connected() && digital.connected()
+        });
+        assert!(
+            back.is_some(),
+            "a retrain from the {end} modem would not end"
+        );
+        assert_eq!(
+            carries_data(&mut analogue, &mut digital),
+            (true, true),
+            "data down and up after a retrain from the {end} modem"
+        );
+    }
 }
 
 #[test]

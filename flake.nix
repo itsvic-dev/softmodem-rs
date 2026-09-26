@@ -157,9 +157,11 @@
             # slmodemd, as the analogue modem, on a VoIP provider's path like ppp-v90-voip's.
             slmodemd-v90-voip = peer {
               label = "V90-voip";
-              ours = "+MS=V90,0";
-              theirs = "+MS=90";
-              impairment = "--delay 140 --conceal 0.002 --seed 1 --gateway-after 300 --gateway-noise 100";
+              # S7=90: slmodemd tries V.90 twice before V.34, past the default 50 s.
+              ours = "S7=90+MS=V90,0";
+              theirs = "S7=90+MS=90";
+              # No --conceal: slmodemd takes a concealed frame in tone B for a reversal.
+              impairment = "--delay 140 --gateway-after 300 --gateway-noise 100";
             };
             slmodemd-v34-retrain = peer {
               label = "V34-retrain";
