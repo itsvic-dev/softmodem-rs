@@ -269,6 +269,12 @@ impl Default for Equalizer {
 }
 
 impl Equalizer {
+    /// Learns the level of the input again from the next symbol, as when
+    /// the far end starts after only this end's own echo was heard.
+    pub fn relevel(&mut self) {
+        self.symbols = 0;
+    }
+
     /// The equalised point for `symbol`.
     pub fn output(&mut self, symbol: &Symbol) -> Complex {
         let heard = power(symbol.symbol);

@@ -17,6 +17,7 @@ use super::phase2::{Outcome, Phase2};
 use super::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use super::training::{self, J_4, J_16, J_PRIME, PP_SYMBOLS, Points};
 use super::{NOMINAL_DBM0, SymbolRate, rates, tones};
+use crate::echo::Canceller;
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Descrambler, Polynomial, Scrambler};
@@ -58,6 +59,8 @@ const fn code(pattern: &str) -> u32 {
     value
 }
 const CARRIER_DBM0: f64 = -43.0;
+// 10 dB below the far end's loudest in phase 2, L1 at 6 dB above nominal, a frame is not the far end's S.
+const FAINT: f64 = 0.1;
 
 fn polynomial(role: Role) -> Polynomial {
     match role {
@@ -379,6 +382,8 @@ struct Sink {
     front_end: FrontEnd,
     equalizer: Equalizer,
     detector: SDetector,
+    // What is heard now is too faint to be the far end's S, as the echo of this end's own is.
+    faint: bool,
     listen: Listen,
     phase: u8,
     count: usize,
@@ -406,6 +411,7 @@ impl Sink {
             front_end: FrontEnd::new(outcome.receive.symbol_rate, outcome.receive.high_carrier),
             equalizer: Equalizer::default(),
             detector: SDetector::default(),
+            faint: false,
             listen: Listen::S,
             phase: 3,
             count: 0,
@@ -455,7 +461,13 @@ impl Sink {
         let z = self.equalizer.output(symbol);
         let index = self.count.checked_sub(DELAY);
         self.count += 1;
-        match (self.detector.push(symbol), self.listen) {
+        let heard = if self.faint {
+            self.detector.skip(symbol);
+            None
+        } else {
+            self.detector.push(symbol)
+        };
+        match (heard, self.listen) {
             (Some(Heard::SBar(at)), Listen::S) => {
                 self.listen = Listen::Train { from: at };
                 self.front_end.track(Tracking::Train);
@@ -744,6 +756,9 @@ pub struct V34 {
     /// The far end's tone A or B in data mode, which starts a retrain.
     retrain_tone: tones::Detector,
     tone_heard: usize,
+    echo: Canceller,
+    // The power of the loudest frame heard in phase 2, which is the far end's.
+    far_power: f64,
     /// Samples heard in phase 4 without the far E, until it comes.
     e_waited: Option<usize>,
     monitor: Monitor,
@@ -779,6 +794,8 @@ impl V34 {
             online: false,
             retrain_tone: tones::Detector::new(other(role)),
             tone_heard: 0,
+            echo: Canceller::new(),
+            far_power: 0.0,
             e_waited: Some(0),
             monitor: Monitor::default(),
             asks: Asks::default(),
@@ -1012,22 +1029,35 @@ impl DataPump for V34 {
     fn transmit(&mut self, out: &mut [i16]) {
         let (Some(modulator), Some(source)) = (&mut self.modulator, &mut self.source) else {
             self.phase2.transmit(out);
+            self.echo.sent(out, false);
             return;
         };
         let far = &self.far;
         modulator.render(out, || source.next(far));
+        // S and PP repeat within milliseconds, and so give no single delay.
+        let broadband = matches!(
+            source.send,
+            Send::Trn { sent: 1.. } | Send::J | Send::Mp | Send::Data
+        );
+        self.echo.sent(out, broadband);
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        let training = self
+            .sink
+            .as_ref()
+            .is_some_and(|sink| !matches!(sink.listen, Listen::Data { .. }));
+        let input = &self.echo.cancel(input, training);
+        let power = input.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
+            / f64::from(u32::try_from(input.len().max(1)).unwrap_or(1));
         if self.sink.is_none() {
+            self.far_power = self.far_power.max(power);
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.outcome().filter(|_| self.phase2.done()) {
                 self.start_training(outcome);
             }
             return;
         }
-        let power = input.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
-            / f64::from(u32::try_from(input.len().max(1)).unwrap_or(1));
         self.carrier = power.sqrt() > self.level;
         if self.far_retrains(input) || self.e_overdue(input.len()) {
             self.restart();
@@ -1036,6 +1066,11 @@ impl DataPump for V34 {
         let Some(sink) = &mut self.sink else {
             return;
         };
+        let faint = power < FAINT * self.far_power;
+        if sink.faint && !faint {
+            sink.equalizer.relevel();
+        }
+        sink.faint = faint;
         for symbol in sink.front_end.process(input) {
             sink.take(&symbol, &mut self.far, bits);
         }
@@ -1560,6 +1595,99 @@ mod tests {
         assert!(
             !retrained && caller.connected() && answerer.connected(),
             "one lost 100 ms of the line would take all of MP′ and E, and cost a retrain"
+        );
+    }
+
+    // Each end hears its own signal back 1197 samples late and about 16 dB down, as on a real call.
+    const ECHO_DELAY: usize = 1197;
+    const ECHO_PATH: [f64; 3] = [0.05, 0.12, -0.09];
+
+    struct Echoes {
+        sent: [VecDeque<i16>; 2],
+    }
+
+    impl Echoes {
+        fn new() -> Self {
+            let silence = || VecDeque::from(vec![0; ECHO_DELAY + ECHO_PATH.len()]);
+            Self {
+                sent: [silence(), silence()],
+            }
+        }
+
+        // What an end hears: the far end's signal and the echo of its own.
+        #[expect(clippy::cast_possible_truncation, reason = "clamped to i16")]
+        fn heard(&mut self, end: usize, own: &[i16], far: &[i16]) -> Vec<i16> {
+            own.iter()
+                .zip(far)
+                .map(|(&mine, &theirs)| {
+                    let sent = &mut self.sent[end];
+                    sent.push_back(mine);
+                    sent.pop_front();
+                    let echo: f64 = ECHO_PATH
+                        .iter()
+                        .enumerate()
+                        .map(|(k, g)| g * f64::from(sent[ECHO_PATH.len() - 1 - k]))
+                        .sum();
+                    (f64::from(theirs) + echo).clamp(-32_768.0, 32_767.0) as i16
+                })
+                .collect()
+        }
+    }
+
+    fn exchange_with_echo(
+        caller: &mut V34,
+        answerer: &mut V34,
+        echoes: &mut Echoes,
+        frames: usize,
+    ) -> (Vec<bool>, Vec<bool>) {
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let (mut at_caller, mut at_answerer) = (Vec::new(), Vec::new());
+        for _ in 0..frames {
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            answerer.receive(&echoes.heard(1, &down, &up), &mut at_answerer);
+            caller.receive(&echoes.heard(0, &up, &down), &mut at_caller);
+        }
+        (at_caller, at_answerer)
+    }
+
+    #[test]
+    fn connects_at_33600_through_the_echo_of_a_voip_path() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let mut echoes = Echoes::new();
+        let connected = (0..500).any(|_| {
+            exchange_with_echo(&mut caller, &mut answerer, &mut echoes, 1);
+            caller.connected() && answerer.connected()
+        });
+        assert!(
+            connected,
+            "no V.34 connection through an echo: caller {:?}/{:?} {:?} echo at {:?}, answerer {:?}/{:?} {:?} echo at {:?}",
+            caller.source.as_ref().map(|s| s.send),
+            caller.sink.as_ref().map(|s| s.listen),
+            caller.far,
+            caller.echo.delay(),
+            answerer.source.as_ref().map(|s| s.send),
+            answerer.sink.as_ref().map(|s| s.listen),
+            answerer.far,
+            answerer.echo.delay(),
+        );
+        assert_eq!(
+            (caller.bit_rate(), answerer.bit_rate()),
+            (33_600, 33_600),
+            "the echo would hold the rate down: echo found at {:?} and {:?}",
+            caller.echo.delay(),
+            answerer.echo.delay(),
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) =
+            exchange_with_echo(&mut caller, &mut answerer, &mut echoes, 80);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost through the echo"
         );
     }
 
