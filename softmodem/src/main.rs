@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use softmodem::replay::{Recording, Script};
 use softmodem::{Journal, Modem, Role};
 use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::{Plain, SerialPort};
@@ -22,6 +23,8 @@ use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::time::FormatTime;
 
 mod password;
 
@@ -42,6 +45,54 @@ enum Command {
         after_help = "Without --password, --password-env or --password-file, the modem asks for the password on stdin."
     )]
     Sip(SipArgs),
+    /// Play a recorded call again into a fresh modem, and log what it does.
+    #[command(
+        after_help = "With PREFIX, it reads PREFIX.journal, PREFIX-rx.wav and PREFIX-tx.wav, as --dump writes them. Without it, --rx and --role give the call, and the modem sends a frame and then hears one, every 20 ms. RUST_LOG=debug also logs the data."
+    )]
+    Replay(ReplayArgs),
+}
+
+#[derive(Args)]
+struct ReplayArgs {
+    /// A call recorded with --dump, such as dumps/1790000000-answer.
+    #[arg(required_unless_present = "rx", conflicts_with_all = ["rx", "role", "init"])]
+    prefix: Option<PathBuf>,
+    /// What this end heard, as 16-bit samples at 8 kHz.
+    #[arg(long, requires = "role")]
+    rx: Option<PathBuf>,
+    /// The channel of --rx, from 0.
+    #[arg(long, default_value_t = 0)]
+    rx_channel: u16,
+    /// What this end sent, to check the replay against.
+    #[arg(long, conflicts_with = "prefix")]
+    tx: Option<PathBuf>,
+    /// The channel of --tx, from 0.
+    #[arg(long, default_value_t = 0)]
+    tx_channel: u16,
+    /// The role this end had in the call.
+    #[arg(long, value_enum)]
+    role: Option<CallRole>,
+    /// Commands for the settings the call had, such as "AT+MS=V34".
+    #[arg(long, default_value = "")]
+    init: String,
+    /// Also play what this end sent into a modem of the far end's role.
+    #[arg(long)]
+    far: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CallRole {
+    Originate,
+    Answer,
+}
+
+impl From<CallRole> for Role {
+    fn from(role: CallRole) -> Self {
+        match role {
+            CallRole::Originate => Self::Originate,
+            CallRole::Answer => Self::Answer,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -142,22 +193,94 @@ struct ModemArgs {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    let command = Cli::parse().command;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let log = tracing_subscriber::fmt().with_env_filter(filter);
+    if let Command::Replay(args) = command {
+        log.with_timer(ReplayClock)
+            .with_target(false)
+            .with_writer(std::io::stdout)
+            .init();
+        return replay(&args);
+    }
+    log.with_writer(std::io::stderr).init();
 
     let runtime = tokio::runtime::Runtime::new()?;
-    let result = runtime.block_on(run(Cli::parse()));
+    let result = runtime.block_on(run(command));
     // A pending stdin read blocks a normal shutdown until the next line of input.
     runtime.shutdown_background();
     result
 }
 
-async fn run(cli: Cli) -> anyhow::Result<()> {
-    match cli.command {
+// Seconds into the call being replayed.
+struct ReplayClock;
+
+impl FormatTime for ReplayClock {
+    fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
+        write!(w, "{:9.3}", softmodem::replay::clock().as_secs_f64())
+    }
+}
+
+fn replay(args: &ReplayArgs) -> anyhow::Result<()> {
+    let read = |path: &Path, channel| {
+        wav::read(path, channel).with_context(|| format!("reading {}", path.display()))
+    };
+    let (script, rx, tx) = if let Some(prefix) = &args.prefix {
+        let prefix = recording_prefix(prefix);
+        let path = prefix.with_extension("journal");
+        let journal = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let rx = read(&with_suffix(&prefix, "-rx.wav"), 0)?;
+        let tx_path = with_suffix(&prefix, "-tx.wav");
+        let tx = match read(&tx_path, 0) {
+            Ok(tx) => Some(tx),
+            Err(error) => {
+                warn!(%error, "not checking what the replay sends");
+                None
+            }
+        };
+        (Script::Journal(journal), rx, tx)
+    } else {
+        let (Some(rx), Some(role)) = (&args.rx, args.role) else {
+            anyhow::bail!("give a PREFIX, or --rx and --role");
+        };
+        let settings = softmodem::profile(&args.init).map_err(anyhow::Error::msg)?;
+        let script = Script::Assumed {
+            role: role.into(),
+            settings: Box::new(settings),
+        };
+        let tx = match &args.tx {
+            Some(path) => Some(read(path, args.tx_channel)?),
+            None => None,
+        };
+        (script, read(rx, args.rx_channel)?, tx)
+    };
+    let recording = Recording {
+        rx: &rx,
+        tx: tx.as_deref(),
+    };
+    softmodem::replay::replay(script, recording, args.far).map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+// The prefix of a recording, also from the path of one of its files.
+fn recording_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    [".journal", "-rx.wav", "-tx.wav"]
+        .iter()
+        .find_map(|suffix| text.strip_suffix(suffix))
+        .map_or_else(|| path.to_owned(), PathBuf::from)
+}
+
+fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
+    let mut name = prefix.as_os_str().to_owned();
+    name.push(suffix);
+    name.into()
+}
+
+async fn run(command: Command) -> anyhow::Result<()> {
+    match command {
+        Command::Replay(args) => replay(&args),
         Command::Wire(args) => {
             let impairment = Impairment {
                 loss: args.loss,

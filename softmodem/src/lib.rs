@@ -7,6 +7,7 @@
 mod journal;
 mod line;
 mod modem;
+pub mod replay;
 
 pub use journal::Journal;
 pub use modem::{Modem, profile};

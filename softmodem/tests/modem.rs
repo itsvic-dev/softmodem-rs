@@ -3,16 +3,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::io;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use softmodem::{Modem, Role, profile};
+use softmodem::replay::{Recording, Replayed, Script, replay};
+use softmodem::{Journal, Modem, Role, profile};
 use softmodem_terminal::port::SerialPort;
 use softmodem_terminal::settings::Settings;
-use softmodem_transport::Call;
 use softmodem_transport::loopback::{self, Loopback};
+use softmodem_transport::{Call, wav};
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf, duplex,
 };
@@ -149,13 +151,13 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn attach(transport: Loopback, settings: Settings) -> Computer {
-    attach_with(transport, settings, |call, _| call)
+    attach_with(transport, settings, |call, _| (call, None))
 }
 
 fn attach_with(
     transport: Loopback,
     settings: Settings,
-    mut on_call: impl FnMut(Call, Role) -> Call + Send + 'static,
+    on_call: impl FnMut(Call, Role) -> (Call, Option<Journal>) + Send + 'static,
 ) -> Computer {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (computer, modem_side) = duplex(4096);
@@ -168,10 +170,8 @@ fn attach_with(
     };
     let speaker = Arc::<Mutex<Vec<f32>>>::default();
     let gains = speaker.clone();
-    let modem = Modem::new(transport, port, settings, move |call, role| {
-        (on_call(call, role), None)
-    })
-    .with_speaker(move |gain| gains.lock().unwrap().push(gain));
+    let modem = Modem::new(transport, port, settings, on_call)
+        .with_speaker(move |gain| gains.lock().unwrap().push(gain));
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
     Computer {
         port: computer,
@@ -192,7 +192,10 @@ enum Fault {
 }
 
 // Does `fault` to the call's audio once `after` frames have gone.
-fn impaired(after: usize, fault: Fault) -> impl FnMut(Call, Role) -> Call + Send + 'static {
+fn impaired(
+    after: usize,
+    fault: Fault,
+) -> impl FnMut(Call, Role) -> (Call, Option<Journal>) + Send + 'static {
     move |mut call, _| {
         let (impaired_out, mut outgoing) = mpsc::channel(8);
         let audio_out = std::mem::replace(&mut call.audio_out, impaired_out);
@@ -210,8 +213,87 @@ fn impaired(after: usize, fault: Fault) -> impl FnMut(Call, Role) -> Call + Send
                 }
             }
         });
-        call
+        (call, None)
     }
+}
+
+// Records each call to `prefix`, as --dump does.
+fn recorded(prefix: PathBuf) -> impl FnMut(Call, Role) -> (Call, Option<Journal>) + Send + 'static {
+    move |call, _| {
+        let call = wav::Recorder::create(&prefix).unwrap().record(call);
+        let journal = Journal::create(&prefix.with_extension("journal")).unwrap();
+        (call, Some(journal))
+    }
+}
+
+// Replays the call at `prefix`, checked against its recording with the sample at `changed` negated.
+fn replay_of(prefix: &Path, changed: Option<usize>) -> Replayed {
+    let with = |suffix: &str| PathBuf::from(format!("{}{suffix}", prefix.display()));
+    let journal = std::fs::read_to_string(with(".journal")).unwrap();
+    let rx = wav::read(&with("-rx.wav"), 0).unwrap();
+    let mut tx = wav::read(&with("-tx.wav"), 0).unwrap();
+    if let Some(n) = changed {
+        tx[n] = !tx[n];
+    }
+    let recording = Recording {
+        rx: &rx,
+        tx: Some(&tx),
+    };
+    replay(Script::Journal(journal), recording, true).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replay_of_a_recorded_call_sends_what_the_call_sent() {
+    let directory = std::env::temp_dir().join(format!("softmodem-replay-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let (caller, answerer) = (directory.join("caller"), directory.join("answerer"));
+    let (a, b) = loopback::pair();
+    let mut a = attach_with(a, profile("ATE0+MS=V90").unwrap(), recorded(caller.clone()));
+    let mut b = attach_with(
+        b,
+        profile("ATE0S0=1+MS=V90").unwrap(),
+        recorded(answerer.clone()),
+    );
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 56000\r\n").await;
+    b.expect("CONNECT 56000\r\n").await;
+    a.send(b"from the caller").await;
+    b.expect("from the caller").await;
+    a.escape().await;
+    a.expect_next(b"\r\nOK\r\n").await;
+    a.command("ATO1").await;
+    a.expect("CONNECT 56000\r\n").await;
+    sleep(Duration::from_secs(8)).await;
+    b.send(b"after the retrain").await;
+    a.expect("after the retrain").await;
+    a.escape().await;
+    a.command("ATH").await;
+    a.expect("OK\r\n").await;
+    b.expect("NO CARRIER\r\n").await;
+    sleep(Duration::from_secs(1)).await;
+
+    for (end, prefix) in [("caller", &caller), ("answerer", &answerer)] {
+        let replayed = replay_of(prefix, None);
+        assert!(
+            replayed.connected_at.is_some(),
+            "a replay of the {end} misses the CONNECT the call had"
+        );
+        assert_eq!(
+            replayed.differs_at, None,
+            "a replay of the {end} strays from the call without a change in the code"
+        );
+        assert!(
+            replayed.compared > 1000,
+            "a replay of the {end} checks only {} frames of the call",
+            replayed.compared
+        );
+        assert_eq!(
+            replay_of(prefix, Some(160_005)).differs_at,
+            Some(Duration::from_secs(20)),
+            "a replay of the {end} misses where it strays from the call"
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 fn two_modems(caller: &str, answerer: &str) -> (Computer, Computer) {
