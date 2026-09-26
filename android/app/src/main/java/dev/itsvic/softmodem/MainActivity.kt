@@ -19,15 +19,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -48,6 +54,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -95,13 +102,35 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App(modem: ModemViewModel) {
     val state by modem.state.collectAsState()
-    if (state is CallState.Idle) DialScreen(modem) else TerminalScreen(modem, state)
+    val usbSerial by UsbSerialService.running.collectAsState()
+    val serving = usbSerial
+    when {
+        serving != null -> UsbSerialScreen(serving)
+        state is CallState.Idle -> DialScreen(modem)
+        else -> TerminalScreen(modem, state)
+    }
+}
+
+@Composable
+private fun UsbSerialScreen(mode: Mode) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("The modem is on the USB serial port.", style = MaterialTheme.typography.titleMedium)
+        Text("Up to ${mode.label}.", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "A computer on the cable sees it as /dev/ttyACM0 on Linux, and dials with AT commands, " +
+                "such as ATDT0300. It stays on when you leave the app.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = { UsbSerialService.stop(context) }, Modifier.fillMaxWidth()) { Text("Stop") }
+    }
 }
 
 @Composable
 private fun DialScreen(modem: ModemViewModel) {
     val number by modem.number.collectAsState()
     val modulation by modem.modulation.collectAsState()
+    val automode by modem.automode.collectAsState()
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
@@ -123,18 +152,17 @@ private fun DialScreen(modem: ModemViewModel) {
                 "for a menu: 0300,,,1234#",
             style = MaterialTheme.typography.bodySmall,
         )
-        Modulation.entries.forEach { option ->
-            Row(
-                Modifier.fillMaxWidth().selectable(
-                    selected = option == modulation,
-                    onClick = { modem.modulation.value = option },
-                    role = Role.RadioButton,
-                ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = option == modulation, onClick = null)
-                Text(option.label, Modifier.padding(start = 4.dp))
-            }
+        ModulationMenu(modulation) { modem.modulation.value = it }
+        Row(
+            Modifier.fillMaxWidth().toggleable(
+                value = automode,
+                onValueChange = { modem.automode.value = it },
+                role = Role.Switch,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Automode: fall back to slower modulations", Modifier.weight(1f))
+            Switch(checked = automode, onCheckedChange = null)
         }
         if (modulation != Modulation.V21) {
             Text(
@@ -145,6 +173,42 @@ private fun DialScreen(modem: ModemViewModel) {
             )
         }
         Button(onClick = { modem.dial() }, Modifier.fillMaxWidth()) { Text("Dial") }
+        val context = LocalContext.current
+        OutlinedButton(
+            onClick = {
+                modem.stop()
+                UsbSerialService.start(context, modem.mode())
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Serve a computer on USB") }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModulationMenu(modulation: Modulation, onChoose: (Modulation) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = modulation.label,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text("Highest modulation") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            Modulation.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    onClick = {
+                        onChoose(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
     }
 }
 

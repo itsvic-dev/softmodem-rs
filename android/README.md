@@ -88,19 +88,60 @@ and puts it in the APK.
 - Type the number. Each comma waits 3 seconds, and the digits after the
   first comma are keyed once the call is answered, for a menu:
   `0300,,,1234#`.
-- Choose the modulation. V.21 is the default.
+- Choose the highest modulation: V.21, V.22, V.22bis, V.34 or V.90. V.21 is
+  the default. The others are there to try, as the codec is not expected to
+  carry them.
+- Automode lets the modem fall back from that modulation to slower ones. It
+  is off by default.
 - Dial with the button or the green call key.
 - In the terminal, type a line and send it with the OK key or Send.
 - Back, or Hang up, ends the call.
 
 The first call asks Magisk for root.
 
+## A computer on USB
+
+"Serve a computer on USB" makes the phone a USB modem for a computer on its
+cable. The computer dials with AT commands, and the app's terminal is off
+until you stop it, in the app or in the notification. It keeps running when
+you leave the app.
+
+- The modem serves the port with `--serial /dev/ttyGS0`, the ACM function
+  of the phone's USB gadget. MediaTek's USB configurations with adb and with
+  MTP carry it (`sys.usb.acm_enable=1`). Only root can open the device, so
+  in this mode the modem runs as root too.
+- It takes the modulation and automode chosen on the dial screen. Its
+  stored profile is `S10=50` and both in `+MS`, such as `+MS=V21,0`, so
+  `ATZ` keeps them. The computer can change them with `AT+MS`.
+- The gadget has no control lines. DCD and RI are not signalled, and the
+  computer dropping DTR does not hang up. Hang up with `+++` and `ATH`.
+  Unplugging the cable hangs up.
+- The service holds a wake lock, so that the modem keeps time with the
+  screen off.
+
+On Linux, the phone is `/dev/ttyACM0`, USB ID `0e8d:2006`. ModemManager
+probes new ACM ports with its own AT commands, so tell it to leave the phone
+alone, in `/etc/udev/rules.d/99-softmodem.rules`:
+
+```
+ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="2006", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+Then, with hardware flow control off:
+
+```
+minicom -D /dev/ttyACM0
+```
+
+On macOS the phone is `/dev/cu.usbmodem*`.
+
 ## Limits
 
 - The bridge depends on MediaTek's audio HAL. Other chipsets need another
   way into the call's audio.
 - The terminal shows text only. ANSI colours and cursor moves are dropped.
-- The app must stay open during a call. It keeps the screen on, and comes
-  back to the front when the system's in-call screen covers it.
+- The app must stay open during a call from its terminal. It keeps the
+  screen on, and comes back to the front when the system's in-call screen
+  covers it.
 - Debug builds record each call with `--dump` in the app's files, for
   `adb exec-out run-as dev.itsvic.softmodem cat files/dumps/<file>`.
