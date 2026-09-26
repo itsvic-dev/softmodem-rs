@@ -443,6 +443,21 @@ impl DataPump for Answer {
     fn connected(&self) -> bool {
         self.pump().is_some_and(DataPump::connected)
     }
+
+    fn stage(&self) -> String {
+        match &self.stage {
+            AnswerStage::Silence => "silence before V.8 bis".into(),
+            AnswerStage::V8bis(_) => "V.8 bis".into(),
+            AnswerStage::Tone { .. } => "answer tone, listening for CM".into(),
+            AnswerStage::Jm { menu } => format!("JM with {}", menu.modes),
+            AnswerStage::Gap { next: None, .. } => "gap after the answer tone".into(),
+            AnswerStage::Gap {
+                next: Some(pump), ..
+            } => format!("gap before {}", pump.stage()),
+            AnswerStage::Trying { pump, .. } => format!("trying {}", pump.stage()),
+            AnswerStage::Chosen(pump) => pump.stage(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -696,6 +711,22 @@ impl DataPump for Call {
     fn connected(&self) -> bool {
         self.pump().is_some_and(DataPump::connected)
     }
+
+    fn stage(&self) -> String {
+        match &self.stage {
+            CallStage::Listening { heard_ans: false } => {
+                "V.8 bis, listening for the answer tone".into()
+            }
+            CallStage::Listening { heard_ans: true } => "ANS heard, waiting for its end".into(),
+            CallStage::Te { .. } => "ANSam heard, silence before CM".into(),
+            CallStage::Cm { joint: None } => "CM".into(),
+            CallStage::Cm { joint: Some(modes) } => format!("CM, JM heard with {modes}"),
+            CallStage::Cj { modes } => format!("CJ for {modes}"),
+            CallStage::Gap { next, .. } => format!("gap before {}", next.stage()),
+            CallStage::Legacy => "no V.8, listening for a sigA".into(),
+            CallStage::Chosen(pump) => pump.stage(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -789,6 +820,49 @@ mod tests {
         let frames = connect(caller.as_mut(), answerer.as_mut());
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (56_000, 56_000));
         assert!(frames * 20 < 15_000, "V.8 and V.90 took {} ms", frames * 20);
+        assert!(
+            caller
+                .stage()
+                .starts_with("V.90 analogue: sending data, hearing data, 56000 bit/s down"),
+            "a replay shows the connected caller as {}",
+            caller.stage()
+        );
+        assert_eq!(
+            answerer.stage(),
+            "V.90 digital: sending data, hearing data, 56000 bit/s"
+        );
+    }
+
+    #[test]
+    fn a_caller_names_each_stage_of_v8_as_it_comes() {
+        let mut caller = pump(Modulation::V34, Role::Originate);
+        let mut answerer = pump(Modulation::V34, Role::Answer);
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let mut stages: Vec<String> = Vec::new();
+        while !caller.connected() {
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            answerer.receive(&up, &mut Vec::new());
+            caller.receive(&down, &mut Vec::new());
+            let stage = caller.stage();
+            if stages.last() != Some(&stage) {
+                stages.push(stage);
+            }
+            assert!(stages.len() < 100, "a replay floods with {stages:#?}");
+        }
+        let first: Vec<&str> = stages.iter().take(3).map(String::as_str).collect();
+        assert_eq!(
+            first,
+            [
+                "V.8 bis, listening for the answer tone",
+                "ANSam heard, silence before CM",
+                "CM"
+            ]
+        );
+        assert!(
+            stages.iter().any(|s| s.starts_with("V.34 phase 4")),
+            "a replay never shows phase 4 in {stages:#?}"
+        );
     }
 
     #[test]

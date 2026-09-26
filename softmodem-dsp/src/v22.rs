@@ -220,6 +220,18 @@ impl DataPump for V22 {
     fn connected(&self) -> bool {
         self.phase == Phase::Data
     }
+
+    fn stage(&self) -> String {
+        let stage = match self.phase {
+            Phase::Listening => "listening for unscrambled ones",
+            Phase::Waiting { .. } => "waiting to send scrambled ones",
+            Phase::UnscrambledOnes => "unscrambled ones",
+            Phase::ScrambledOnes => "scrambled ones",
+            Phase::Settling { .. } => "scrambled ones before data",
+            Phase::Data => "data",
+        };
+        format!("V.22 {stage}")
+    }
 }
 
 #[cfg(test)]

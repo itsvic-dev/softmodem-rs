@@ -62,6 +62,8 @@ it has V.34. Aon's D-Modem (github.com/strozfriedberg/D-Modem) replaces its
 kernel driver with a socket, and runs a program of its choice on `ATD` with
 the dial string and that socket. `softmodem-slmodem` is that program: it
 dials a softmodem over the UDP wire and carries the audio between them.
+`ATA` runs it too, with an empty dial string, and then it answers the first
+call to `SOFTMODEM_LISTEN`.
 
 - The Smart Link DSP is a 32-bit x86 object, so slmodemd is built with
   `pkgsCross.gnu32` (`nix/slmodemd.nix`), and the checks run it in an x86-64
@@ -81,7 +83,15 @@ dials a softmodem over the UDP wire and carries the audio between them.
   at 3900 Hz, so that nothing folds into 8000 samples/s.
 - As released, `-e` takes no argument, so slmodemd never learns what to run.
   The package patches this.
-- It only dials, so it tests this modem's answering side.
+- It never reports RING, as the socket does not answer the status ioctl
+  that it takes rings from. The `slmodemd-answer-*` checks send `ATA` first,
+  and then dial from this modem. Its answer timers count the samples that
+  it reads, and the bridge sends nothing before the call, so the wait for
+  the call does not start them.
+- As the answer modem at `+MS=90` it turns V.90 off ("V90=0" in its V.8
+  log), and its JM offers V.34 and V.32bis only. When this modem calls, it
+  is a V.90 analogue modem anyway, so `slmodemd-answer-v90` checks that V.8
+  settles on V.34 when this modem offers V.90.
 - Its `+MS` numbers the modulations: 122 for V.22bis, 34 for V.34, 90 for
   V.90.
 - At `+MS=90` it is a V.90 analogue modem, and its CM offers V.90, V.34

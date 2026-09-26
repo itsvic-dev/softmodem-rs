@@ -78,7 +78,7 @@ fn ours(transport: Loopback, init: &str) -> Computer {
         transport,
         Plain { input, output },
         profile(init).unwrap(),
-        |call, _| call,
+        |call, _| (call, None),
     );
     tokio::spawn(async move {
         if let Err(error) = modem.run(std::future::pending()).await {

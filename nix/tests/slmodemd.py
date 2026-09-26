@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Dials the softmodem from slmodemd's port and passes text both ways,
-reading both serial ports."""
+"""Dials the softmodem from slmodemd's port, or with --answer slmodemd from
+the softmodem's, and passes text both ways, reading both serial ports."""
 
+import argparse
 import os
 import re
 import select
@@ -62,47 +63,61 @@ class Port:
         os.write(self.fd, data)
 
 
-def exchange(caller, isp, round):
+def exchange(slmodemd, softmodem, round):
     up = TEXT_UP.replace(b"slmodemd", f"slmodemd, round {round}".encode())
     down = TEXT_DOWN.replace(b"softmodem", f"softmodem, round {round}".encode())
-    caller.send(up)
-    isp.expect(re.escape(up.strip()), 90)
-    isp.send(down)
-    caller.expect(re.escape(down.strip()), 90)
+    slmodemd.send(up)
+    softmodem.expect(re.escape(up.strip()), 90)
+    softmodem.send(down)
+    slmodemd.expect(re.escape(down.strip()), 90)
+
+
+def connected(port, timeout):
+    result = port.expect(rb"CONNECT[^\r\n]*|NO CARRIER|BUSY|ERROR", timeout)
+    if not result.startswith(b"CONNECT"):
+        sys.exit(f"{port.name} gave {result!r}")
 
 
 def main():
-    caller_path, isp_path, theirs = sys.argv[1:4]
-    # Before a second exchange: seconds to wait for noise, or "ato1" to retrain from the softmodem.
-    later = sys.argv[4] if len(sys.argv) > 4 else None
-    caller = Port("slmodemd", caller_path)
-    isp = Port("softmodem", isp_path)
-    caller.send(f"ATE0X3{theirs}\r".encode())
-    caller.expect(rb"OK", 30)
-    caller.send(b"ATDT0300\r")
-    result = caller.expect(rb"CONNECT[^\r\n]*|NO CARRIER|BUSY|ERROR", 300)
-    if not result.startswith(b"CONNECT"):
-        sys.exit(f"slmodemd gave {result!r}")
-    isp.expect(rb"CONNECT[^\r\n]*", 60)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("slmodemd")
+    parser.add_argument("softmodem")
+    parser.add_argument("theirs")
+    parser.add_argument("later", nargs="?", help='seconds to wait for noise, or "ato1" to retrain from the softmodem')
+    parser.add_argument("--answer", action="store_true", help="slmodemd answers")
+    args = parser.parse_args()
+    slmodemd = Port("slmodemd", args.slmodemd)
+    softmodem = Port("softmodem", args.softmodem)
+    slmodemd.send(f"ATE0X3{args.theirs}\r".encode())
+    slmodemd.expect(rb"OK", 30)
+    if args.answer:
+        slmodemd.send(b"ATA\r")
+        softmodem.send(b"ATDT0300\r")
+        connected(softmodem, 300)
+        connected(slmodemd, 60)
+    else:
+        slmodemd.send(b"ATDT0300\r")
+        connected(slmodemd, 300)
+        connected(softmodem, 60)
     time.sleep(2)
-    exchange(caller, isp, 1)
-    if later == "ato1":
+    exchange(slmodemd, softmodem, 1)
+    if args.later == "ato1":
         time.sleep(1.5)
-        isp.send(b"+++")
-        isp.expect(rb"OK", 10)
-        isp.send(b"ATO1\r")
-        isp.expect(rb"CONNECT[^\r\n]*", 30)
+        softmodem.send(b"+++")
+        softmodem.expect(rb"OK", 10)
+        softmodem.send(b"ATO1\r")
+        softmodem.expect(rb"CONNECT[^\r\n]*", 30)
         time.sleep(15)
-        exchange(caller, isp, 2)
-    elif later is not None:
-        time.sleep(float(later))
-        exchange(caller, isp, 2)
+        exchange(slmodemd, softmodem, 2)
+    elif args.later is not None:
+        time.sleep(float(args.later))
+        exchange(slmodemd, softmodem, 2)
     time.sleep(1.5)
-    isp.send(b"+++")
-    isp.expect(rb"OK", 10)
-    isp.send(b"ATH\r")
-    isp.expect(rb"OK", 10)
-    caller.expect(rb"NO CARRIER", 10)
+    softmodem.send(b"+++")
+    softmodem.expect(rb"OK", 10)
+    softmodem.send(b"ATH\r")
+    softmodem.expect(rb"OK", 10)
+    slmodemd.expect(rb"NO CARRIER", 10)
 
 
 if __name__ == "__main__":

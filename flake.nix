@@ -180,6 +180,25 @@
                 later = 15;
               };
             };
+            slmodemd-answer-v22bis = peer {
+              label = "answer-V22B";
+              ours = "+MS=V22B,0";
+              theirs = "+MS=122,0";
+              answer = true;
+            };
+            slmodemd-answer-v34 = peer {
+              label = "answer-V34";
+              ours = "+MS=V34,0";
+              theirs = "+MS=34,0,2400,33600";
+              answer = true;
+            };
+            # slmodemd answers without V.90, so V.8 must settle on V.34.
+            slmodemd-answer-v90 = peer {
+              label = "answer-V90";
+              ours = "+MS=V90";
+              theirs = "+MS=90";
+              answer = true;
+            };
             # Noise about 32 dB down toward the softmodem only, for it to renegotiate.
             slmodemd-v34-renegotiate = peer {
               label = "V34-renegotiate";

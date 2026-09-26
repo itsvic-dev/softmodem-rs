@@ -84,7 +84,7 @@ async fn modem(user: &str, password: &str, init: &str) -> Computer {
         sip,
         Plain { input, output },
         profile(init).unwrap(),
-        |call, _| call,
+        |call, _| (call, None),
     );
     tokio::spawn(async move { Box::pin(modem.run(std::future::pending())).await.unwrap() });
     Computer {
