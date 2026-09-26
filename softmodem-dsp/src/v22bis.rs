@@ -232,7 +232,12 @@ impl V22bis {
     // § 6.6.1 f): an S1 heard soon after ours is the reply, not a new request.
     fn replies_to_ours(&self) -> bool {
         self.s1_sent_until
-            .is_some_and(|until| self.sent < until + REPLY_SAMPLES)
+            .is_some_and(|until| self.sent < until + REPLY_SAMPLES + self.round_trip_samples())
+    }
+
+    // A reply comes a round trip late, after the far end may have repeated its S1.
+    fn round_trip_samples(&self) -> usize {
+        self.round_trip.unwrap_or(0)
     }
 
     fn add_guard(&mut self, out: &mut [i16]) {
@@ -251,7 +256,7 @@ impl V22bis {
         self.dibit = rate_dibit(rate);
         self.send_s1();
         self.exchange = Exchange::Initiated {
-            repeat_at: self.sent + S1_SAMPLES + REPEAT_SAMPLES,
+            repeat_at: self.sent + S1_SAMPLES + REPEAT_SAMPLES + self.round_trip_samples(),
         };
         self.ready = false;
         self.ready_ones = 0;
