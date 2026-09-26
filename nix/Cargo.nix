@@ -5888,6 +5888,10 @@ rec {
         libName = "softmodem_terminal";
         dependencies = [
           {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
             name = "rustix";
             packageId = "rustix";
             features = [ "fs" "pty" "termios" ];

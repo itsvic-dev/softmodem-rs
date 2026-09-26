@@ -32,6 +32,7 @@ ezk-sip-types = "0.6"
 ezk-sip-ua = { version = "0.9", default-features = false }
 fastrand = "2"
 hound = "3"
+libc = "0.2"
 rustix = { version = "1", features = ["fs", "pty", "termios"] }
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
