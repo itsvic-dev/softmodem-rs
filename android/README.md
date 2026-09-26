@@ -31,7 +31,13 @@ terminal UI ── TCP ── softmodem wire ── UDP wire ── bridge (root
     only this way.
   - It sends the modem's audio into the call through MediaTek's BGS path
     (`Set_BGS_UL_Mute=0`), and mutes the microphone.
-  - It records the far end with the `VOICE_DOWNLINK` source.
+  - It records the far end with the `VOICE_DOWNLINK` source, and holds its
+    level with a slow AGC.
+  - For the call, it turns off the downlink noise reduction and expander of
+    MediaTek's speech processing, which take FSK for noise. It writes a copy
+    of `/vendor/etc/audio_param/Speech_AudioParam.xml` with both off to
+    `/data/vendor/audiohal/audio_param/`, and removes it after the call, so
+    ordinary calls keep them.
   - It tells the modem the call is answered only when the call is active and
     the digits are keyed, so the modem does not listen to a menu's prompt.
 - Closing the TCP connection hangs up, as DTR dropping would.
@@ -43,8 +49,8 @@ Orange in Poland:
 
 | Modulation | Result |
 |---|---|
-| V.21, 300 bit/s | Holds a call, with an odd wrong character |
-| V.22, 1200 bit/s | Connects, then bursts of errors from the codec, in both directions |
+| V.21, 300 bit/s | Holds a call, and carries text without errors |
+| V.22, 1200 bit/s | Connects and carries text, with bursts of errors from the codec |
 | V.22bis and faster | Not expected to work |
 
 An equalizer in the receiver does not help, because the codec damages whole
