@@ -67,11 +67,6 @@ impl TtyPort {
         })
     }
 
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     // A device that has hung up refuses the change, and the next read finds it gone.
     fn signal_carrier(&self) {
         if let Some(device) = &self.device
@@ -212,5 +207,47 @@ impl AsyncWrite for TtyPort {
 
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pty::Pty;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::timeout;
+
+    fn link(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("softmodem-tty-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn a_missing_device_does_not_open() {
+        assert!(TtyPort::open(&link("missing"), 9600).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_lost_device_ends_input_and_opens_again_once_it_is_back() {
+        let path = link("lost");
+        let computer = Pty::open(Some(&path)).unwrap();
+        let mut port = TtyPort::open(&path, 9600).unwrap();
+        drop(computer);
+        let mut buf = [0; 16];
+        assert_eq!(port.read(&mut buf).await.unwrap(), 0);
+        port.write_all(b"lost").await.unwrap();
+        port.shutdown().await.unwrap();
+
+        let reading = tokio::spawn(async move {
+            let n = port.read(&mut buf).await.unwrap();
+            buf[..n].to_vec()
+        });
+        sleep(REOPEN_AFTER * 2).await;
+        let mut computer = Pty::open(Some(&path)).unwrap();
+        computer.write_all(b"back").await.unwrap();
+        let read = timeout(REOPEN_AFTER * 5, reading).await;
+        assert_eq!(
+            read.expect("the device never opened again").unwrap(),
+            b"back"
+        );
     }
 }
