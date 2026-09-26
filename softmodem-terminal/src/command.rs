@@ -89,7 +89,11 @@ pub enum Command {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Dial {
     pub number: String,
+    /// Commas before the number, each a pause before the call is placed.
     pub pauses: u32,
+    /// From the first comma after the number: digits and pauses to send in
+    /// band once the far end answers, for a menu before its modem.
+    pub after_answer: String,
     pub reverse: bool,
     pub stay_in_command_mode: bool,
     pub redial: bool,
@@ -404,10 +408,15 @@ impl Parser<'_> {
     fn dial(&mut self) -> Result<Dial, ParseError> {
         let mut dial = Dial::default();
         while let Some(byte) = self.next() {
+            let answered = !dial.after_answer.is_empty();
             match byte {
+                b'0'..=b'9' | b'*' | b'#' | b'A'..=b'D' if answered => {
+                    dial.after_answer.push(char::from(byte));
+                }
                 b'0'..=b'9' | b'*' | b'#' | b'A'..=b'D' => dial.number.push(char::from(byte)),
                 b'T' | b'P' | b'W' | b'@' | b'!' | b'-' | b'(' | b')' | b'.' => {}
-                b',' => dial.pauses += 1,
+                b',' if dial.number.is_empty() => dial.pauses += 1,
+                b',' => dial.after_answer.push(','),
                 b'R' => dial.reverse = true,
                 b'L' => dial.redial = true,
                 b';' => {
@@ -719,12 +728,35 @@ mod tests {
         assert_eq!(
             *parsed,
             Dial {
-                number: "9*12#AD".into(),
-                pauses: 2,
+                number: "9".into(),
+                pauses: 0,
+                after_answer: ",,*12#AD".into(),
                 reverse: true,
                 stay_in_command_mode: true,
                 redial: false,
             }
+        );
+    }
+
+    #[test]
+    fn commas_before_the_number_pause_before_the_call() {
+        assert_eq!(
+            parse(b"D,,0300").unwrap(),
+            [Command::Dial(Dial {
+                pauses: 2,
+                ..dial("0300")
+            })]
+        );
+    }
+
+    #[test]
+    fn digits_after_a_comma_follow_the_answer() {
+        assert_eq!(
+            parse(b"DT 03 00,,,1234#").unwrap(),
+            [Command::Dial(Dial {
+                after_answer: ",,,1234#".into(),
+                ..dial("0300")
+            })]
         );
     }
 
