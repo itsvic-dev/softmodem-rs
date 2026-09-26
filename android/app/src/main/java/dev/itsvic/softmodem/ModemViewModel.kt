@@ -27,7 +27,6 @@ private const val BRIDGE_PORT = 5300
 private const val MODEM_PORT = 5301
 private const val SERIAL_PORT = 5302
 private const val UPLINK_GAIN = "0.5"
-private const val DOWNLINK_GAIN = "4"
 private val FAILURES = listOf("NO CARRIER", "BUSY", "NO ANSWER", "NO DIALTONE", "ERROR")
 
 enum class Modulation(val label: String, val command: String) {
@@ -124,7 +123,7 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
             ProcessBuilder(
                 "su", "-c",
                 "CLASSPATH=${app.sourceDir} exec app_process /system/bin dev.itsvic.softmodem.bridge.Bridge " +
-                    "$BRIDGE_PORT $UPLINK_GAIN $DOWNLINK_GAIN",
+                    "$BRIDGE_PORT $UPLINK_GAIN",
             ),
         )
         val arguments = mutableListOf(
