@@ -454,6 +454,30 @@ impl Phase2 {
         self.step == Step::Done
     }
 
+    /// The step of phase 2 this end is at, as [`crate::pump::DataPump::stage`] gives it.
+    #[must_use]
+    pub fn stage(&self) -> &'static str {
+        match self.step {
+            Step::SendInfo0 => "phase 2 INFO0",
+            Step::RepeatInfo0 => "phase 2 INFO0 again",
+            Step::ToneA => "phase 2 tone A, waiting for INFO0 and tone B",
+            Step::AwaitReply { .. } => "phase 2 waiting for the far reversal",
+            Step::Probe => "phase 2 L1 and L2",
+            Step::LateToneB => "phase 2 tone A after L2, waiting for tone B",
+            Step::ToneB => "phase 2 tone B",
+            Step::AwaitProbe { reversed: false } => "phase 2 tone A, waiting for the far probing",
+            Step::AwaitProbe { reversed: true } => {
+                "phase 2 tone A reversed, waiting for the far probing"
+            }
+            Step::Measure { .. } => "phase 2 measuring the far L1 and L2",
+            Step::AfterProbe => "phase 2 after probing",
+            Step::ProbeFar => "phase 2 L1 and L2, until tone A",
+            Step::SendInfo1 => "phase 2 INFO1",
+            Step::AwaitInfo1a => "phase 2 waiting for INFO1a",
+            Step::Done => "phase 2 done",
+        }
+    }
+
     fn start(&mut self, tx: Tx, until: Option<usize>) {
         if tx == Tx::Tone && self.tx != Tx::Tone {
             self.tone_from = self.sent;

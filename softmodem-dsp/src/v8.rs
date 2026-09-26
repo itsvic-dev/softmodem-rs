@@ -105,6 +105,28 @@ impl Modes {
     }
 }
 
+impl std::fmt::Display for Modes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names = [
+            (self.v90.analogue, "V.90 analogue"),
+            (self.v90.digital, "V.90 digital"),
+            (self.v34, "V.34"),
+            (self.v22bis, "V.22bis"),
+            (self.v21, "V.21"),
+        ];
+        let offered: Vec<&str> = names
+            .iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, name)| *name)
+            .collect();
+        if offered.is_empty() {
+            f.write_str("nothing")
+        } else {
+            f.write_str(&offered.join(", "))
+        }
+    }
+}
+
 fn flag(on: bool, bit: u8) -> u8 {
     if on { bit } else { 0 }
 }

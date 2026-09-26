@@ -681,6 +681,30 @@ impl DataPump for Analogue {
         self.upstream.as_ref().is_some_and(|up| up.b1_sent)
             && self.downstream.as_ref().is_some_and(Downstream::in_data)
     }
+
+    fn stage(&self) -> String {
+        let (Some(upstream), Some(downstream)) = (&self.upstream, &self.downstream) else {
+            return format!("V.90 analogue {}", self.phase2.stage());
+        };
+        let sending = match upstream.send {
+            Send::Ja => "Ja",
+            Send::Quiet => "silence",
+            Send::S => "S",
+            Send::Dil => "SCR through DIL",
+            Send::Cpt => "CPt",
+            Send::Cp => "CP",
+            Send::Data => "data",
+            Send::Cleared => "silence after cleardown",
+        };
+        let rate = match (self.bit_rate(), self.transmit_rate()) {
+            (0, _) => String::new(),
+            (down, up) => format!(", {down} bit/s down and {up} up"),
+        };
+        format!(
+            "V.90 analogue: sending {sending}, hearing {}{rate}",
+            downstream.stage()
+        )
+    }
 }
 
 // § 9.2.2.1.9: V.34 as the answer modem, where this end asked for it in INFO1a.

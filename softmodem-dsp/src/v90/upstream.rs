@@ -142,6 +142,18 @@ impl Upstream {
         self.decoder.is_some() && self.skip_bits == 0 && matches!(self.listen, Listen::Data { .. })
     }
 
+    /// What it listens for.
+    #[must_use]
+    pub fn stage(&self) -> &'static str {
+        match self.listen {
+            Listen::S => "S",
+            Listen::Train { .. } => "PP and TRN",
+            Listen::Sequences => "Ja, CPt, CP and E",
+            Listen::Data { .. } => "data",
+            Listen::Hold => "S before a renegotiation",
+        }
+    }
+
     #[must_use]
     pub fn symbol_rate(&self) -> SymbolRate {
         self.symbol_rate

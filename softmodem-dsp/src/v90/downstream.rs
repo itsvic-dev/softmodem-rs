@@ -196,6 +196,20 @@ impl Downstream {
         self.stage == Stage::Data && self.skip_frames == 0 && self.decoder.is_some()
     }
 
+    /// What it listens for.
+    #[must_use]
+    pub fn stage(&self) -> &'static str {
+        match self.stage {
+            Stage::Sd { .. } => "Sd",
+            Stage::Trn { .. } => "TRN1d",
+            Stage::Jd => "Jd",
+            Stage::Dil { .. } => "DIL",
+            Stage::Ri { .. } => "Ri",
+            Stage::Training { .. } => "TRN2d, MP and Ed",
+            Stage::Data => "data",
+        }
+    }
+
     /// The data bits in `input`.
     pub fn receive(&mut self, input: &[i16], data: &mut Vec<bool>) {
         for &sample in input {

@@ -122,4 +122,8 @@ impl<M: Settles> DataPump for Fallback<M> {
     fn connected(&self) -> bool {
         self.pump().connected()
     }
+
+    fn stage(&self) -> String {
+        self.pump().stage()
+    }
 }
