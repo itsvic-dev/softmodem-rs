@@ -107,6 +107,37 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+// Solves `matrix * x = vector` by Gaussian elimination, after adding RIDGE of the mean diagonal to the diagonal.
+fn ridge_solve(mut matrix: Vec<Vec<f64>>, mut vector: Vec<f64>) -> Option<Vec<f64>> {
+    let size = vector.len();
+    let diagonal: f64 = matrix.iter().enumerate().map(|(i, row)| row[i]).sum();
+    let ridge = RIDGE * diagonal / f64::from(u32::try_from(size).ok()?);
+    for (i, row) in matrix.iter_mut().enumerate() {
+        row[i] += ridge;
+    }
+    for column in 0..size {
+        let pivot = matrix[column][column];
+        if pivot.abs() < 1e-9 {
+            return None;
+        }
+        let (above, below) = matrix.split_at_mut(column + 1);
+        let pivot_row = &above[column];
+        for (offset, row) in below.iter_mut().enumerate() {
+            let factor = row[column] / pivot;
+            for (value, &from) in row[column..].iter_mut().zip(&pivot_row[column..]) {
+                *value -= factor * from;
+            }
+            vector[column + 1 + offset] -= factor * vector[column];
+        }
+    }
+    let mut solution = vec![0.0; size];
+    for row in (0..size).rev() {
+        let known: f64 = (row + 1..size).map(|k| matrix[row][k] * solution[k]).sum();
+        solution[row] = (vector[row] - known) / matrix[row][row];
+    }
+    Some(solution)
+}
+
 /// The echo canceller of one call.
 #[derive(Debug)]
 pub struct Canceller {
@@ -433,32 +464,7 @@ impl Canceller {
                 vector[i] += heard * sent[i];
             }
         }
-        let diagonal: Vec<f64> = matrix.iter().enumerate().map(|(i, row)| row[i]).collect();
-        let ridge = RIDGE * diagonal.iter().sum::<f64>() / f64::from(u32::try_from(TAPS).ok()?);
-        for (i, row) in matrix.iter_mut().enumerate() {
-            row[i] += ridge;
-        }
-        for column in 0..TAPS {
-            let pivot = matrix[column][column];
-            if pivot.abs() < 1e-9 {
-                return None;
-            }
-            let (above, below) = matrix.split_at_mut(column + 1);
-            let pivot_row = &above[column];
-            for (offset, row) in below.iter_mut().enumerate() {
-                let factor = row[column] / pivot;
-                for (value, &from) in row[column..].iter_mut().zip(&pivot_row[column..]) {
-                    *value -= factor * from;
-                }
-                vector[column + 1 + offset] -= factor * vector[column];
-            }
-        }
-        let mut taps = vec![0.0; TAPS];
-        for row in (0..TAPS).rev() {
-            let known: f64 = (row + 1..TAPS).map(|k| matrix[row][k] * taps[k]).sum();
-            taps[row] = (vector[row] - known) / matrix[row][row];
-        }
-        Some(taps)
+        ridge_solve(matrix, vector)
     }
 
     // The taps keep their shape at the echo's new delay.
