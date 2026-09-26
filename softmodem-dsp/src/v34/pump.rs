@@ -36,6 +36,8 @@ const RETRAIN_TONE: usize = 400;
 // § 11.4.2.1.2 and § 11.4.2.2.2: E comes within 2500 ms and some round trips, or 30 s with CME.
 const E_TIMEOUT: usize = 20_000;
 const CME_E_TIMEOUT: usize = 240_000;
+// MP′ before E, for longer than a VoIP path loses at once and than slmodemd takes to restart its own MP.
+const MP_PRIME_MS: f64 = 200.0;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
@@ -125,7 +127,9 @@ struct Source {
     training: training::Sender,
     points: Points,
     mp: Mp,
-    acks_sent: u8,
+    /// Symbols of MP′ sent, and how many to send before E.
+    acked: usize,
+    acked_least: usize,
     encoder: Option<Encoder>,
     scale: f64,
     scrambler: Scrambler,
@@ -138,7 +142,7 @@ struct Source {
 }
 
 impl Source {
-    fn new(role: Role, silence: usize, mp: Mp) -> Self {
+    fn new(role: Role, silence: usize, mp: Mp, acked_least: usize) -> Self {
         let mut queue = VecDeque::from(vec![(0.0, 0.0); silence]);
         let send = if role == Role::Answer {
             queue.extend(phase_3_start());
@@ -154,7 +158,8 @@ impl Source {
             training: training::Sender::new(role),
             points: Points::Four,
             mp,
-            acks_sent: 0,
+            acked: 0,
+            acked_least,
             encoder: None,
             scale: 1.0,
             scrambler: Scrambler::with(polynomial(role)),
@@ -277,8 +282,7 @@ impl Source {
         let far_clears = far
             .mp
             .is_some_and(|mp| mp.max_call_to_answer == 0 && mp.max_answer_to_call == 0);
-        // Two MP′ at least, as slmodemd may miss the first while it restarts its own MP.
-        if self.acks_sent >= 2 && far.ack {
+        if self.acked >= self.acked_least && far.ack {
             // § 11.7: MP′ both ways ends a cleardown, with no E.
             if self.clearing || far_clears {
                 self.send = Send::Cleared;
@@ -296,10 +300,11 @@ impl Source {
             mp.max_answer_to_call = 0;
         }
         mp.acknowledge = far.mp.is_some();
-        self.acks_sent += u8::from(mp.acknowledge);
-        let frame = mp.frame();
-        self.queue
-            .extend(self.training.sequence(&frame, self.points));
+        let frame = self.training.sequence(&mp.frame(), self.points);
+        if mp.acknowledge {
+            self.acked += frame.len();
+        }
+        self.queue.extend(frame);
     }
 
     // § 11.7.1.1: S and S̄, then MP asking for 0 bit/s, with no TRN.
@@ -315,7 +320,7 @@ impl Source {
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(self.role);
         self.points = Points::Four;
-        self.acks_sent = 0;
+        self.acked = 0;
         self.encoder = None;
         self.b1_sent = false;
         self.send = Send::Trn { sent: 0 };
@@ -889,7 +894,7 @@ impl V34 {
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "70 ms of symbols"
+        reason = "200 ms of symbols"
     )]
     fn start_training(&mut self, outcome: Outcome) {
         let transmit = outcome.transmit;
@@ -916,7 +921,8 @@ impl V34 {
             rates: rates::mask(transmit.symbol_rate, 14),
             ..Mp::default()
         });
-        self.source = Some(Source::new(self.role, silence, mp));
+        let acked_least = (MP_PRIME_MS / 1000.0 * transmit.symbol_rate.baud()) as usize;
+        self.source = Some(Source::new(self.role, silence, mp, acked_least));
         self.sink = Some(Sink::new(self.role, &outcome));
         self.outcome = Some(outcome);
     }
@@ -1513,6 +1519,35 @@ mod tests {
                 "the {deaf:?} end would wait {ms:?} ms for an E that never comes, not 2500 ms and the round trips"
             );
         }
+    }
+
+    #[test]
+    fn connects_through_100_ms_lost_from_its_mp_prime() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let mut lost_from = None;
+        let mut retrained = false;
+        for frame in 0..600 {
+            if caller.connected() && answerer.connected() {
+                break;
+            }
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            if caller.far.mp.is_some() {
+                lost_from.get_or_insert(frame);
+            }
+            if lost_from.is_some_and(|from| frame < from + 5) {
+                up = [0; FRAME];
+            }
+            answerer.receive(&up, &mut Vec::new());
+            caller.receive(&down, &mut Vec::new());
+            retrained |= caller.sink.is_none() && lost_from.is_some();
+        }
+        assert!(
+            !retrained && caller.connected() && answerer.connected(),
+            "one lost 100 ms of the line would take all of MP′ and E, and cost a retrain"
+        );
     }
 
     fn in_phase_4(pump: &V34) -> bool {
