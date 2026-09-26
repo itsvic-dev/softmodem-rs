@@ -89,16 +89,24 @@ and again by every `ATZ`. So the ISP's `pppd` needs no chat script.
 
 A VoIP call sends the whole number at once, so most modifiers have no
 meaning. `T` and `P` are ignored. `W` and `@` return at once, as there is
-always a dial tone and never a wait for quiet. `!` is ignored. `,` waits `S8`
-seconds before the call is placed. These work as on a real modem:
+always a dial tone and never a wait for quiet. `!` is ignored. These work as
+on a real modem:
+
+- `,` before the number waits `S8` seconds before the call is placed.
+- `,` after the number ends it. The rest of the dial string is for a far end
+  that answers with a menu before its modem, such as an IVR that asks for an
+  extension. Once the call is answered, the modem sends its digits in band as
+  DTMF, with each `,` a pause of `S8` seconds, and then starts the handshake.
+  `ATDT0300,,,1234#` calls 0300, waits 6 seconds and keys `1234#`. `S7` counts from the dial, so a long menu may need more than its
+  default.
 
 - `R` dials in reverse mode: the modem answers the call it placed, with
   answer tone and channel 2.
 - `;` places the call and returns to command mode without a handshake.
-- `L` redials the last number.
+- `L` redials the last number, with the digits after it.
 
-What remains is digits, `*`, `#` and `A` to `D`, which become the number
-given to the transport. For SIP that becomes a URI under dialling rules that
+What remains before the first `,` after the number is digits, `*`, `#` and
+`A` to `D`, which become the number given to the transport. For SIP that becomes a URI under dialling rules that
 are configuration, not code.
 
 ## Result codes
