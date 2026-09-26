@@ -60,7 +60,8 @@ samples sent and one for the samples received, after loss and gap fill.
 Format is 8 kHz mono 16-bit PCM, which every player opens. The
 received file shows exactly what the demodulator saw, so a failed call can be
 replayed into the demodulator offline and turned into a test case. And you
-can listen to the handshake.
+can listen to the handshake. With the journal that the modem writes beside
+them, `softmodem replay` plays the call again; see [Replay](replay.md).
 
 Because it wraps the transport interface, it works the same on the wire and
 on SIP.

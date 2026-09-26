@@ -20,7 +20,7 @@ async fn serve(wire: Wire, init: &str) -> SocketAddr {
     let address = port.local_addr().unwrap();
     let profile = profile(init).unwrap();
     tokio::spawn(async move {
-        Modem::new(wire, port, profile, |call, _| call)
+        Modem::new(wire, port, profile, |call, _| (call, None))
             .run(std::future::pending())
             .await
             .unwrap();
