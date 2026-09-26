@@ -73,10 +73,11 @@ app sets `S10=50` and waits 5 seconds before it takes a lost carrier as the
 end of the call.
 
 A call through the phone has a round trip of about 1.7 s: the network, and
-the bridge's audio buffers. V.42 comes up at V.22 over a round trip of up to
-about 1.9 s, as the caller shortens its wait before data and waits a round
-trip longer for the answer. Over a longer round trip, V.42 misses the
-answerer's detection phase and the call goes on without it.
+the bridge's audio buffers. The caller waits a round trip longer for the
+answer to V.42, and at V.22 it also shortens its wait before data. V.42 then
+comes up over a round trip of up to about 1.9 s at V.22, and 2 s at
+V.22bis. Over a longer round trip, V.42 misses the answerer's detection
+phase and the call goes on without it.
 
 At times the far end's automode does not hear the caller's V.22 and falls
 back to V.21, which a caller fixed on V.22 cannot follow, so the call does
