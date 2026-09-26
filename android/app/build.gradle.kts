@@ -24,6 +24,13 @@ android {
         ndk { abiFilters += "armeabi-v7a" }
     }
 
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {
@@ -67,6 +74,8 @@ abstract class CargoBuild : DefaultTask() {
 }
 
 val cargoBuild = tasks.register<CargoBuild>("cargoBuild") {
+    group = "build"
+    description = "Builds softmodem for the phone with cargo and the NDK."
     target.set("armv7-linux-androideabi")
     workspace.set(rootProject.layout.projectDirectory.dir(".."))
     ndk.set(androidComponents.sdkComponents.ndkDirectory)

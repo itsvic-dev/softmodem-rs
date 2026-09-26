@@ -22,16 +22,13 @@ class Terminal(private val maxLines: Int = 500) {
     }
 
     private fun feed(byte: Int) {
-        when (escape) {
-            Escape.STARTED -> {
-                escape = if (byte == '['.code) Escape.CSI else Escape.NONE
-                return
+        if (escape != Escape.NONE) {
+            escape = when {
+                escape == Escape.STARTED && byte == '['.code -> Escape.CSI
+                escape == Escape.CSI && byte !in 0x40..0x7E -> Escape.CSI
+                else -> Escape.NONE
             }
-            Escape.CSI -> {
-                if (byte in 0x40..0x7E) escape = Escape.NONE
-                return
-            }
-            Escape.NONE -> {}
+            return
         }
         when (byte) {
             0x1B -> escape = Escape.STARTED
