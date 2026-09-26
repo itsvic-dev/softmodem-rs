@@ -33,7 +33,10 @@ const R_BAR_SYMBOLS: usize = 24;
 const JD_PRIME_ZEROS: usize = 4 + JD_PRIME_BITS;
 const ED_FRAMES: usize = 2;
 // Data mode is measured a second at a time, and a Uchord only from enough of its symbols.
-const MEASURE_SYMBOLS: usize = 8000;
+const BLOCK_FRAMES: usize = 27;
+const MEASURE_BLOCKS: usize = 50;
+// The worst blocks of about one RTP packet each, so that a lost packet is not taken for noise.
+const WORST_BLOCKS: usize = 5;
 const LEAST_MEASURED: u32 = 100;
 const B1D_FRAMES: usize = 48;
 
@@ -117,10 +120,13 @@ pub struct Downstream {
     zero_frames: usize,
     skip_frames: usize,
     events: Events,
-    // Squared strays and their count in data mode, by Uchord, and the symbols measured.
-    strays: [(f64, u32); UCHORDS],
-    measured: usize,
+    // Squared strays and their count in data mode, by Uchord, in the block being measured.
+    strays: Strays,
+    frames: usize,
+    blocks: Vec<Strays>,
 }
+
+type Strays = [(f64, u32); UCHORDS];
 
 impl Downstream {
     /// For the DIL that `descriptor` asks for, and training on `uinfo`.
@@ -157,7 +163,8 @@ impl Downstream {
             skip_frames: 0,
             events: Events::default(),
             strays: [(0.0, 0); UCHORDS],
-            measured: 0,
+            frames: 0,
+            blocks: Vec::with_capacity(MEASURE_BLOCKS),
         }
     }
 
@@ -467,7 +474,8 @@ impl Downstream {
             self.events.ed = true;
             self.stage = Stage::Data;
             self.strays = [(0.0, 0); UCHORDS];
-            self.measured = 0;
+            self.frames = 0;
+            self.blocks.clear();
             self.events.data_noise = None;
             self.events.measurements = 0;
             self.decoder = self.data.clone().map(Decoder::new);
@@ -487,15 +495,31 @@ impl Downstream {
             *squares += error * error;
             *count += 1;
         }
-        self.measured += FRAME;
-        if self.measured >= MEASURE_SYMBOLS {
-            self.events.data_noise = Some(self.strays.map(|(squares, count)| {
-                (count >= LEAST_MEASURED).then(|| (squares / f64::from(count)).sqrt())
-            }));
-            self.events.measurements += 1;
-            self.strays = [(0.0, 0); UCHORDS];
-            self.measured = 0;
+        self.frames += 1;
+        if self.frames < BLOCK_FRAMES {
+            return;
         }
+        self.frames = 0;
+        self.blocks
+            .push(std::mem::replace(&mut self.strays, [(0.0, 0); UCHORDS]));
+        if self.blocks.len() < MEASURE_BLOCKS {
+            return;
+        }
+        let squares = |block: &Strays| block.iter().map(|&(s, _)| s).sum::<f64>();
+        self.blocks
+            .sort_by(|a, b| squares(a).total_cmp(&squares(b)));
+        let mut kept = [(0.0, 0); UCHORDS];
+        for block in &self.blocks[..MEASURE_BLOCKS - WORST_BLOCKS] {
+            for ((squares, count), &(more, counted)) in kept.iter_mut().zip(block) {
+                *squares += more;
+                *count += counted;
+            }
+        }
+        self.blocks.clear();
+        self.events.data_noise = Some(kept.map(|(squares, count)| {
+            (count >= LEAST_MEASURED).then(|| (squares / f64::from(count)).sqrt())
+        }));
+        self.events.measurements += 1;
     }
 
     // § 9.6.2.2.1: Rd holds data mode and R̄d starts MP, at any sample so that R̄d undoes a slip.
