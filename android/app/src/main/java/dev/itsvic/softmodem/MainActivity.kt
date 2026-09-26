@@ -19,16 +19,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -149,19 +152,7 @@ private fun DialScreen(modem: ModemViewModel) {
                 "for a menu: 0300,,,1234#",
             style = MaterialTheme.typography.bodySmall,
         )
-        Modulation.entries.forEach { option ->
-            Row(
-                Modifier.fillMaxWidth().selectable(
-                    selected = option == modulation,
-                    onClick = { modem.modulation.value = option },
-                    role = Role.RadioButton,
-                ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = option == modulation, onClick = null)
-                Text(option.label, Modifier.padding(start = 4.dp))
-            }
-        }
+        ModulationMenu(modulation) { modem.modulation.value = it }
         Row(
             Modifier.fillMaxWidth().toggleable(
                 value = automode,
@@ -190,6 +181,34 @@ private fun DialScreen(modem: ModemViewModel) {
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Serve a computer on USB") }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModulationMenu(modulation: Modulation, onChoose: (Modulation) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = modulation.label,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text("Highest modulation") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            Modulation.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    onClick = {
+                        onChoose(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
     }
 }
 
