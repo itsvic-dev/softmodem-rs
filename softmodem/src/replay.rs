@@ -129,7 +129,7 @@ struct Watched {
 impl Watched {
     fn new(header: Header, name: &'static str) -> Self {
         let span = info_span!("", end = name);
-        let line = span.in_scope(|| Line::new((), header, None));
+        let line = span.in_scope(|| Line::new((), header, None, None));
         Self {
             line,
             span,

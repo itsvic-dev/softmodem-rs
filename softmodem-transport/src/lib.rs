@@ -86,6 +86,13 @@ pub trait Transport {
     /// refused. Dropping the future abandons the call.
     fn dial(&mut self, number: &str) -> impl Future<Output = Result<Call, DialError>> + Send;
 
+    /// Whether [`Transport::dial`] also takes the digits after the first
+    /// comma, and sends them out of band itself once the far end answers.
+    /// Otherwise the modem sends them in band after the answer.
+    fn dials_after_answer(&self) -> bool {
+        false
+    }
+
     /// Waits for the next thing an incoming caller does. While one call
     /// rings, any other caller is refused as busy.
     fn incoming(&mut self) -> impl Future<Output = io::Result<Incoming<Self::Caller>>> + Send;

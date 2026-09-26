@@ -7,6 +7,7 @@
 
 use std::time::{Duration, Instant};
 
+use softmodem_dsp::dtmf::DtmfSender;
 use softmodem_dsp::pump::{DataPump, Offer, Role};
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_link::v42bis::Directions;
@@ -68,6 +69,7 @@ pub(crate) struct Line<C = Call> {
     offer: Offer,
     setups: Setups,
     handshake: Option<Handshake>,
+    digits: Option<(DtmfSender, Option<Role>)>,
     journal: Option<Journal>,
 }
 
@@ -133,8 +135,18 @@ impl Recovery {
 impl<C> Line<C> {
     /// A line in `role`, or silent with no handshake for a call placed with
     /// `;`, until [`Line::start`] is called, that writes all it is given to
-    /// `journal`.
-    pub(crate) fn new(call: C, header: Header, mut journal: Option<Journal>) -> Self {
+    /// `journal`. With `digits`, it sends them first and deaf, and takes up
+    /// the header's role after them.
+    pub(crate) fn new(
+        call: C,
+        mut header: Header,
+        digits: Option<DtmfSender>,
+        mut journal: Option<Journal>,
+    ) -> Self {
+        let digits = digits.map(|digits| {
+            info!("sending digits after the answer");
+            (digits, header.role.take())
+        });
         if let Some(journal) = &mut journal {
             journal.header(&header);
         }
@@ -148,6 +160,7 @@ impl<C> Line<C> {
             offer,
             setups,
             handshake: role.map(|role| Handshake::new(offer, setups, role)),
+            digits,
             journal,
         }
     }
@@ -256,6 +269,18 @@ impl<C> Line<C> {
     pub(crate) fn transmit(&mut self, now: Instant) -> Vec<i16> {
         self.note(now, &Event::Tx);
         let mut samples = vec![0; FRAME_SAMPLES];
+        if let Some((digits, role)) = &mut self.digits {
+            digits.render(&mut samples);
+            if digits.done() {
+                info!("digits sent");
+                let role = *role;
+                self.digits = None;
+                if let Some(role) = role {
+                    self.start(role, now);
+                }
+            }
+            return samples;
+        }
         if let Some(handshake) = &mut self.handshake {
             handshake.fill(now);
             handshake.transmit(&mut samples);

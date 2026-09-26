@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use softmodem_dsp::ansam::{self, AnswerToneDetector, AnswerToneKind};
+use softmodem_dsp::dtmf::DtmfSender;
 use softmodem_dsp::fsk::{
     Channel, Demodulator, Modulator, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE,
 };
 use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone};
 use softmodem_dsp::uart::{Decoder, frame};
-use softmodem_interop::{AnswerTone, FskChannel, FskRx, FskTx, ToneRx, ToneTx};
+use softmodem_interop::{AnswerTone, DtmfRx, FskChannel, FskRx, FskTx, ToneRx, ToneTx};
 
 const FRAME: usize = 160;
 
@@ -92,6 +93,18 @@ fn spandsp_hears_our_ansam_with_and_without_reversals() {
         }
         assert_eq!(detector.detected(), Some(expected), "reversals {reversals}");
     }
+}
+
+#[test]
+fn spandsp_hears_our_dtmf_digits() {
+    let mut sender = DtmfSender::new("123A456B,789C*0#D", 0.2);
+    let mut detector = DtmfRx::new();
+    let mut samples = [0; FRAME];
+    while !sender.done() {
+        sender.render(&mut samples);
+        detector.process(&samples);
+    }
+    assert_eq!(detector.digits(), "123A456B789C*0#D");
 }
 
 #[test]

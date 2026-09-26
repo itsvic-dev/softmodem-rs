@@ -27,6 +27,7 @@ type ToneReport = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int);
 type V8Result = unsafe extern "C" fn(*mut c_void, *mut V8Parms);
 type GetMsg = unsafe extern "C" fn(*mut c_void, *mut u8, c_int) -> c_int;
 type PutMsg = unsafe extern "C" fn(*mut c_void, *const u8, c_int);
+type DigitsRx = unsafe extern "C" fn(*mut c_void, *const c_char, c_int);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -161,6 +162,11 @@ unsafe extern "C" {
     fn modem_connect_tones_rx(s: *mut c_void, amp: *const i16, len: c_int) -> c_int;
     fn modem_connect_tones_rx_get(s: *mut c_void) -> c_int;
     fn modem_connect_tones_rx_free(s: *mut c_void) -> c_int;
+
+    fn dtmf_rx_init(s: *mut c_void, callback: Option<DigitsRx>, user: *mut c_void) -> *mut c_void;
+    fn dtmf_rx(s: *mut c_void, amp: *const i16, samples: c_int) -> c_int;
+    fn dtmf_rx_get(s: *mut c_void, digits: *mut c_char, max: c_int) -> usize;
+    fn dtmf_rx_free(s: *mut c_void) -> c_int;
 }
 
 const SIG_STATUS_CARRIER_UP: c_int = -2;
@@ -198,6 +204,8 @@ unsafe impl Send for V22bis {}
 unsafe impl Send for ToneTx {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for ToneRx {}
+// SAFETY: as for `FskTx`.
+unsafe impl Send for DtmfRx {}
 // SAFETY: as for `FskTx`.
 unsafe impl Send for V42 {}
 // SAFETY: as for `FskTx`.
@@ -657,6 +665,49 @@ impl Drop for ToneRx {
         // SAFETY: allocated in `new` and not freed before.
         unsafe {
             modem_connect_tones_rx_free(self.0);
+        }
+    }
+}
+
+/// spandsp's DTMF receiver.
+pub struct DtmfRx(*mut c_void);
+
+impl DtmfRx {
+    #[must_use]
+    pub fn new() -> Self {
+        // SAFETY: allocated by spandsp and freed in `drop`.
+        Self(unsafe { dtmf_rx_init(ptr::null_mut(), None, ptr::null_mut()) })
+    }
+
+    pub fn process(&mut self, samples: &[i16]) {
+        // SAFETY: `samples` is a valid buffer of the length passed.
+        unsafe {
+            dtmf_rx(self.0, samples.as_ptr(), length(samples.len()));
+        }
+    }
+
+    /// Takes the digits heard since the last call.
+    #[must_use]
+    pub fn digits(&mut self) -> String {
+        let mut buffer = [0 as c_char; 128];
+        // SAFETY: the buffer holds the `max` digits asked for and a terminating NUL.
+        let n = unsafe { dtmf_rx_get(self.0, buffer.as_mut_ptr(), length(buffer.len() - 1)) };
+        #[expect(clippy::cast_sign_loss, reason = "digits are ASCII")]
+        buffer[..n].iter().map(|&c| char::from(c as u8)).collect()
+    }
+}
+
+impl Default for DtmfRx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for DtmfRx {
+    fn drop(&mut self) {
+        // SAFETY: allocated in `new` and not freed before.
+        unsafe {
+            dtmf_rx_free(self.0);
         }
     }
 }
