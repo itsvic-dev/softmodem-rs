@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -48,6 +49,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -95,7 +97,26 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App(modem: ModemViewModel) {
     val state by modem.state.collectAsState()
-    if (state is CallState.Idle) DialScreen(modem) else TerminalScreen(modem, state)
+    val usbSerial by UsbSerialService.running.collectAsState()
+    when {
+        usbSerial -> UsbSerialScreen()
+        state is CallState.Idle -> DialScreen(modem)
+        else -> TerminalScreen(modem, state)
+    }
+}
+
+@Composable
+private fun UsbSerialScreen() {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("The modem is on the USB serial port.", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "A computer on the cable sees it as /dev/ttyACM0 on Linux, and dials with AT commands, " +
+                "such as ATDT0300. It stays on when you leave the app.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = { UsbSerialService.stop(context) }, Modifier.fillMaxWidth()) { Text("Stop") }
+    }
 }
 
 @Composable
@@ -145,6 +166,14 @@ private fun DialScreen(modem: ModemViewModel) {
             )
         }
         Button(onClick = { modem.dial() }, Modifier.fillMaxWidth()) { Text("Dial") }
+        val context = LocalContext.current
+        OutlinedButton(
+            onClick = {
+                modem.stop()
+                UsbSerialService.start(context)
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Serve a computer on USB") }
     }
 }
 

@@ -95,12 +95,47 @@ and puts it in the APK.
 
 The first call asks Magisk for root.
 
+## A computer on USB
+
+"Serve a computer on USB" makes the phone a USB modem for a computer on its
+cable. The computer dials with AT commands, and the app's terminal is off
+until you stop it, in the app or in the notification. It keeps running when
+you leave the app.
+
+- The modem serves the port with `--serial /dev/ttyGS0`, the ACM function
+  of the phone's USB gadget. MediaTek's USB configurations with adb and with
+  MTP carry it (`sys.usb.acm_enable=1`). Only root can open the device, so
+  in this mode the modem runs as root too.
+- Its stored profile is `S10=50` and `+MS=V21,0`, so `ATZ` keeps them.
+- The gadget has no control lines. DCD and RI are not signalled, and the
+  computer dropping DTR does not hang up. Hang up with `+++` and `ATH`.
+  Unplugging the cable hangs up.
+- The service holds a wake lock, so that the modem keeps time with the
+  screen off.
+
+On Linux, the phone is `/dev/ttyACM0`, USB ID `0e8d:2006`. ModemManager
+probes new ACM ports with its own AT commands, so tell it to leave the phone
+alone, in `/etc/udev/rules.d/99-softmodem.rules`:
+
+```
+ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="2006", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+Then, with hardware flow control off:
+
+```
+minicom -D /dev/ttyACM0
+```
+
+On macOS the phone is `/dev/cu.usbmodem*`.
+
 ## Limits
 
 - The bridge depends on MediaTek's audio HAL. Other chipsets need another
   way into the call's audio.
 - The terminal shows text only. ANSI colours and cursor moves are dropped.
-- The app must stay open during a call. It keeps the screen on, and comes
-  back to the front when the system's in-call screen covers it.
+- The app must stay open during a call from its terminal. It keeps the
+  screen on, and comes back to the front when the system's in-call screen
+  covers it.
 - Debug builds record each call with `--dump` in the app's files, for
   `adb exec-out run-as dev.itsvic.softmodem cat files/dumps/<file>`.
