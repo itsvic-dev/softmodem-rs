@@ -82,6 +82,8 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   slmodemd on the left. `slmodemd-v34-retrain` retrains from ATO1, and
   `slmodemd-v34-noise` adds noise that makes slmodemd retrain, and
   `slmodemd-v34-renegotiate` noise toward this modem only, which makes it
-  renegotiate. Each check
+  renegotiate. `slmodemd-answer-v22bis`, `-v34` and `-v90` dial slmodemd
+  from this modem after `ATA` on slmodemd, and `-v90` falls back to V.34.
+  Each check
   fails on its run's `status`, and the run itself, recording and journals
   included, is `.#checks.<system>.<check>.run`.
