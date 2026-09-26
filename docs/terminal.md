@@ -97,8 +97,11 @@ on a real modem:
   that answers with a menu before its modem, such as an IVR that asks for an
   extension. Once the call is answered, the modem sends its digits in band as
   DTMF, with each `,` a pause of `S8` seconds, and then starts the handshake.
-  `ATDT0300,,,1234#` calls 0300, waits 6 seconds and keys `1234#`. `S7` counts from the dial, so a long menu may need more than its
-  default.
+  `ATDT0300,,,1234#` calls 0300, waits 6 seconds and keys `1234#`. `S7`
+  counts from the dial, so a long menu may need more than its default. The
+  UDP wire instead passes the whole dial string to its peer, which may be a
+  phone that keys the digits out of band with its own pauses: a menu behind a
+  carrier trunk often takes digits only as RFC 4733 events.
 
 - `R` dials in reverse mode: the modem answers the call it placed, with
   answer tone and channel 2.

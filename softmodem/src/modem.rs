@@ -354,13 +354,19 @@ where
         let deadline = Instant::now() + self.settings.carrier_wait();
         let wait = self.settings.blind_dial_wait() + self.settings.comma_pause() * dial.pauses;
         info!(number, after_answer, "dialling");
+        let transport_keys = self.transport.dials_after_answer();
+        let dialled = if transport_keys {
+            format!("{number}{after_answer}")
+        } else {
+            number
+        };
         let transport = &mut self.transport;
         let input = &mut self.port;
         let mut abort = [0];
         let outcome = tokio::select! {
             result = async {
                 sleep(wait).await;
-                transport.dial(&number).await
+                transport.dial(&dialled).await
             } => Some(result),
             _ = input.read(&mut abort) => None,
             () = sleep_until(deadline) => None,
@@ -373,7 +379,7 @@ where
                 } else {
                     Role::Originate
                 };
-                let digits = (!after_answer.is_empty()).then(|| {
+                let digits = (!transport_keys && !after_answer.is_empty()).then(|| {
                     DtmfSender::new(&after_answer, self.settings.comma_pause().as_secs_f64())
                 });
                 if dial.stay_in_command_mode {

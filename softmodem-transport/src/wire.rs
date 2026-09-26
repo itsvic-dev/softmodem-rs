@@ -6,7 +6,9 @@
 //! RTP. Call setup is text messages on the same socket, which cannot be
 //! mistaken for RTP because RTP's first byte has the version bits set:
 //! `DIAL <number>`, repeated until the far end sends `ANSWER` or `BUSY`, and
-//! `BYE` to hang up or to abandon a call that is still ringing.
+//! `BYE` to hang up or to abandon a call that is still ringing. The number
+//! keeps any digits after a comma, for a far end that is a phone and can key
+//! them out of band once its own call is answered.
 
 use std::io;
 use std::net::SocketAddr;
@@ -88,6 +90,10 @@ impl Drop for Abandon {
 
 impl Transport for Wire {
     type Caller = SocketAddr;
+
+    fn dials_after_answer(&self) -> bool {
+        true
+    }
 
     async fn dial(&mut self, number: &str) -> Result<Call, DialError> {
         let peer = self

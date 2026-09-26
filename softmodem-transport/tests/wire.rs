@@ -81,6 +81,18 @@ async fn an_abandoned_call_stops_ringing() {
     assert_eq!(next.unwrap().unwrap(), Incoming::Gone(caller));
 }
 
+#[tokio::test]
+async fn the_number_keeps_the_digits_for_after_the_answer() {
+    let (mut calling, mut answering) = line(Impairment::default()).await;
+    assert!(calling.dials_after_answer());
+    let dial = tokio::spawn(async move { calling.dial("0300,,1001#").await.map(|_| ()) });
+    match timeout(Duration::from_secs(5), answering.incoming()).await {
+        Ok(Ok(Incoming::Ringing { number, .. })) => assert_eq!(number, "0300,,1001#"),
+        other => panic!("no ringing: {other:?}"),
+    }
+    dial.abort();
+}
+
 fn frame(n: usize) -> Vec<i16> {
     let level = alaw::decode(alaw::encode(i16::try_from(n * 100).unwrap()));
     vec![level; FRAME_SAMPLES]
