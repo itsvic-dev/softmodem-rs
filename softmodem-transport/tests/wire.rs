@@ -95,11 +95,7 @@ async fn receive_all(call: &mut Call) -> Vec<Vec<i16>> {
 }
 
 fn read_wav(path: &std::path::Path) -> Vec<i16> {
-    hound::WavReader::open(path)
-        .unwrap()
-        .into_samples()
-        .map(Result::unwrap)
-        .collect()
+    wav::read(path, 0).unwrap()
 }
 
 #[tokio::test]
@@ -298,4 +294,36 @@ async fn records_both_directions() {
     );
     assert_eq!(read_wav(&directory.join("call-rx.wav")), heard.concat());
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn write_wav(path: &std::path::Path, channels: u16, sample_rate: u32, samples: &[i16]) {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    for &sample in samples {
+        writer.write_sample(sample).unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+#[test]
+fn reads_either_channel_of_a_stereo_recording() {
+    let path = std::env::temp_dir().join(format!("softmodem-stereo-{}.wav", std::process::id()));
+    write_wav(&path, 2, 8000, &[1, -1, 2, -2, 3, -3]);
+    assert_eq!(wav::read(&path, 0).unwrap(), [1, 2, 3]);
+    assert_eq!(wav::read(&path, 1).unwrap(), [-1, -2, -3]);
+    assert!(wav::read(&path, 2).is_err());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn refuses_a_recording_at_another_rate() {
+    let path = std::env::temp_dir().join(format!("softmodem-44k-{}.wav", std::process::id()));
+    write_wav(&path, 1, 44_100, &[0; 10]);
+    assert!(wav::read(&path, 0).is_err());
+    std::fs::remove_file(path).unwrap();
 }
