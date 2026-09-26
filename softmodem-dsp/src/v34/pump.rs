@@ -734,7 +734,9 @@ pub struct V34 {
     source: Option<Source>,
     sink: Option<Sink>,
     far: Far,
+    /// The data rates this end receives and transmits at, in multiples of 2400 bit/s.
     rate: u8,
+    transmit_rate: u8,
     level: f64,
     carrier: bool,
     /// Connected once, and still in the call through renegotiations and retrains.
@@ -771,6 +773,7 @@ impl V34 {
             sink: None,
             far: Far::default(),
             rate: 0,
+            transmit_rate: 0,
             level: sine_peak(CARRIER_DBM0) / std::f64::consts::SQRT_2,
             carrier: false,
             online: false,
@@ -919,6 +922,7 @@ impl V34 {
             max_call_to_answer: call_to_answer,
             max_answer_to_call: answer_to_call,
             rates: rates::mask(transmit.symbol_rate, 14),
+            asymmetric: true,
             ..Mp::default()
         });
         let acked_least = (MP_PRIME_MS / 1000.0 * transmit.symbol_rate.baud()) as usize;
@@ -927,7 +931,7 @@ impl V34 {
         self.outcome = Some(outcome);
     }
 
-    // § 11.4.1.1.3: once the far MP has come, both ends know the data rate.
+    // § 11.4.1.1.3 and § 11.4.1.2.3: once the far MP has come, both ends know the data rates.
     fn agree(&mut self) {
         let (Some(outcome), Some(source), Some(sink), Some(far)) =
             (self.outcome, &mut self.source, &mut self.sink, self.far.mp)
@@ -938,21 +942,25 @@ impl V34 {
             return;
         }
         let ours = source.own_mp(&self.far);
-        let rate = rates::agree(
-            [
-                ours.max_call_to_answer,
-                ours.max_answer_to_call,
-                far.max_call_to_answer,
-                far.max_answer_to_call,
-            ],
+        let (call_to_answer, answer_to_call) = rates::agree(
+            [ours.max_call_to_answer, far.max_call_to_answer],
+            [ours.max_answer_to_call, far.max_answer_to_call],
             [ours.rates, far.rates],
+            ours.asymmetric && far.asymmetric,
         );
-        let bit_rate = u32::from(rate) * 2400;
+        let (rate, transmit_rate) = match self.role {
+            Role::Originate => (answer_to_call, call_to_answer),
+            Role::Answer => (call_to_answer, answer_to_call),
+        };
         let (Some(transmit), Some(receive)) = (
-            Framing::new(outcome.transmit.symbol_rate, bit_rate, far.expanded_shaping),
+            Framing::new(
+                outcome.transmit.symbol_rate,
+                u32::from(transmit_rate) * 2400,
+                far.expanded_shaping,
+            ),
             Framing::new(
                 outcome.receive.symbol_rate,
-                bit_rate,
+                u32::from(rate) * 2400,
                 self.asks.expanded_shaping,
             ),
         ) else {
@@ -970,6 +978,7 @@ impl V34 {
         source.b1_frames = transmit.p;
         sink.start_data(receive, self.asks.settings());
         self.rate = rate;
+        self.transmit_rate = transmit_rate;
     }
 }
 
@@ -980,6 +989,10 @@ impl DataPump for V34 {
 
     fn bit_rate(&self) -> u32 {
         u32::from(self.rate) * 2400
+    }
+
+    fn transmit_rate(&self) -> u32 {
+        u32::from(self.transmit_rate) * 2400
     }
 
     fn decoder(&self) -> Characters {
@@ -1564,7 +1577,7 @@ mod tests {
         back_in_data(&mut caller, &mut answerer, noisy);
         let rate = caller.bit_rate();
         assert!(
-            rate < 33_600 && rate == answerer.bit_rate(),
+            rate < 33_600 && rate == answerer.transmit_rate(),
             "a retrain over a noisier line would keep {rate} bit/s"
         );
         let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
@@ -1586,7 +1599,7 @@ mod tests {
         back_in_data(&mut caller, &mut answerer, noisy);
         let rate = caller.bit_rate();
         assert!(
-            rate < 33_600 && rate == answerer.bit_rate(),
+            rate < 33_600 && rate == answerer.transmit_rate(),
             "a noisier line would keep {rate} bit/s and lose data"
         );
         let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
@@ -1597,6 +1610,53 @@ mod tests {
         assert!(
             found(&at_answerer) && found(&at_caller),
             "data would be lost at {rate} bit/s after stepping down"
+        );
+    }
+
+    // Frames each way, with noise toward the caller only.
+    fn exchange_noisy_down(
+        caller: &mut V34,
+        answerer: &mut V34,
+        frames: usize,
+    ) -> (Vec<bool>, Vec<bool>) {
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let (mut at_caller, mut at_answerer) = (Vec::new(), Vec::new());
+        for _ in 0..frames {
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            answerer.receive(&up, &mut at_answerer);
+            caller.receive(&down.map(noisy), &mut at_caller);
+        }
+        (at_caller, at_answerer)
+    }
+
+    #[test]
+    fn runs_each_direction_at_the_rate_its_line_allows() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let connected = (0..400).any(|_| {
+            exchange_noisy_down(&mut caller, &mut answerer, 1);
+            caller.connected() && answerer.connected()
+        });
+        assert!(connected, "no V.34 connection with noise one way");
+        let (down, up) = (caller.bit_rate(), caller.transmit_rate());
+        assert!(
+            up == 33_600 && down < up,
+            "the clean way would run at the noisy way's rate: {down} down, {up} up"
+        );
+        assert_eq!(
+            (answerer.bit_rate(), answerer.transmit_rate()),
+            (up, down),
+            "the two ends would disagree on the rates"
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_noisy_down(&mut caller, &mut answerer, 80);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost at {down} bit/s down and {up} bit/s up"
         );
     }
 
