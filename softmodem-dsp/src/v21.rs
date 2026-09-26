@@ -101,4 +101,13 @@ impl DataPump for V21 {
                 .is_some_and(|since| self.sent - since >= ORIGINATE_CARRIER_BEFORE_CONNECT),
         }
     }
+
+    fn stage(&self) -> String {
+        let stage = match (self.role, self.heard_carrier) {
+            (_, false) => "waiting for the far carrier",
+            (Role::Originate, true) if !self.connected() => "carrier before connect",
+            (_, true) => "data",
+        };
+        format!("V.21 {stage}")
+    }
 }

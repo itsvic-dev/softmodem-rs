@@ -139,4 +139,8 @@ pub trait DataPump: Debug + Send {
 
     /// Whether the handshake is done, so that the modem can report CONNECT.
     fn connected(&self) -> bool;
+
+    /// What the pump sends and listens for now, in words that change only
+    /// as the handshake moves on, for a log or a replay to follow.
+    fn stage(&self) -> String;
 }

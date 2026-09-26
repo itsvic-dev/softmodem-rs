@@ -561,6 +561,36 @@ impl DataPump for V22bis {
     fn connected(&self) -> bool {
         self.connected
     }
+
+    fn stage(&self) -> String {
+        let sending = match self.transmit {
+            Transmit::Silence => "silence",
+            Transmit::UnscrambledOnes => "unscrambled ones",
+            Transmit::S1 { .. } => "S1",
+            Transmit::Slow => "1200 bit/s",
+            Transmit::Fast => "2400 bit/s",
+        };
+        let speed = match self.speed {
+            None => "untrained",
+            Some(Speed::Slow { .. }) => "at 1200 bit/s",
+            Some(Speed::Trained { rate: None, .. }) => "trained, deciding the rate",
+            Some(Speed::Trained {
+                rate: Some(Rate::Bps1200),
+                ..
+            }) => "trained at 1200 bit/s",
+            Some(Speed::Trained {
+                rate: Some(Rate::Bps2400),
+                ..
+            }) => "trained at 2400 bit/s",
+        };
+        let exchange = match self.exchange {
+            Exchange::Idle => "",
+            Exchange::Initiated { .. } => ", retraining",
+            Exchange::Answering => ", answering a retrain",
+        };
+        let ready = if self.ready { ", data" } else { "" };
+        format!("V.22bis sending {sending}, {speed}{exchange}{ready}")
+    }
 }
 
 #[cfg(test)]

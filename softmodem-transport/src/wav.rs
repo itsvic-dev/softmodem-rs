@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Records a call to two WAV files, one per direction.
+//! Records a call to two WAV files, one per direction, and reads them back.
 
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-use hound::{SampleFormat, WavSpec, WavWriter};
+use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -61,6 +61,34 @@ impl Recorder {
             tasks,
         }
     }
+}
+
+/// The samples of `channel`, from 0, in a WAV file of 16-bit samples at
+/// 8 kHz, as [`Recorder`] writes them.
+///
+/// # Errors
+///
+/// Fails if the file cannot be read, has another format, or has no such
+/// channel.
+pub fn read(path: &Path, channel: u16) -> hound::Result<Vec<i16>> {
+    let mut reader = WavReader::open(path)?;
+    let spec = reader.spec();
+    if spec.sample_rate != SPEC.sample_rate
+        || spec.bits_per_sample != SPEC.bits_per_sample
+        || spec.sample_format != SPEC.sample_format
+    {
+        return Err(hound::Error::FormatError(
+            "not 16-bit samples at 8 kHz, which sox -r 8000 -b 16 -e signed gives",
+        ));
+    }
+    if channel >= spec.channels {
+        return Err(hound::Error::FormatError("no such channel"));
+    }
+    reader
+        .samples::<i16>()
+        .skip(channel.into())
+        .step_by(spec.channels.into())
+        .collect()
 }
 
 fn with_suffix(prefix: &Path, direction: &str) -> PathBuf {

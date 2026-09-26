@@ -1047,6 +1047,44 @@ impl DataPump for V34 {
         });
         sent && heard
     }
+
+    fn stage(&self) -> String {
+        let (Some(source), Some(sink), Some(outcome)) = (&self.source, &self.sink, &self.outcome)
+        else {
+            return format!("V.34 {}", self.phase2.stage());
+        };
+        let sending = match source.send {
+            Send::Wait => "silence",
+            Send::Trn { .. } => "TRN",
+            Send::J => "J",
+            Send::Mp => "MP",
+            Send::Data => "data",
+            Send::Cleared => "silence after cleardown",
+        };
+        let hearing = match sink.listen {
+            Listen::S => "S",
+            Listen::Train { .. } => "PP and TRN",
+            Listen::Sequences => "J, MP and E",
+            Listen::Trn { .. } => "TRN",
+            Listen::Data { .. } => "data",
+            Listen::Hold => "S before a renegotiation",
+        };
+        let rate = match self.rate {
+            0 => String::new(),
+            rate => format!(", {} bit/s", u32::from(rate) * 2400),
+        };
+        let asked = if self.retrain_asked() {
+            ", retrain left to V.90"
+        } else {
+            ""
+        };
+        format!(
+            "V.34 phase {} at {:.0} and {:.0} baud: sending {sending}, hearing {hearing}{rate}{asked}",
+            source.phase,
+            outcome.transmit.symbol_rate.baud(),
+            outcome.receive.symbol_rate.baud(),
+        )
+    }
 }
 
 #[cfg(test)]

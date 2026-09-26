@@ -570,6 +570,30 @@ impl DataPump for Digital {
         self.downstream.as_ref().is_some_and(|d| d.b1_sent)
             && self.upstream.as_ref().is_some_and(Upstream::in_data)
     }
+
+    fn stage(&self) -> String {
+        let (Some(downstream), Some(upstream)) = (&self.downstream, &self.upstream) else {
+            return format!("V.90 digital {}", self.phase2.stage());
+        };
+        let sending = match downstream.send {
+            Send::Quiet => "silence",
+            Send::Jd => "Jd",
+            Send::Dil => "DIL",
+            Send::Ri { .. } => "Ri",
+            Send::Training => "TRN2d, MP and Ed",
+            Send::Data => "data",
+            Send::Cleared => "silence after cleardown",
+            Send::Silent => "the silence asked for",
+        };
+        let rate = match downstream.rate {
+            0 => String::new(),
+            rate => format!(", {rate} bit/s"),
+        };
+        format!(
+            "V.90 digital: sending {sending}, hearing {}{rate}",
+            upstream.stage()
+        )
+    }
 }
 
 // § 9.2.1.1.8: V.34 as the call modem, where INFO1a asks for it.

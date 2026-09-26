@@ -76,6 +76,7 @@ link, in `softmodem-link`, is V.42 or plain start-stop characters. See
 - [Terminal](terminal.md): the serial port, AT commands, result codes,
   S-registers and DCD.
 - [Transport](transport.md): the wire, SIP, WAV dumps and the speaker.
+- [Replay](replay.md): a recorded call played again, and what it did.
 - [PPP](ppp.md): `pppd` on both ends.
 - [Interop](interop.md): real modems and spandsp.
 - [The ITU texts](specs.md): where to get them.
