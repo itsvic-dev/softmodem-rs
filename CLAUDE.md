@@ -47,8 +47,10 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   The live tests run with
   `SOFTMODEM_PBX=pbx.vic.iw cargo test -p softmodem --test pbx -- --ignored --test-threads=1`.
 - `pppd` needs root, so it is tested in a NixOS VM test, not by cargo:
-  `nix build .#checks.aarch64-linux.ppp -L`. It needs a Linux builder with
-  `kvm`, and it copies each side's WAV recordings into `result/`.
+  `nix build .#checks.aarch64-darwin.ppp -L` on this Mac, whose guests are
+  aarch64-linux under HVF and are built on the rosetta-builder, or
+  `.#checks.aarch64-linux.ppp` on a Linux host. It copies each side's WAV
+  recordings into `result/`.
   `ppp` runs fixed V.21, `ppp-v22`, `ppp-v22bis` and `ppp-v90` fixed V.22,
   V.22bis and V.90, and `ppp-automode` the default, V.8 up to V.90.
   `ppp-v90-stalls` runs V.90 through 500 ms stalls of both hosts' wire
@@ -71,11 +73,12 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   its source to shape our code. Its installed headers may be read to write
   the binding. The ITU texts in `docs/specs/` are the reference.
 - The CUSE port is Linux only and needs root, so it has its own VM test,
-  `checks.aarch64-linux.cuse`, which includes a nested QEMU guest under TCG
+  `checks.<system>.cuse`, which includes a nested QEMU guest under TCG
   and takes about 3 minutes.
-- `checks.aarch64-linux.slmodemd-v22bis`, `slmodemd-v34` and
-  `slmodemd-v90` call this modem from slmodemd in an x86-64 guest under
-  TCG, and pass text both ways. In `slmodemd-v90` slmodemd is the V.90
+- `checks.<system>.slmodemd-v22bis`, `slmodemd-v34` and
+  `slmodemd-v90` call this modem from slmodemd, and pass text both ways.
+  slmodemd is 32-bit x86: an aarch64 guest runs it under qemu-user through
+  binfmt, and an x86-64 guest natively. In `slmodemd-v90` slmodemd is the V.90
   analogue modem, so it checks this modem's digital side, and
   `slmodemd-v90-renegotiate` adds noise toward slmodemd, which makes it
   renegotiate with silence. `result/dumps/softmodem/` has the call as one stereo WAV,
