@@ -192,7 +192,7 @@
               theirs = "+MS=34,0,2400,33600";
               answer = true;
             };
-            # Both are analogue V.90 modems when this one calls, so V.8 must settle on V.34.
+            # slmodemd answers without V.90, so V.8 must settle on V.34.
             slmodemd-answer-v90 = peer {
               label = "answer-V90";
               ours = "+MS=V90";
