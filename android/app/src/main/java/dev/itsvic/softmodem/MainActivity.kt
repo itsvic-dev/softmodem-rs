@@ -98,18 +98,20 @@ class MainActivity : ComponentActivity() {
 private fun App(modem: ModemViewModel) {
     val state by modem.state.collectAsState()
     val usbSerial by UsbSerialService.running.collectAsState()
+    val serving = usbSerial
     when {
-        usbSerial -> UsbSerialScreen()
+        serving != null -> UsbSerialScreen(serving)
         state is CallState.Idle -> DialScreen(modem)
         else -> TerminalScreen(modem, state)
     }
 }
 
 @Composable
-private fun UsbSerialScreen() {
+private fun UsbSerialScreen(modulation: Modulation) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("The modem is on the USB serial port.", style = MaterialTheme.typography.titleMedium)
+        Text("Up to ${modulation.label}.", style = MaterialTheme.typography.bodyMedium)
         Text(
             "A computer on the cable sees it as /dev/ttyACM0 on Linux, and dials with AT commands, " +
                 "such as ATDT0300. It stays on when you leave the app.",
@@ -170,7 +172,7 @@ private fun DialScreen(modem: ModemViewModel) {
         OutlinedButton(
             onClick = {
                 modem.stop()
-                UsbSerialService.start(context)
+                UsbSerialService.start(context, modulation)
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Serve a computer on USB") }

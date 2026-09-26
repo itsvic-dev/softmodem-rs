@@ -20,11 +20,12 @@ import kotlinx.coroutines.flow.asStateFlow
 
 // The gadget's ACM function, which MediaTek's USB configurations with adb and MTP carry.
 private const val DEVICE = "/dev/ttyGS0"
-// Rides out the codec's fades, which outlast the default 1.4 s, and starts on V.21, which holds up best.
-private const val INIT = "ATS10=50+MS=V21,0"
+// Rides out the codec's fades, which outlast the default 1.4 s.
+private const val INIT = "ATS10=50"
 private const val CHANNEL = "usb-serial"
 private const val NOTIFICATION = 1
 private const val ACTION_STOP = "dev.itsvic.softmodem.STOP"
+private const val EXTRA_MODULATION = "dev.itsvic.softmodem.MODULATION"
 
 /** Serves the modem to a computer on the USB cable, as the phone's USB serial port. */
 class UsbSerialService : Service() {
@@ -40,13 +41,16 @@ class UsbSerialService : Service() {
             return START_NOT_STICKY
         }
         if (watcher != null) return START_NOT_STICKY
-        startForeground(NOTIFICATION, notification())
+        val modulation = intent?.getStringExtra(EXTRA_MODULATION)
+            ?.let { name -> Modulation.entries.find { it.name == name } }
+            ?: Modulation.V21
+        startForeground(NOTIFICATION, notification(modulation))
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "softmodem:usb-serial")
             .apply { acquire() }
-        _running.value = true
+        _running.value = modulation
         watcher = thread(name = "usb-serial") {
-            processes.start(listOf("--serial", DEVICE), INIT, root = true)
+            processes.start(listOf("--serial", DEVICE), "$INIT+MS=${modulation.command}", root = true)
             processes.waitFor()
             if (watcher === Thread.currentThread()) stopSelf()
         }
@@ -57,11 +61,11 @@ class UsbSerialService : Service() {
         watcher = null
         thread { processes.stop() }
         wakeLock?.release()
-        _running.value = false
+        _running.value = null
         super.onDestroy()
     }
 
-    private fun notification(): Notification {
+    private fun notification(modulation: Modulation): Notification {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "USB serial port", NotificationManager.IMPORTANCE_LOW),
         )
@@ -74,7 +78,7 @@ class UsbSerialService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setContentTitle("Modem on the USB serial port")
-            .setContentText("A computer on the cable dials with AT commands.")
+            .setContentText("${modulation.label}. A computer on the cable dials with AT commands.")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true)
@@ -82,11 +86,16 @@ class UsbSerialService : Service() {
     }
 
     companion object {
-        private val _running = MutableStateFlow(false)
-        val running: StateFlow<Boolean> = _running.asStateFlow()
+        private val _running = MutableStateFlow<Modulation?>(null)
 
-        fun start(context: Context) {
-            context.startForegroundService(Intent(context, UsbSerialService::class.java))
+        /** The modulation the running service started with, or null while it is stopped. */
+        val running: StateFlow<Modulation?> = _running.asStateFlow()
+
+        /** Starts the modem with [modulation] as the highest in its stored profile, which ATZ restores. */
+        fun start(context: Context, modulation: Modulation) {
+            context.startForegroundService(
+                Intent(context, UsbSerialService::class.java).putExtra(EXTRA_MODULATION, modulation.name),
+            )
         }
 
         fun stop(context: Context) {

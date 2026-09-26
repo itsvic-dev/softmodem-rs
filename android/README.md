@@ -106,7 +106,9 @@ you leave the app.
   of the phone's USB gadget. MediaTek's USB configurations with adb and with
   MTP carry it (`sys.usb.acm_enable=1`). Only root can open the device, so
   in this mode the modem runs as root too.
-- Its stored profile is `S10=50` and `+MS=V21,0`, so `ATZ` keeps them.
+- It takes the modulation chosen on the dial screen. Its stored profile is
+  `S10=50` and that modulation in `+MS`, such as `+MS=V21,0`, so `ATZ`
+  keeps them. The computer can change it with `AT+MS`.
 - The gadget has no control lines. DCD and RI are not signalled, and the
   computer dropping DTR does not hang up. Hang up with `+++` and `ATH`.
   Unplugging the cable hangs up.
