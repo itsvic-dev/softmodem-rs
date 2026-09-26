@@ -40,6 +40,11 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   and `softmodem wire --local 127.0.0.1:5301 --peer 127.0.0.1:5300 --pty /tmp/caller --dump dumps`,
   then a terminal program on `/tmp/caller` and `ATDT0300`. Without `--pty`,
   `--cuse` or `--tcp` the serial port is stdin and stdout.
+- `softmodem replay dumps/<seconds>-<role>` plays a call recorded with
+  `--dump` again, from its journal and WAV files, logs each stage on the
+  call's clock, and names the first sample it sends that the recording
+  does not have. `--far` also models the far end. The dumps in `result/`
+  of the VM checks have journals too. See `docs/replay.md`.
 - `creds.txt` is ignored and holds live accounts for `pbx.vic.iw`. Never read
   or print it. Load it into the environment and pass variable names:
   `set -a; . ./creds.txt; set +a`, then
