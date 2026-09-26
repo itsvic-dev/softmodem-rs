@@ -49,7 +49,10 @@ Orange in Poland:
 
 An equalizer in the receiver does not help, because the codec damages whole
 frames. So the app defaults to V.21, and warns when you choose another
-modulation.
+modulation. How many characters arrive wrong changes from call to call, with
+the radio. The codec also fades the carrier out for a second at times, so
+the app sets `S10=50` and waits 5 seconds before it takes a lost carrier as
+the end of the call.
 
 ## Building
 
@@ -91,4 +94,7 @@ The first call asks Magisk for root.
 - The bridge depends on MediaTek's audio HAL. Other chipsets need another
   way into the call's audio.
 - The terminal shows text only. ANSI colours and cursor moves are dropped.
-- The app must stay open during a call.
+- The app must stay open during a call. It keeps the screen on, and comes
+  back to the front when the system's in-call screen covers it.
+- Debug builds record each call with `--dump` in the app's files, for
+  `adb exec-out run-as dev.itsvic.softmodem cat files/dumps/<file>`.

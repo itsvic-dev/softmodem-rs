@@ -4,6 +4,7 @@
 
 package dev.itsvic.softmodem
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -30,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,6 +48,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -63,6 +66,21 @@ class MainActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize()) { App(modem) }
             }
         }
+    }
+
+    // The system's in-call screen covers the terminal whenever a call starts.
+    private val bringBack = Runnable {
+        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (modem.inCall()) window.decorView.postDelayed(bringBack, 1000)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        window.decorView.removeCallbacks(bringBack)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -136,6 +154,11 @@ private fun TerminalScreen(modem: ModemViewModel, state: CallState) {
     val scroll = rememberScrollState()
     var line by rememberSaveable { mutableStateOf("") }
     val ended = state is CallState.Ended
+    val view = LocalView.current
+    DisposableEffect(ended) {
+        view.keepScreenOn = !ended
+        onDispose { view.keepScreenOn = false }
+    }
     LaunchedEffect(text) { scroll.scrollTo(scroll.maxValue) }
     BackHandler { if (ended) modem.reset() else modem.hangUp() }
 

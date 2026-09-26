@@ -5,6 +5,7 @@
 package dev.itsvic.softmodem
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -64,7 +65,8 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val socket = serial ?: connect()
-                write(socket, "ATE0V1\r")
+                // Rides out the codec's fades, which outlast the default 1.4 s.
+                write(socket, "ATE0V1S10=50\r")
                 write(socket, "AT+MS=${modulation.value.command}\r")
                 write(socket, "ATDT$number\r")
             } catch (error: IOException) {
@@ -89,6 +91,8 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { socket.close() }
         if (_state.value !is CallState.Ended) _state.value = CallState.Ended("NO CARRIER")
     }
+
+    fun inCall(): Boolean = _state.value is CallState.Dialling || _state.value is CallState.Connected
 
     fun reset() {
         if (_state.value is CallState.Ended) _state.value = CallState.Idle
@@ -123,15 +127,16 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
                     "$BRIDGE_PORT $UPLINK_GAIN $DOWNLINK_GAIN",
             ),
         )
-        modem = log(
-            "modem",
-            ProcessBuilder(
-                binary, "wire",
-                "--local", "127.0.0.1:$MODEM_PORT",
-                "--peer", "127.0.0.1:$BRIDGE_PORT",
-                "--tcp", "127.0.0.1:$SERIAL_PORT",
-            ).apply { environment()["NO_COLOR"] = "1" },
+        val arguments = mutableListOf(
+            binary, "wire",
+            "--local", "127.0.0.1:$MODEM_PORT",
+            "--peer", "127.0.0.1:$BRIDGE_PORT",
+            "--tcp", "127.0.0.1:$SERIAL_PORT",
         )
+        if (app.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            arguments += listOf("--dump", File(getApplication<Application>().filesDir, "dumps").path)
+        }
+        modem = log("modem", ProcessBuilder(arguments).apply { environment()["NO_COLOR"] = "1" })
     }
 
     private fun log(name: String, builder: ProcessBuilder): Process {
