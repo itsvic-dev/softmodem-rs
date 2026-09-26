@@ -44,6 +44,23 @@ pub(crate) struct Received {
     pub(crate) compression: Option<Directions>,
 }
 
+impl Received {
+    /// The error control, as `+ER` reports it.
+    pub(crate) fn protocol(&self) -> &'static str {
+        if self.reliable { "LAPM" } else { "NONE" }
+    }
+
+    /// The compression, as `+DR` reports it.
+    pub(crate) fn compression_name(&self) -> &'static str {
+        match self.compression.map(|c| (c.transmit, c.receive)) {
+            Some((true, true)) => "V42B",
+            Some((false, true)) => "V42B RD",
+            Some((true, false)) => "V42B TD",
+            _ => "NONE",
+        }
+    }
+}
+
 /// A call's line, or for a replay a line with no call under it.
 #[derive(Debug)]
 pub(crate) struct Line<C = Call> {
@@ -181,6 +198,18 @@ impl<C> Line<C> {
 
     pub(crate) fn transmit_rate(&self) -> Option<u32> {
         self.handshake.as_ref().map(|h| h.pump.transmit_rate())
+    }
+
+    /// What the modem logs as `received` connects the call.
+    pub(crate) fn connect_log(&self, received: &Received) -> String {
+        let rate = self.bit_rate().unwrap_or_default();
+        let (protocol, compression) = (received.protocol(), received.compression_name());
+        match self.transmit_rate() {
+            Some(up) if up != rate => format!(
+                "CONNECT {rate}, transmitting at {up}, error control {protocol}, compression {compression}"
+            ),
+            _ => format!("CONNECT {rate}, error control {protocol}, compression {compression}"),
+        }
     }
 
     /// Whether the modem should read more from the computer.

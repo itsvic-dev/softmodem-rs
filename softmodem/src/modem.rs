@@ -563,18 +563,9 @@ where
 
     // Reports CONNECT, with +ER and +DR where asked for, as data mode starts.
     async fn enter_data(&mut self, received: &Received, bit_rate: u32) -> io::Result<()> {
-        let protocol = if received.reliable { "LAPM" } else { "NONE" };
-        let compression = match received.compression.map(|c| (c.transmit, c.receive)) {
-            Some((true, true)) => "V42B",
-            Some((false, true)) => "V42B RD",
-            Some((true, false)) => "V42B TD",
-            _ => "NONE",
-        };
-        match self.line.as_ref().and_then(Line::transmit_rate) {
-            Some(up) if up != bit_rate => info!(
-                "CONNECT {bit_rate}, transmitting at {up}, error control {protocol}, compression {compression}"
-            ),
-            _ => info!("CONNECT {bit_rate}, error control {protocol}, compression {compression}"),
+        let (protocol, compression) = (received.protocol(), received.compression_name());
+        if let Some(line) = &self.line {
+            info!("{}", line.connect_log(received));
         }
         self.mode = Mode::Data {
             escape: EscapeDetector::new(Instant::now().into_std()),
