@@ -73,9 +73,9 @@ class ModemProcesses(private val context: Context) {
         bridge?.destroy()
         modem = null
         bridge = null
-        // Both can run under su, beyond the reach of destroy().
+        // Both can run under su, beyond the reach of destroy(). The brackets keep pkill off its own shell.
         runCatching {
-            ProcessBuilder("su", "-c", "pkill -f dev.itsvic.softmodem.bridge.Bridge; pkill -f libsoftmodem.so")
+            ProcessBuilder("su", "-c", "pkill -f 'dev[.]itsvic[.]softmodem[.]bridge[.]Bridge'; pkill -f 'libsoftmodem[.]so'")
                 .start().waitFor()
         }
     }
