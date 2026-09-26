@@ -16,6 +16,7 @@ use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
 use softmodem_terminal::settings::Settings;
 use softmodem_terminal::tcp::TcpPort;
+use softmodem_terminal::tty::TtyPort;
 use softmodem_transport::sip::{Account, Protocol, Sip};
 use softmodem_transport::speaker::Speaker;
 use softmodem_transport::wire::{Impairment, Wire};
@@ -173,14 +174,25 @@ struct WireArgs {
 #[derive(Args)]
 struct ModemArgs {
     /// Serial port as a pseudoterminal linked from this path, not stdin and stdout.
-    #[arg(long, conflicts_with_all = ["cuse", "tcp"])]
+    #[arg(long, conflicts_with_all = ["cuse", "tcp", "serial"])]
     pty: Option<PathBuf>,
     /// Serial port as the character device /dev/NAME, with DCD and RI. Linux only.
-    #[arg(long, value_name = "NAME", conflicts_with = "tcp")]
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["tcp", "serial"])]
     cuse: Option<String>,
     /// Serial port as a TCP listener on ADDR, for one computer at a time.
-    #[arg(long, value_name = "ADDR")]
+    #[arg(long, value_name = "ADDR", conflicts_with = "serial")]
     tcp: Option<SocketAddr>,
+    /// Serial port as the tty device at PATH, such as a UART or a USB gadget's /dev/ttyGS0.
+    #[arg(long, value_name = "PATH")]
+    serial: Option<PathBuf>,
+    /// Speed of the --serial device, in bits per second.
+    #[arg(
+        long,
+        value_name = "BPS",
+        default_value_t = 115_200,
+        requires = "serial"
+    )]
+    baud: u32,
     /// Commands for the stored profile that ATZ restores, such as "ATS0=1".
     #[arg(long, default_value = "")]
     init: String,
@@ -350,6 +362,11 @@ async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()>
             .await
             .with_context(|| format!("listening on {address}"))?;
         info!(address = %port.local_addr()?, "serial port ready");
+        station.run(port).await
+    } else if let Some(path) = args.serial {
+        let port = TtyPort::open(&path, args.baud)
+            .with_context(|| format!("opening {}", path.display()))?;
+        info!(path = %path.display(), baud = args.baud, "serial port ready");
         station.run(port).await
     } else {
         station

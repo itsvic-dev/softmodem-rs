@@ -45,8 +45,8 @@ The password can also come from `--password` or `--password-file`. Without
 any of the three, the modem asks for it on stdin.
 
 The serial port can be a pseudoterminal (`--pty`), a TCP listener (`--tcp`),
-a character device with DCD and RI through CUSE on Linux (`--cuse`), or
-stdin and stdout. `--dump` records each call as WAV files, and `--speaker`
+a character device with DCD and RI through CUSE on Linux (`--cuse`), a tty
+device the host has, such as a UART (`--serial`), or stdin and stdout. `--dump` records each call as WAV files, and `--speaker`
 plays it on the sound output.
 
 Common AT commands: `ATD` dials, `ATA` answers, `ATH` hangs up, `+++`
