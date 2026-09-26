@@ -225,7 +225,8 @@ impl<C> Line<C> {
             return link.queued() < 2 * link.frame_size();
         }
         let bits = handshake.pump.pending() + link.queued() * 10;
-        let queued = Duration::from_secs_f64(bits as f64 / f64::from(handshake.pump.bit_rate()));
+        let queued =
+            Duration::from_secs_f64(bits as f64 / f64::from(handshake.pump.transmit_rate()));
         queued < LOW_WATER
     }
 
@@ -331,7 +332,7 @@ impl Handshake {
         if !self.pump.connected() {
             return;
         }
-        let rate = self.pump.bit_rate();
+        let rate = self.pump.transmit_rate();
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -342,8 +343,9 @@ impl Handshake {
         if pending >= target {
             return;
         }
+        let slower = rate.min(self.pump.bit_rate());
         let link = self.link();
-        link.start(rate, now);
+        link.start(slower, now);
         let bits = link.transmit(target - pending, now);
         self.pump.push_bits(&bits);
     }

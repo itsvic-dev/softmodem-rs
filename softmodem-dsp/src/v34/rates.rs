@@ -108,16 +108,32 @@ pub fn mask(symbol_rate: SymbolRate, max: u8) -> u16 {
     })
 }
 
-/// The data rate both directions run at, in multiples of 2400 bit/s, as
-/// § 11.4.1.1.3 has it for symmetric rates: the highest that both masks
-/// enable and no maximum exceeds.
+/// The data rates call to answer and answer to call, in multiples of
+/// 2400 bit/s, from the maxima that the two MPs give for each direction, as
+/// § 11.4.1.1.3 has them: for each direction the highest rate that both
+/// masks enable and neither maximum exceeds. Unless both MPs allow
+/// asymmetric rates, both directions run at the lower of the two.
 #[must_use]
-pub fn agree(maxima: [u8; 4], masks: [u16; 2]) -> u8 {
-    let ceiling = maxima.into_iter().min().unwrap_or(0);
-    (1..=ceiling)
-        .rev()
-        .find(|&n| masks.iter().all(|mask| mask >> (n - 1) & 1 == 1))
-        .unwrap_or(0)
+pub fn agree(
+    call_to_answer: [u8; 2],
+    answer_to_call: [u8; 2],
+    masks: [u16; 2],
+    asymmetric: bool,
+) -> (u8, u8) {
+    let highest = |maxima: [u8; 2]| {
+        let ceiling = maxima.into_iter().min().unwrap_or(0);
+        (1..=ceiling)
+            .rev()
+            .find(|&n| masks.iter().all(|mask| mask >> (n - 1) & 1 == 1))
+            .unwrap_or(0)
+    };
+    let rates = (highest(call_to_answer), highest(answer_to_call));
+    if asymmetric {
+        rates
+    } else {
+        let both = rates.0.min(rates.1);
+        (both, both)
+    }
 }
 
 #[cfg(test)]
@@ -194,8 +210,19 @@ mod tests {
     fn agrees_on_the_highest_rate_both_ends_have() {
         let ours = mask(SymbolRate::S3200, 13);
         let theirs = mask(SymbolRate::S3200, 10);
-        assert_eq!(agree([13, 13, 11, 12], [ours, theirs]), 10);
-        assert_eq!(agree([13, 13, 13, 13], [ours, ours]), 13);
-        assert_eq!(agree([0, 13, 13, 13], [ours, ours]), 0);
+        assert_eq!(agree([13, 11], [13, 12], [ours, theirs], false), (10, 10));
+        assert_eq!(agree([13, 13], [13, 13], [ours, ours], false), (13, 13));
+        assert_eq!(agree([0, 13], [13, 13], [ours, ours], false), (0, 0));
+    }
+
+    #[test]
+    fn agrees_on_a_rate_for_each_direction_when_both_ends_allow_it() {
+        let all = mask(SymbolRate::S3429, 14);
+        assert_eq!(agree([14, 12], [5, 14], [all, all], true), (12, 5));
+        assert_eq!(agree([14, 12], [5, 14], [all, all], false), (5, 5));
+        assert_eq!(
+            agree([14, 12], [5, 14], [all, mask(SymbolRate::S3429, 10)], true),
+            (10, 5)
+        );
     }
 }
