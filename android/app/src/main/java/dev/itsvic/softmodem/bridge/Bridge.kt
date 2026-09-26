@@ -60,18 +60,29 @@ object Bridge {
             val number = text.removePrefix("DIAL ")
             println("bridge: dialling $number")
             exec("am", "start", "-a", "android.intent.action.CALL", "-d", "tel:" + Uri.encode(number))
-            if (!waitFor(15_000) { audio.mode == AudioManager.MODE_IN_CALL } ||
-                !waitFor(60_000) { audio.mode != AudioManager.MODE_IN_CALL || active() } ||
-                audio.mode != AudioManager.MODE_IN_CALL
+            var abandoned = false
+            val gaveUp = { abandoned = abandoned || hungUp(socket, peer); abandoned }
+            if (!waitFor(15_000) { gaveUp() || audio.mode == AudioManager.MODE_IN_CALL } ||
+                !waitFor(60_000) { gaveUp() || audio.mode != AudioManager.MODE_IN_CALL || active() } ||
+                audio.mode != AudioManager.MODE_IN_CALL ||
+                abandoned
             ) {
-                println("bridge: not answered")
+                println(if (abandoned) "bridge: the modem hung up" else "bridge: not answered")
                 endCall()
-                send(socket, peer, "BUSY")
+                if (!abandoned) send(socket, peer, "BUSY")
                 continue
             }
             CALL_PARAMETERS.forEach(::setParameters)
             audio.isSpeakerphoneOn = false
-            Thread.sleep(digitsTime(number))
+            val digits = digitsTime(number)
+            val keyed = System.currentTimeMillis() + digits
+            waitFor(digits + 1000) { gaveUp() || System.currentTimeMillis() >= keyed }
+            if (abandoned) {
+                println("bridge: the modem hung up")
+                NORMAL_PARAMETERS.forEach(::setParameters)
+                endCall()
+                continue
+            }
             send(socket, peer, "ANSWER")
             println("bridge: in call")
             try {
@@ -215,6 +226,18 @@ object Bridge {
         Class.forName("android.media.AudioSystem")
             .getMethod("setParameters", String::class.java)
             .invoke(null, keyValues)
+    }
+
+    private fun hungUp(socket: DatagramSocket, peer: SocketAddress): Boolean {
+        val buffer = ByteArray(64)
+        val packet = DatagramPacket(buffer, buffer.size)
+        socket.soTimeout = 1
+        return try {
+            socket.receive(packet)
+            packet.socketAddress == peer && String(buffer, 0, packet.length, Charsets.ISO_8859_1) == "BYE"
+        } catch (_: SocketTimeoutException) {
+            false
+        }
     }
 
     private fun active(): Boolean {
