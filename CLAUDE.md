@@ -78,7 +78,9 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `checks.<system>.slmodemd-v22bis`, `slmodemd-v34` and
   `slmodemd-v90` call this modem from slmodemd, and pass text both ways.
   slmodemd is 32-bit x86: an aarch64 guest runs it under qemu-user through
-  binfmt, and an x86-64 guest natively. In `slmodemd-v90` slmodemd is the V.90
+  binfmt, and an x86-64 guest natively. Under qemu-user, slmodemd's V.22bis
+  can fall behind real time while another VM runs beside it, so build the
+  slmodemd checks with `-j 1` when one fails with NO CARRIER. In `slmodemd-v90` slmodemd is the V.90
   analogue modem, so it checks this modem's digital side, and
   `slmodemd-v90-renegotiate` adds noise toward slmodemd, which makes it
   renegotiate with silence. `result/dumps/softmodem/` has the call as one stereo WAV,
