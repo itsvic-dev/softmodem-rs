@@ -33,6 +33,9 @@ const TRN_SETTLE: usize = 512;
 const TRN_HEARD: usize = 1536;
 // § 11.5: the far tone for more than 50 ms starts a retrain.
 const RETRAIN_TONE: usize = 400;
+// § 11.4.2.1.2 and § 11.4.2.2.2: E comes within 2500 ms and some round trips, or 30 s with CME.
+const E_TIMEOUT: usize = 20_000;
+const CME_E_TIMEOUT: usize = 240_000;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
@@ -734,6 +737,8 @@ pub struct V34 {
     /// The far end's tone A or B in data mode, which starts a retrain.
     retrain_tone: tones::Detector,
     tone_heard: usize,
+    /// Samples heard in phase 4 without the far E, until it comes.
+    e_waited: Option<usize>,
     monitor: Monitor,
     asks: Asks,
     retrains: Retrains,
@@ -766,6 +771,7 @@ impl V34 {
             online: false,
             retrain_tone: tones::Detector::new(other(role)),
             tone_heard: 0,
+            e_waited: Some(0),
             monitor: Monitor::default(),
             asks: Asks::default(),
             retrains: Retrains::Here,
@@ -833,6 +839,36 @@ impl V34 {
         self.sink = None;
         self.far = Far::default();
         self.tone_heard = 0;
+        self.e_waited = Some(0);
+    }
+
+    fn e_overdue(&mut self, samples: usize) -> bool {
+        if self
+            .sink
+            .as_ref()
+            .is_some_and(|sink| matches!(sink.listen, Listen::Data { .. }))
+        {
+            self.e_waited = None;
+        }
+        let (Some(waited), Some(outcome), Some(source)) =
+            (&mut self.e_waited, self.outcome, &self.source)
+        else {
+            return false;
+        };
+        if source.phase != 4 {
+            return false;
+        }
+        *waited += samples;
+        let round_trips = match self.role {
+            Role::Originate => 2,
+            Role::Answer => 3,
+        };
+        let timeout = if outcome.far.cme {
+            CME_E_TIMEOUT
+        } else {
+            E_TIMEOUT + round_trips * outcome.round_trip
+        };
+        *waited > timeout
     }
 
     // § 11.4.2 and § 11.5: the far tone for more than 50 ms from phase 4 on.
@@ -974,7 +1010,7 @@ impl DataPump for V34 {
         let power = input.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
             / f64::from(u32::try_from(input.len().max(1)).unwrap_or(1));
         self.carrier = power.sqrt() > self.level;
-        if self.far_retrains(input) {
+        if self.far_retrains(input) || self.e_overdue(input.len()) {
             self.restart();
             return;
         }
@@ -1437,6 +1473,44 @@ mod tests {
             assert!(
                 back,
                 "a retrain in phase 4 from the {initiator:?} end would never reach data"
+            );
+        }
+    }
+
+    #[test]
+    fn retrains_when_the_far_e_never_comes() {
+        for deaf in [Role::Originate, Role::Answer] {
+            let mut caller = V34::new(Role::Originate);
+            let mut answerer = V34::new(Role::Answer);
+            let mut frames = 0;
+            let deaf_in_phase_4 = |caller: &V34, answerer: &V34| match deaf {
+                Role::Originate => in_phase_4(caller),
+                Role::Answer => in_phase_4(answerer),
+            };
+            while !deaf_in_phase_4(&caller, &answerer) && frames < 400 {
+                exchange(&mut caller, &mut answerer, 1);
+                frames += 1;
+            }
+            let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+            let silence = [0; FRAME];
+            let waited = (1..=250).find(|_| {
+                caller.transmit(&mut up);
+                answerer.transmit(&mut down);
+                let (to_answerer, to_caller) = match deaf {
+                    Role::Originate => (&up, &silence),
+                    Role::Answer => (&silence, &down),
+                };
+                answerer.receive(to_answerer, &mut Vec::new());
+                caller.receive(to_caller, &mut Vec::new());
+                match deaf {
+                    Role::Originate => caller.sink.is_none(),
+                    Role::Answer => answerer.sink.is_none(),
+                }
+            });
+            let ms = waited.map(|frames| frames * FRAME / 8);
+            assert!(
+                ms.is_some_and(|ms| (2500..2700).contains(&ms)),
+                "the {deaf:?} end would wait {ms:?} ms for an E that never comes, not 2500 ms and the round trips"
             );
         }
     }
