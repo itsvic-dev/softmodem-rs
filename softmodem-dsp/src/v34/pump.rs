@@ -835,13 +835,9 @@ impl V34 {
         self.tone_heard = 0;
     }
 
-    // § 11.5.1.2 and § 11.5.2.2: the far tone for more than 50 ms in data mode.
+    // § 11.4.2 and § 11.5: the far tone for more than 50 ms from phase 4 on.
     fn far_retrains(&mut self, input: &[i16]) -> bool {
-        let in_data = self
-            .sink
-            .as_ref()
-            .is_some_and(|sink| matches!(sink.listen, Listen::Data { .. }));
-        if !in_data {
+        if self.source.as_ref().is_none_or(|source| source.phase != 4) {
             self.tone_heard = 0;
             return false;
         }
@@ -1405,6 +1401,50 @@ mod tests {
                 "data would be lost after a retrain started by the {initiator:?} end"
             );
         }
+    }
+
+    #[test]
+    fn answers_a_retrain_that_the_far_end_starts_in_phase_4() {
+        for initiator in [Role::Originate, Role::Answer] {
+            let mut caller = V34::new(Role::Originate);
+            let mut answerer = V34::new(Role::Answer);
+            let mut frames = 0;
+            while !(in_phase_4(&caller) && in_phase_4(&answerer)) && frames < 400 {
+                exchange(&mut caller, &mut answerer, 1);
+                frames += 1;
+            }
+            assert!(
+                in_phase_4(&caller) && in_phase_4(&answerer),
+                "two ends would never train each other"
+            );
+            let (starts, answers) = match initiator {
+                Role::Originate => (&mut caller, &mut answerer),
+                Role::Answer => (&mut answerer, &mut caller),
+            };
+            starts.restart();
+            let joined = (1..=25).any(|_| {
+                exchange(starts, answers, 1);
+                answers.sink.is_none()
+            });
+            assert!(
+                joined,
+                "a retrain from the {initiator:?} end in phase 4 would go unanswered until the far end gives up"
+            );
+            let back = (1..=500).any(|_| {
+                exchange(&mut caller, &mut answerer, 1);
+                caller.connected() && answerer.connected()
+            });
+            assert!(
+                back,
+                "a retrain in phase 4 from the {initiator:?} end would never reach data"
+            );
+        }
+    }
+
+    fn in_phase_4(pump: &V34) -> bool {
+        pump.source
+            .as_ref()
+            .is_some_and(|source| source.phase == 4 && source.send != Send::Data)
     }
 
     #[test]
