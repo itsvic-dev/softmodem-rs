@@ -88,7 +88,9 @@ and puts it in the APK.
 - Type the number. Each comma waits 3 seconds, and the digits after the
   first comma are keyed once the call is answered, for a menu:
   `0300,,,1234#`.
-- Choose the modulation. V.21 is the default.
+- Choose the highest modulation: V.21, V.22, V.22bis, V.34 or V.90, each
+  with automode off. V.21 is the default. The others are there to try, as
+  the codec is not expected to carry them.
 - Dial with the button or the green call key.
 - In the terminal, type a line and send it with the OK key or Send.
 - Back, or Hang up, ends the call.

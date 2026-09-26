@@ -28,6 +28,8 @@ enum class Modulation(val label: String, val command: String) {
     V21("V.21, 300 bit/s", "V21,0"),
     V22("V.22, 1200 bit/s", "V22,0"),
     V22BIS("V.22bis, 2400 bit/s", "V22B,0"),
+    V34("V.34, 33600 bit/s", "V34,0"),
+    V90("V.90, 56000 bit/s", "V90,0"),
 }
 
 sealed interface CallState {
