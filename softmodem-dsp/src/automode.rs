@@ -6,6 +6,8 @@
 //! V.32 bis with one step of this modem's own for a far end that does not
 //! speak V.8.
 
+use std::time::Duration;
+
 use crate::ansam::{AnswerTone, AnswerToneDetector, AnswerToneKind};
 use crate::fsk::{self, V21_ANSWER, V21_MAX_LEVEL_DBM0, V21_ORIGINATE};
 use crate::pump::{DataPump, Modulation, Role};
@@ -366,6 +368,10 @@ impl DataPump for Answer {
         self.pump().is_some_and(DataPump::cleared)
     }
 
+    fn round_trip(&self) -> Option<Duration> {
+        self.pump().and_then(DataPump::round_trip)
+    }
+
     fn pending(&self) -> usize {
         self.pump().map_or(0, DataPump::pending)
     }
@@ -604,6 +610,10 @@ impl DataPump for Call {
 
     fn cleared(&self) -> bool {
         self.pump().is_some_and(DataPump::cleared)
+    }
+
+    fn round_trip(&self) -> Option<Duration> {
+        self.pump().and_then(DataPump::round_trip)
     }
 
     fn pending(&self) -> usize {

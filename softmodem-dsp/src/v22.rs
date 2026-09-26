@@ -6,7 +6,9 @@
 //! carrier handshake of its § 6.3.1.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
+use crate::SAMPLE_RATE;
 use crate::dpsk::{Demodulator, Modulator, V22_HIGH_HZ, V22_LOW_HZ};
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Descrambler, Scrambler};
@@ -22,6 +24,7 @@ pub(crate) const GUARD_TONE_DBM0: f64 = -19.97;
 
 pub(crate) const USB1_BITS: usize = 186;
 const SCRAMBLED_BITS: usize = 324;
+const SCRAMBLED_SAMPLES: usize = SCRAMBLED_BITS * 8000 / BIT_RATE as usize;
 pub(crate) const WAIT_SAMPLES: usize = 3648;
 pub(crate) const SETTLE_SAMPLES: usize = 6120;
 
@@ -65,10 +68,17 @@ impl Run {
 /// stays silent until it has heard unscrambled ones for 155 ms, waits
 /// 456 ms, sends scrambled ones, and goes to data 765 ms after it hears them
 /// back.
+///
+/// Over a long round trip, the caller shortens its 765 ms to what the
+/// answerer can still need, as the answerer's own 765 ms started a round
+/// trip earlier. Its data, the V.42 ODP first, then reaches an answerer
+/// whose detection phase is still open.
 #[derive(Debug)]
 pub(crate) struct V22 {
     role: Role,
     phase: Phase,
+    scrambled_from: usize,
+    round_trip: Option<usize>,
     modulator: Modulator,
     demodulator: Demodulator,
     guard: Option<Tone>,
@@ -99,6 +109,8 @@ impl V22 {
         Self {
             role,
             phase,
+            scrambled_from: 0,
+            round_trip: None,
             modulator,
             demodulator,
             guard,
@@ -137,9 +149,20 @@ impl V22 {
                 };
             }
             Phase::UnscrambledOnes if self.run.scrambled() => self.settle(),
-            Phase::ScrambledOnes if self.run.scrambled() && self.run.value => self.settle(),
+            Phase::ScrambledOnes if self.run.scrambled() && self.run.value => self.answered(),
             _ => {}
         }
+    }
+
+    // The answerer went to data 765 ms after it heard our scrambled ones.
+    fn answered(&mut self) {
+        let heard_after = self.sent - self.scrambled_from;
+        self.round_trip = Some(heard_after.saturating_sub(2 * SCRAMBLED_SAMPLES));
+        self.phase = Phase::Settling {
+            until: self
+                .sent
+                .max(self.scrambled_from + SCRAMBLED_SAMPLES + SETTLE_SAMPLES),
+        };
     }
 }
 
@@ -165,6 +188,7 @@ impl DataPump for V22 {
             && self.sent >= until
         {
             self.phase = Phase::ScrambledOnes;
+            self.scrambled_from = self.sent;
         }
         if let Phase::Settling { until } = self.phase
             && self.sent >= until
@@ -219,6 +243,12 @@ impl DataPump for V22 {
 
     fn connected(&self) -> bool {
         self.phase == Phase::Data
+    }
+
+    #[expect(clippy::cast_precision_loss, reason = "a few seconds of samples")]
+    fn round_trip(&self) -> Option<Duration> {
+        self.round_trip
+            .map(|samples| Duration::from_secs_f64(samples as f64 / SAMPLE_RATE))
     }
 
     fn stage(&self) -> String {
