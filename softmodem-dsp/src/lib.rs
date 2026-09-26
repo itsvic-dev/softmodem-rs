@@ -8,6 +8,7 @@ pub mod ansam;
 pub mod automode;
 mod correlator;
 pub mod dpsk;
+pub mod dtmf;
 pub mod fsk;
 pub mod hdlc;
 mod passband;
