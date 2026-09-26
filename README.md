@@ -46,8 +46,9 @@ any of the three, the modem asks for it on stdin.
 
 The serial port can be a pseudoterminal (`--pty`), a TCP listener (`--tcp`),
 a character device with DCD and RI through CUSE on Linux (`--cuse`), a tty
-device the host has, such as a UART (`--serial`), or stdin and stdout. `--dump` records each call as WAV files, and `--speaker`
-plays it on the sound output.
+device the host has, such as a UART (`--serial`), or stdin and stdout.
+`--dump` records each call as WAV files, and `--speaker` plays it on the
+sound output.
 
 Common AT commands: `ATD` dials, `ATA` answers, `ATH` hangs up, `+++`
 escapes to command mode, `ATO` goes back online, and `AT+MS=V34` or
