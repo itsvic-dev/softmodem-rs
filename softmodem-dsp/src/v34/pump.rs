@@ -17,6 +17,7 @@ use super::phase2::{Outcome, Phase2};
 use super::receiver::{DELAY, Equalizer, FrontEnd, Symbol, Tracking};
 use super::training::{self, J_4, J_16, J_PRIME, PP_SYMBOLS, Points};
 use super::{NOMINAL_DBM0, SymbolRate, rates, tones};
+use crate::echo::Canceller;
 use crate::passband::Complex;
 use crate::pump::{DataPump, Role};
 use crate::scrambler::{Descrambler, Polynomial, Scrambler};
@@ -33,6 +34,11 @@ const TRN_SETTLE: usize = 512;
 const TRN_HEARD: usize = 1536;
 // § 11.5: the far tone for more than 50 ms starts a retrain.
 const RETRAIN_TONE: usize = 400;
+// § 11.4.2.1.2 and § 11.4.2.2.2: E comes within 2500 ms and some round trips, or 30 s with CME.
+const E_TIMEOUT: usize = 20_000;
+const CME_E_TIMEOUT: usize = 240_000;
+// MP′ before E, for longer than a VoIP path loses at once and than slmodemd takes to restart its own MP.
+const MP_PRIME_MS: f64 = 200.0;
 // § 11.3.1.2.1: the answer modem waits 70 ± 5 ms after INFO1a.
 const SILENCE_MS: f64 = 70.0;
 const HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
@@ -53,6 +59,8 @@ const fn code(pattern: &str) -> u32 {
     value
 }
 const CARRIER_DBM0: f64 = -43.0;
+// 10 dB below the far end's loudest in phase 2, L1 at 6 dB above nominal, a frame is not the far end's S.
+const FAINT: f64 = 0.1;
 
 fn polynomial(role: Role) -> Polynomial {
     match role {
@@ -122,7 +130,9 @@ struct Source {
     training: training::Sender,
     points: Points,
     mp: Mp,
-    acks_sent: u8,
+    /// Symbols of MP′ sent, and how many to send before E.
+    acked: usize,
+    acked_least: usize,
     encoder: Option<Encoder>,
     scale: f64,
     scrambler: Scrambler,
@@ -135,7 +145,7 @@ struct Source {
 }
 
 impl Source {
-    fn new(role: Role, silence: usize, mp: Mp) -> Self {
+    fn new(role: Role, silence: usize, mp: Mp, acked_least: usize) -> Self {
         let mut queue = VecDeque::from(vec![(0.0, 0.0); silence]);
         let send = if role == Role::Answer {
             queue.extend(phase_3_start());
@@ -151,7 +161,8 @@ impl Source {
             training: training::Sender::new(role),
             points: Points::Four,
             mp,
-            acks_sent: 0,
+            acked: 0,
+            acked_least,
             encoder: None,
             scale: 1.0,
             scrambler: Scrambler::with(polynomial(role)),
@@ -274,8 +285,7 @@ impl Source {
         let far_clears = far
             .mp
             .is_some_and(|mp| mp.max_call_to_answer == 0 && mp.max_answer_to_call == 0);
-        // Two MP′ at least, as slmodemd may miss the first while it restarts its own MP.
-        if self.acks_sent >= 2 && far.ack {
+        if self.acked >= self.acked_least && far.ack {
             // § 11.7: MP′ both ways ends a cleardown, with no E.
             if self.clearing || far_clears {
                 self.send = Send::Cleared;
@@ -293,10 +303,11 @@ impl Source {
             mp.max_answer_to_call = 0;
         }
         mp.acknowledge = far.mp.is_some();
-        self.acks_sent += u8::from(mp.acknowledge);
-        let frame = mp.frame();
-        self.queue
-            .extend(self.training.sequence(&frame, self.points));
+        let frame = self.training.sequence(&mp.frame(), self.points);
+        if mp.acknowledge {
+            self.acked += frame.len();
+        }
+        self.queue.extend(frame);
     }
 
     // § 11.7.1.1: S and S̄, then MP asking for 0 bit/s, with no TRN.
@@ -312,7 +323,7 @@ impl Source {
         self.queue.extend((0..S_BAR_SYMBOLS).map(training::s_bar));
         self.training = training::Sender::new(self.role);
         self.points = Points::Four;
-        self.acks_sent = 0;
+        self.acked = 0;
         self.encoder = None;
         self.b1_sent = false;
         self.send = Send::Trn { sent: 0 };
@@ -371,6 +382,8 @@ struct Sink {
     front_end: FrontEnd,
     equalizer: Equalizer,
     detector: SDetector,
+    // What is heard now is too faint to be the far end's S, as the echo of this end's own is.
+    faint: bool,
     listen: Listen,
     phase: u8,
     count: usize,
@@ -398,6 +411,7 @@ impl Sink {
             front_end: FrontEnd::new(outcome.receive.symbol_rate, outcome.receive.high_carrier),
             equalizer: Equalizer::default(),
             detector: SDetector::default(),
+            faint: false,
             listen: Listen::S,
             phase: 3,
             count: 0,
@@ -447,7 +461,13 @@ impl Sink {
         let z = self.equalizer.output(symbol);
         let index = self.count.checked_sub(DELAY);
         self.count += 1;
-        match (self.detector.push(symbol), self.listen) {
+        let heard = if self.faint {
+            self.detector.skip(symbol);
+            None
+        } else {
+            self.detector.push(symbol)
+        };
+        match (heard, self.listen) {
             (Some(Heard::SBar(at)), Listen::S) => {
                 self.listen = Listen::Train { from: at };
                 self.front_end.track(Tracking::Train);
@@ -726,7 +746,9 @@ pub struct V34 {
     source: Option<Source>,
     sink: Option<Sink>,
     far: Far,
+    /// The data rates this end receives and transmits at, in multiples of 2400 bit/s.
     rate: u8,
+    transmit_rate: u8,
     level: f64,
     carrier: bool,
     /// Connected once, and still in the call through renegotiations and retrains.
@@ -734,6 +756,11 @@ pub struct V34 {
     /// The far end's tone A or B in data mode, which starts a retrain.
     retrain_tone: tones::Detector,
     tone_heard: usize,
+    echo: Canceller,
+    // The power of the loudest frame heard in phase 2, which is the far end's.
+    far_power: f64,
+    /// Samples heard in phase 4 without the far E, until it comes.
+    e_waited: Option<usize>,
     monitor: Monitor,
     asks: Asks,
     retrains: Retrains,
@@ -761,11 +788,15 @@ impl V34 {
             sink: None,
             far: Far::default(),
             rate: 0,
+            transmit_rate: 0,
             level: sine_peak(CARRIER_DBM0) / std::f64::consts::SQRT_2,
             carrier: false,
             online: false,
             retrain_tone: tones::Detector::new(other(role)),
             tone_heard: 0,
+            echo: Canceller::new(),
+            far_power: 0.0,
+            e_waited: Some(0),
             monitor: Monitor::default(),
             asks: Asks::default(),
             retrains: Retrains::Here,
@@ -833,15 +864,41 @@ impl V34 {
         self.sink = None;
         self.far = Far::default();
         self.tone_heard = 0;
+        self.e_waited = Some(0);
     }
 
-    // § 11.5.1.2 and § 11.5.2.2: the far tone for more than 50 ms in data mode.
-    fn far_retrains(&mut self, input: &[i16]) -> bool {
-        let in_data = self
+    fn e_overdue(&mut self, samples: usize) -> bool {
+        if self
             .sink
             .as_ref()
-            .is_some_and(|sink| matches!(sink.listen, Listen::Data { .. }));
-        if !in_data {
+            .is_some_and(|sink| matches!(sink.listen, Listen::Data { .. }))
+        {
+            self.e_waited = None;
+        }
+        let (Some(waited), Some(outcome), Some(source)) =
+            (&mut self.e_waited, self.outcome, &self.source)
+        else {
+            return false;
+        };
+        if source.phase != 4 {
+            return false;
+        }
+        *waited += samples;
+        let round_trips = match self.role {
+            Role::Originate => 2,
+            Role::Answer => 3,
+        };
+        let timeout = if outcome.far.cme {
+            CME_E_TIMEOUT
+        } else {
+            E_TIMEOUT + round_trips * outcome.round_trip
+        };
+        *waited > timeout
+    }
+
+    // § 11.4.2 and § 11.5: the far tone for more than 50 ms from phase 4 on.
+    fn far_retrains(&mut self, input: &[i16]) -> bool {
+        if self.source.as_ref().is_none_or(|source| source.phase != 4) {
             self.tone_heard = 0;
             return false;
         }
@@ -857,7 +914,7 @@ impl V34 {
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "70 ms of symbols"
+        reason = "200 ms of symbols"
     )]
     fn start_training(&mut self, outcome: Outcome) {
         let transmit = outcome.transmit;
@@ -882,14 +939,16 @@ impl V34 {
             max_call_to_answer: call_to_answer,
             max_answer_to_call: answer_to_call,
             rates: rates::mask(transmit.symbol_rate, 14),
+            asymmetric: true,
             ..Mp::default()
         });
-        self.source = Some(Source::new(self.role, silence, mp));
+        let acked_least = (MP_PRIME_MS / 1000.0 * transmit.symbol_rate.baud()) as usize;
+        self.source = Some(Source::new(self.role, silence, mp, acked_least));
         self.sink = Some(Sink::new(self.role, &outcome));
         self.outcome = Some(outcome);
     }
 
-    // § 11.4.1.1.3: once the far MP has come, both ends know the data rate.
+    // § 11.4.1.1.3 and § 11.4.1.2.3: once the far MP has come, both ends know the data rates.
     fn agree(&mut self) {
         let (Some(outcome), Some(source), Some(sink), Some(far)) =
             (self.outcome, &mut self.source, &mut self.sink, self.far.mp)
@@ -900,21 +959,25 @@ impl V34 {
             return;
         }
         let ours = source.own_mp(&self.far);
-        let rate = rates::agree(
-            [
-                ours.max_call_to_answer,
-                ours.max_answer_to_call,
-                far.max_call_to_answer,
-                far.max_answer_to_call,
-            ],
+        let (call_to_answer, answer_to_call) = rates::agree(
+            [ours.max_call_to_answer, far.max_call_to_answer],
+            [ours.max_answer_to_call, far.max_answer_to_call],
             [ours.rates, far.rates],
+            ours.asymmetric && far.asymmetric,
         );
-        let bit_rate = u32::from(rate) * 2400;
+        let (rate, transmit_rate) = match self.role {
+            Role::Originate => (answer_to_call, call_to_answer),
+            Role::Answer => (call_to_answer, answer_to_call),
+        };
         let (Some(transmit), Some(receive)) = (
-            Framing::new(outcome.transmit.symbol_rate, bit_rate, far.expanded_shaping),
+            Framing::new(
+                outcome.transmit.symbol_rate,
+                u32::from(transmit_rate) * 2400,
+                far.expanded_shaping,
+            ),
             Framing::new(
                 outcome.receive.symbol_rate,
-                bit_rate,
+                u32::from(rate) * 2400,
                 self.asks.expanded_shaping,
             ),
         ) else {
@@ -932,6 +995,7 @@ impl V34 {
         source.b1_frames = transmit.p;
         sink.start_data(receive, self.asks.settings());
         self.rate = rate;
+        self.transmit_rate = transmit_rate;
     }
 }
 
@@ -942,6 +1006,10 @@ impl DataPump for V34 {
 
     fn bit_rate(&self) -> u32 {
         u32::from(self.rate) * 2400
+    }
+
+    fn transmit_rate(&self) -> u32 {
+        u32::from(self.transmit_rate) * 2400
     }
 
     fn decoder(&self) -> Characters {
@@ -961,30 +1029,48 @@ impl DataPump for V34 {
     fn transmit(&mut self, out: &mut [i16]) {
         let (Some(modulator), Some(source)) = (&mut self.modulator, &mut self.source) else {
             self.phase2.transmit(out);
+            self.echo.sent(out, false);
             return;
         };
         let far = &self.far;
         modulator.render(out, || source.next(far));
+        // S and PP repeat within milliseconds, and so give no single delay.
+        let broadband = matches!(
+            source.send,
+            Send::Trn { sent: 1.. } | Send::J | Send::Mp | Send::Data
+        );
+        self.echo.sent(out, broadband);
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        let training = self
+            .sink
+            .as_ref()
+            .is_some_and(|sink| !matches!(sink.listen, Listen::Data { .. }));
+        let input = &self.echo.cancel(input, training);
+        let power = input.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
+            / f64::from(u32::try_from(input.len().max(1)).unwrap_or(1));
         if self.sink.is_none() {
+            self.far_power = self.far_power.max(power);
             self.phase2.receive(input);
             if let Some(outcome) = self.phase2.outcome().filter(|_| self.phase2.done()) {
                 self.start_training(outcome);
             }
             return;
         }
-        let power = input.iter().map(|&s| f64::from(s).powi(2)).sum::<f64>()
-            / f64::from(u32::try_from(input.len().max(1)).unwrap_or(1));
         self.carrier = power.sqrt() > self.level;
-        if self.far_retrains(input) {
+        if self.far_retrains(input) || self.e_overdue(input.len()) {
             self.restart();
             return;
         }
         let Some(sink) = &mut self.sink else {
             return;
         };
+        let faint = power < FAINT * self.far_power;
+        if sink.faint && !faint {
+            sink.equalizer.relevel();
+        }
+        sink.faint = faint;
         for symbol in sink.front_end.process(input) {
             sink.take(&symbol, &mut self.far, bits);
         }
@@ -1446,6 +1532,210 @@ mod tests {
     }
 
     #[test]
+    fn answers_a_retrain_that_the_far_end_starts_in_phase_4() {
+        for initiator in [Role::Originate, Role::Answer] {
+            let mut caller = V34::new(Role::Originate);
+            let mut answerer = V34::new(Role::Answer);
+            let mut frames = 0;
+            while !(in_phase_4(&caller) && in_phase_4(&answerer)) && frames < 400 {
+                exchange(&mut caller, &mut answerer, 1);
+                frames += 1;
+            }
+            assert!(
+                in_phase_4(&caller) && in_phase_4(&answerer),
+                "two ends would never train each other"
+            );
+            let (starts, answers) = match initiator {
+                Role::Originate => (&mut caller, &mut answerer),
+                Role::Answer => (&mut answerer, &mut caller),
+            };
+            starts.restart();
+            let joined = (1..=25).any(|_| {
+                exchange(starts, answers, 1);
+                answers.sink.is_none()
+            });
+            assert!(
+                joined,
+                "a retrain from the {initiator:?} end in phase 4 would go unanswered until the far end gives up"
+            );
+            let back = (1..=500).any(|_| {
+                exchange(&mut caller, &mut answerer, 1);
+                caller.connected() && answerer.connected()
+            });
+            assert!(
+                back,
+                "a retrain in phase 4 from the {initiator:?} end would never reach data"
+            );
+        }
+    }
+
+    #[test]
+    fn retrains_when_the_far_e_never_comes() {
+        for deaf in [Role::Originate, Role::Answer] {
+            let mut caller = V34::new(Role::Originate);
+            let mut answerer = V34::new(Role::Answer);
+            let mut frames = 0;
+            let deaf_in_phase_4 = |caller: &V34, answerer: &V34| match deaf {
+                Role::Originate => in_phase_4(caller),
+                Role::Answer => in_phase_4(answerer),
+            };
+            while !deaf_in_phase_4(&caller, &answerer) && frames < 400 {
+                exchange(&mut caller, &mut answerer, 1);
+                frames += 1;
+            }
+            let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+            let silence = [0; FRAME];
+            let waited = (1..=250).find(|_| {
+                caller.transmit(&mut up);
+                answerer.transmit(&mut down);
+                let (to_answerer, to_caller) = match deaf {
+                    Role::Originate => (&up, &silence),
+                    Role::Answer => (&silence, &down),
+                };
+                answerer.receive(to_answerer, &mut Vec::new());
+                caller.receive(to_caller, &mut Vec::new());
+                match deaf {
+                    Role::Originate => caller.sink.is_none(),
+                    Role::Answer => answerer.sink.is_none(),
+                }
+            });
+            let ms = waited.map(|frames| frames * FRAME / 8);
+            assert!(
+                ms.is_some_and(|ms| (2500..2700).contains(&ms)),
+                "the {deaf:?} end would wait {ms:?} ms for an E that never comes, not 2500 ms and the round trips"
+            );
+        }
+    }
+
+    #[test]
+    fn connects_through_100_ms_lost_from_its_mp_prime() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let mut lost_from = None;
+        let mut retrained = false;
+        for frame in 0..600 {
+            if caller.connected() && answerer.connected() {
+                break;
+            }
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            if caller.far.mp.is_some() {
+                lost_from.get_or_insert(frame);
+            }
+            if lost_from.is_some_and(|from| frame < from + 5) {
+                up = [0; FRAME];
+            }
+            answerer.receive(&up, &mut Vec::new());
+            caller.receive(&down, &mut Vec::new());
+            retrained |= caller.sink.is_none() && lost_from.is_some();
+        }
+        assert!(
+            !retrained && caller.connected() && answerer.connected(),
+            "one lost 100 ms of the line would take all of MP′ and E, and cost a retrain"
+        );
+    }
+
+    // Each end hears its own signal back 1197 samples late and about 16 dB down, as on a real call.
+    const ECHO_DELAY: usize = 1197;
+    const ECHO_PATH: [f64; 3] = [0.05, 0.12, -0.09];
+
+    struct Echoes {
+        sent: [VecDeque<i16>; 2],
+    }
+
+    impl Echoes {
+        fn new() -> Self {
+            let silence = || VecDeque::from(vec![0; ECHO_DELAY + ECHO_PATH.len()]);
+            Self {
+                sent: [silence(), silence()],
+            }
+        }
+
+        // What an end hears: the far end's signal and the echo of its own.
+        #[expect(clippy::cast_possible_truncation, reason = "clamped to i16")]
+        fn heard(&mut self, end: usize, own: &[i16], far: &[i16]) -> Vec<i16> {
+            own.iter()
+                .zip(far)
+                .map(|(&mine, &theirs)| {
+                    let sent = &mut self.sent[end];
+                    sent.push_back(mine);
+                    sent.pop_front();
+                    let echo: f64 = ECHO_PATH
+                        .iter()
+                        .enumerate()
+                        .map(|(k, g)| g * f64::from(sent[ECHO_PATH.len() - 1 - k]))
+                        .sum();
+                    (f64::from(theirs) + echo).clamp(-32_768.0, 32_767.0) as i16
+                })
+                .collect()
+        }
+    }
+
+    fn exchange_with_echo(
+        caller: &mut V34,
+        answerer: &mut V34,
+        echoes: &mut Echoes,
+        frames: usize,
+    ) -> (Vec<bool>, Vec<bool>) {
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let (mut at_caller, mut at_answerer) = (Vec::new(), Vec::new());
+        for _ in 0..frames {
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            answerer.receive(&echoes.heard(1, &down, &up), &mut at_answerer);
+            caller.receive(&echoes.heard(0, &up, &down), &mut at_caller);
+        }
+        (at_caller, at_answerer)
+    }
+
+    #[test]
+    fn connects_at_33600_through_the_echo_of_a_voip_path() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let mut echoes = Echoes::new();
+        let connected = (0..500).any(|_| {
+            exchange_with_echo(&mut caller, &mut answerer, &mut echoes, 1);
+            caller.connected() && answerer.connected()
+        });
+        assert!(
+            connected,
+            "no V.34 connection through an echo: caller {:?}/{:?} {:?} echo at {:?}, answerer {:?}/{:?} {:?} echo at {:?}",
+            caller.source.as_ref().map(|s| s.send),
+            caller.sink.as_ref().map(|s| s.listen),
+            caller.far,
+            caller.echo.delay(),
+            answerer.source.as_ref().map(|s| s.send),
+            answerer.sink.as_ref().map(|s| s.listen),
+            answerer.far,
+            answerer.echo.delay(),
+        );
+        assert_eq!(
+            (caller.bit_rate(), answerer.bit_rate()),
+            (33_600, 33_600),
+            "the echo would hold the rate down: echo found at {:?} and {:?}",
+            caller.echo.delay(),
+            answerer.echo.delay(),
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) =
+            exchange_with_echo(&mut caller, &mut answerer, &mut echoes, 80);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost through the echo"
+        );
+    }
+
+    fn in_phase_4(pump: &V34) -> bool {
+        pump.source
+            .as_ref()
+            .is_some_and(|source| source.phase == 4 && source.send != Send::Data)
+    }
+
+    #[test]
     fn retrains_down_when_the_line_gets_worse() {
         let (mut caller, mut answerer) = connected_pair();
         exchange_over(&mut caller, &mut answerer, 50, noisy);
@@ -1453,7 +1743,7 @@ mod tests {
         back_in_data(&mut caller, &mut answerer, noisy);
         let rate = caller.bit_rate();
         assert!(
-            rate < 33_600 && rate == answerer.bit_rate(),
+            rate < 33_600 && rate == answerer.transmit_rate(),
             "a retrain over a noisier line would keep {rate} bit/s"
         );
         let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
@@ -1475,7 +1765,7 @@ mod tests {
         back_in_data(&mut caller, &mut answerer, noisy);
         let rate = caller.bit_rate();
         assert!(
-            rate < 33_600 && rate == answerer.bit_rate(),
+            rate < 33_600 && rate == answerer.transmit_rate(),
             "a noisier line would keep {rate} bit/s and lose data"
         );
         let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
@@ -1486,6 +1776,53 @@ mod tests {
         assert!(
             found(&at_answerer) && found(&at_caller),
             "data would be lost at {rate} bit/s after stepping down"
+        );
+    }
+
+    // Frames each way, with noise toward the caller only.
+    fn exchange_noisy_down(
+        caller: &mut V34,
+        answerer: &mut V34,
+        frames: usize,
+    ) -> (Vec<bool>, Vec<bool>) {
+        let (mut up, mut down) = ([0; FRAME], [0; FRAME]);
+        let (mut at_caller, mut at_answerer) = (Vec::new(), Vec::new());
+        for _ in 0..frames {
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            answerer.receive(&up, &mut at_answerer);
+            caller.receive(&down.map(noisy), &mut at_caller);
+        }
+        (at_caller, at_answerer)
+    }
+
+    #[test]
+    fn runs_each_direction_at_the_rate_its_line_allows() {
+        let mut caller = V34::new(Role::Originate);
+        let mut answerer = V34::new(Role::Answer);
+        let connected = (0..400).any(|_| {
+            exchange_noisy_down(&mut caller, &mut answerer, 1);
+            caller.connected() && answerer.connected()
+        });
+        assert!(connected, "no V.34 connection with noise one way");
+        let (down, up) = (caller.bit_rate(), caller.transmit_rate());
+        assert!(
+            up == 33_600 && down < up,
+            "the clean way would run at the noisy way's rate: {down} down, {up} up"
+        );
+        assert_eq!(
+            (answerer.bit_rate(), answerer.transmit_rate()),
+            (up, down),
+            "the two ends would disagree on the rates"
+        );
+        let message: Vec<bool> = (0..20_000).map(|n| n % 7 < 3 || n % 13 == 0).collect();
+        caller.push_bits(&message);
+        answerer.push_bits(&message);
+        let (at_caller, at_answerer) = exchange_noisy_down(&mut caller, &mut answerer, 80);
+        let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
+        assert!(
+            found(&at_answerer) && found(&at_caller),
+            "data would be lost at {down} bit/s down and {up} bit/s up"
         );
     }
 

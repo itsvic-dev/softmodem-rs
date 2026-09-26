@@ -31,7 +31,11 @@
       checks = forSystems (
         pkgs:
         let
-          softmodem = pkgs.callPackage ./nix/softmodem.nix { };
+          inherit (pkgs.stdenv) hostPlatform;
+          # An Apple silicon Mac runs aarch64-linux guests under HVF.
+          guestPkgs = if hostPlatform.isDarwin then nixpkgs.legacyPackages.aarch64-linux else pkgs;
+          softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
+          runsGuests = hostPlatform.isLinux || hostPlatform.system == "aarch64-darwin";
         in
         {
           reuse = pkgs.runCommand "softmodem-reuse" { nativeBuildInputs = [ pkgs.reuse ]; } ''
@@ -52,7 +56,7 @@
                 touch $out
               '';
         }
-        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        // nixpkgs.lib.optionalAttrs runsGuests {
           ppp = pkgs.testers.runNixOSTest (import ./nix/tests/ppp.nix { inherit softmodem; });
           ppp-v22 = pkgs.testers.runNixOSTest (
             import ./nix/tests/ppp.nix {
@@ -100,11 +104,17 @@
               modulation = "";
             }
           );
-          cuse = pkgs.testers.runNixOSTest (import ./nix/tests/cuse.nix { inherit pkgs softmodem; });
+          cuse = pkgs.testers.runNixOSTest (
+            import ./nix/tests/cuse.nix {
+              inherit softmodem;
+              pkgs = guestPkgs;
+            }
+          );
         }
-        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+        // nixpkgs.lib.optionalAttrs runsGuests (
           let
-            guestPkgs = nixpkgs.legacyPackages.x86_64-linux;
+            # slmodemd is 32-bit x86: an x86-64 guest runs it natively, an aarch64 one under qemu-user.
+            emulated = !guestPkgs.stdenv.hostPlatform.isx86;
             peer =
               { label, ... }@call:
               let
@@ -112,10 +122,9 @@
                   import ./nix/tests/slmodemd.nix (
                     call
                     // {
-                      inherit guestPkgs;
-                      softmodem = guestPkgs.callPackage ./nix/softmodem.nix { };
+                      inherit guestPkgs softmodem emulated;
                       bridge = (import ./nix/Cargo.nix { pkgs = guestPkgs; }).workspaceMembers.softmodem-slmodem.build;
-                      slmodemd = pkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
+                      slmodemd = guestPkgs.pkgsCross.gnu32.callPackage ./nix/slmodemd.nix { };
                     }
                   )
                 );
@@ -245,7 +254,7 @@
 
       formatter = forSystems (pkgs: pkgs.nixfmt);
 
-      # The aarch64 checks run the x86-64 slmodemd guest under TCG, too slow for V.34 in real time.
+      # Only x86_64-linux, where every guest and slmodemd run natively.
       hydraJobs.checks = { inherit (self.checks) x86_64-linux; };
     };
 }
