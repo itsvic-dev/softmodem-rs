@@ -32,8 +32,8 @@ The prefix can also be the path of one of the three files. The log goes
 to stdout, with the seconds into the call first:
 
 ```
-    5.020  INFO {end="near"}: handshake stage="JM with V.90 digital, V.34, V.22bis, V.21"
-    5.702  INFO {end="near"}: handshake stage="V.90 digital phase 2 INFO0"
+    5.020 DEBUG {end="near"}: handshake stage="JM with V.90 digital, V.34, V.22bis, V.21"
+    5.702 DEBUG {end="near"}: handshake stage="V.90 digital phase 2 INFO0"
    12.901  INFO {end="near"}: carrier on
    13.260  INFO {end="near"}: CONNECT 56000, error control LAPM, compression V42B
    30.200  INFO {end="near"}: cleared down
@@ -41,8 +41,9 @@ to stdout, with the seconds into the call first:
 ```
 
 Each stage is what `DataPump::stage` says the pump sends and listens for.
-The live modem logs the same stages. `RUST_LOG=debug` also logs the bytes
-to and from the computer.
+The live modem logs the same stages at debug level, which
+`RUST_LOG=softmodem::line=debug` shows. `RUST_LOG=debug` on a replay also
+logs the bytes to and from the computer.
 
 The pumps and LAPM have no randomness and take time only as an argument.
 Thus, with the same code, a replay sends exactly what the call sent. The

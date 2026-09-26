@@ -12,7 +12,7 @@ use softmodem_dsp::tone::{ANSWER_TONE_HZ, Tone, ToneDetector};
 use softmodem_link::v42bis::Directions;
 use softmodem_link::{Link, Setup, Status};
 use softmodem_transport::{Call, FRAME_SAMPLES};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::journal::{Event, Header, Journal};
 
@@ -315,7 +315,7 @@ impl Handshake {
             _ => self.pump.stage(),
         };
         if stage != self.stage {
-            info!(stage, "handshake");
+            debug!(stage, "handshake");
             self.stage = stage;
         }
     }

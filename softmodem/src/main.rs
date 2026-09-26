@@ -194,12 +194,19 @@ struct ModemArgs {
 
 fn main() -> anyhow::Result<()> {
     let command = Cli::parse().command;
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let replaying = matches!(command, Command::Replay(_));
+    let default = if replaying {
+        "info,softmodem::line=debug"
+    } else {
+        "info"
+    };
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
     let log = tracing_subscriber::fmt().with_env_filter(filter);
     if let Command::Replay(args) = command {
         log.with_timer(ReplayClock)
             .with_target(false)
             .with_writer(std::io::stdout)
+            .log_internal_errors(false)
             .init();
         return replay(&args);
     }
