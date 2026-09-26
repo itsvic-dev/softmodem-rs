@@ -8,3 +8,8 @@ version = 1
 path = ["**/*.md", "Cargo.lock", "flake.lock", "nix/Cargo.nix", "nix/crate-hashes.json"]
 SPDX-FileCopyrightText = "2026 Wiktor Bryk <contact@itsvic.dev>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["android/gradle/wrapper/gradle-wrapper.jar", "android/gradle/wrapper/gradle-wrapper.properties"]
+SPDX-FileCopyrightText = "2015 the original author or authors"
+SPDX-License-Identifier = "Apache-2.0"
