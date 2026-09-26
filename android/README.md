@@ -88,9 +88,11 @@ and puts it in the APK.
 - Type the number. Each comma waits 3 seconds, and the digits after the
   first comma are keyed once the call is answered, for a menu:
   `0300,,,1234#`.
-- Choose the highest modulation: V.21, V.22, V.22bis, V.34 or V.90, each
-  with automode off. V.21 is the default. The others are there to try, as
-  the codec is not expected to carry them.
+- Choose the highest modulation: V.21, V.22, V.22bis, V.34 or V.90. V.21 is
+  the default. The others are there to try, as the codec is not expected to
+  carry them.
+- Automode lets the modem fall back from that modulation to slower ones. It
+  is off by default.
 - Dial with the button or the green call key.
 - In the terminal, type a line and send it with the OK key or Send.
 - Back, or Hang up, ends the call.
@@ -108,9 +110,9 @@ you leave the app.
   of the phone's USB gadget. MediaTek's USB configurations with adb and with
   MTP carry it (`sys.usb.acm_enable=1`). Only root can open the device, so
   in this mode the modem runs as root too.
-- It takes the modulation chosen on the dial screen. Its stored profile is
-  `S10=50` and that modulation in `+MS`, such as `+MS=V21,0`, so `ATZ`
-  keeps them. The computer can change it with `AT+MS`.
+- It takes the modulation and automode chosen on the dial screen. Its
+  stored profile is `S10=50` and both in `+MS`, such as `+MS=V21,0`, so
+  `ATZ` keeps them. The computer can change them with `AT+MS`.
 - The gadget has no control lines. DCD and RI are not signalled, and the
   computer dropping DTR does not hang up. Hang up with `+++` and `ATH`.
   Unplugging the cable hangs up.

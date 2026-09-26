@@ -26,6 +26,7 @@ private const val CHANNEL = "usb-serial"
 private const val NOTIFICATION = 1
 private const val ACTION_STOP = "dev.itsvic.softmodem.STOP"
 private const val EXTRA_MODULATION = "dev.itsvic.softmodem.MODULATION"
+private const val EXTRA_AUTOMODE = "dev.itsvic.softmodem.AUTOMODE"
 
 /** Serves the modem to a computer on the USB cable, as the phone's USB serial port. */
 class UsbSerialService : Service() {
@@ -44,13 +45,14 @@ class UsbSerialService : Service() {
         val modulation = intent?.getStringExtra(EXTRA_MODULATION)
             ?.let { name -> Modulation.entries.find { it.name == name } }
             ?: Modulation.V21
-        startForeground(NOTIFICATION, notification(modulation))
+        val mode = Mode(modulation, intent?.getBooleanExtra(EXTRA_AUTOMODE, false) ?: false)
+        startForeground(NOTIFICATION, notification(mode))
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "softmodem:usb-serial")
             .apply { acquire() }
-        _running.value = modulation
+        _running.value = mode
         watcher = thread(name = "usb-serial") {
-            processes.start(listOf("--serial", DEVICE), "$INIT+MS=${modulation.command}", root = true)
+            processes.start(listOf("--serial", DEVICE), "$INIT+MS=${mode.command}", root = true)
             processes.waitFor()
             if (watcher === Thread.currentThread()) stopSelf()
         }
@@ -65,7 +67,7 @@ class UsbSerialService : Service() {
         super.onDestroy()
     }
 
-    private fun notification(modulation: Modulation): Notification {
+    private fun notification(mode: Mode): Notification {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "USB serial port", NotificationManager.IMPORTANCE_LOW),
         )
@@ -78,7 +80,7 @@ class UsbSerialService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setContentTitle("Modem on the USB serial port")
-            .setContentText("${modulation.label}. A computer on the cable dials with AT commands.")
+            .setContentText("${mode.label}. A computer on the cable dials with AT commands.")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true)
@@ -86,15 +88,17 @@ class UsbSerialService : Service() {
     }
 
     companion object {
-        private val _running = MutableStateFlow<Modulation?>(null)
+        private val _running = MutableStateFlow<Mode?>(null)
 
-        /** The modulation the running service started with, or null while it is stopped. */
-        val running: StateFlow<Modulation?> = _running.asStateFlow()
+        /** The mode the running service started with, or null while it is stopped. */
+        val running: StateFlow<Mode?> = _running.asStateFlow()
 
-        /** Starts the modem with [modulation] as the highest in its stored profile, which ATZ restores. */
-        fun start(context: Context, modulation: Modulation) {
+        /** Starts the modem with [mode] in its stored profile, which ATZ restores. */
+        fun start(context: Context, mode: Mode) {
             context.startForegroundService(
-                Intent(context, UsbSerialService::class.java).putExtra(EXTRA_MODULATION, modulation.name),
+                Intent(context, UsbSerialService::class.java)
+                    .putExtra(EXTRA_MODULATION, mode.modulation.name)
+                    .putExtra(EXTRA_AUTOMODE, mode.automode),
             )
         }
 

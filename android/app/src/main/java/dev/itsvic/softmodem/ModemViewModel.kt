@@ -24,12 +24,18 @@ private const val TAG = "softmodem"
 private const val SERIAL_PORT = 5302
 private val FAILURES = listOf("NO CARRIER", "BUSY", "NO ANSWER", "NO DIALTONE", "ERROR")
 
-enum class Modulation(val label: String, val command: String) {
-    V21("V.21, 300 bit/s", "V21,0"),
-    V22("V.22, 1200 bit/s", "V22,0"),
-    V22BIS("V.22bis, 2400 bit/s", "V22B,0"),
-    V34("V.34, 33600 bit/s", "V34,0"),
-    V90("V.90, 56000 bit/s", "V90,0"),
+enum class Modulation(val label: String, val carrier: String) {
+    V21("V.21, 300 bit/s", "V21"),
+    V22("V.22, 1200 bit/s", "V22"),
+    V22BIS("V.22bis, 2400 bit/s", "V22B"),
+    V34("V.34, 33600 bit/s", "V34"),
+    V90("V.90, 56000 bit/s", "V90"),
+}
+
+/** The highest modulation for a call, and whether automode may fall back from it. */
+data class Mode(val modulation: Modulation, val automode: Boolean) {
+    val command: String get() = "${modulation.carrier},${if (automode) 1 else 0}"
+    val label: String get() = if (automode) "${modulation.label}, with automode" else modulation.label
 }
 
 sealed interface CallState {
@@ -49,6 +55,9 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
 
     val number = MutableStateFlow("")
     val modulation = MutableStateFlow(Modulation.V21)
+    val automode = MutableStateFlow(false)
+
+    fun mode() = Mode(modulation.value, automode.value)
 
     private val processes = ModemProcesses(application)
     private var serial: Socket? = null
@@ -62,7 +71,7 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
                 val socket = serial ?: connect()
                 // Rides out the codec's fades, which outlast the default 1.4 s.
                 write(socket, "ATE0V1S10=50\r")
-                write(socket, "AT+MS=${modulation.value.command}\r")
+                write(socket, "AT+MS=${mode().command}\r")
                 write(socket, "ATDT$number\r")
             } catch (error: IOException) {
                 Log.w(TAG, "dial failed", error)

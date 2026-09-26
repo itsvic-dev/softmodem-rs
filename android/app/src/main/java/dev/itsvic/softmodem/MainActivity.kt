@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -107,11 +109,11 @@ private fun App(modem: ModemViewModel) {
 }
 
 @Composable
-private fun UsbSerialScreen(modulation: Modulation) {
+private fun UsbSerialScreen(mode: Mode) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("The modem is on the USB serial port.", style = MaterialTheme.typography.titleMedium)
-        Text("Up to ${modulation.label}.", style = MaterialTheme.typography.bodyMedium)
+        Text("Up to ${mode.label}.", style = MaterialTheme.typography.bodyMedium)
         Text(
             "A computer on the cable sees it as /dev/ttyACM0 on Linux, and dials with AT commands, " +
                 "such as ATDT0300. It stays on when you leave the app.",
@@ -125,6 +127,7 @@ private fun UsbSerialScreen(modulation: Modulation) {
 private fun DialScreen(modem: ModemViewModel) {
     val number by modem.number.collectAsState()
     val modulation by modem.modulation.collectAsState()
+    val automode by modem.automode.collectAsState()
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
@@ -159,6 +162,17 @@ private fun DialScreen(modem: ModemViewModel) {
                 Text(option.label, Modifier.padding(start = 4.dp))
             }
         }
+        Row(
+            Modifier.fillMaxWidth().toggleable(
+                value = automode,
+                onValueChange = { modem.automode.value = it },
+                role = Role.Switch,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Automode: fall back to slower modulations", Modifier.weight(1f))
+            Switch(checked = automode, onCheckedChange = null)
+        }
         if (modulation != Modulation.V21) {
             Text(
                 "Mobile voice codecs damage ${modulation.label.substringBefore(',')}, so expect " +
@@ -172,7 +186,7 @@ private fun DialScreen(modem: ModemViewModel) {
         OutlinedButton(
             onClick = {
                 modem.stop()
-                UsbSerialService.start(context, modulation)
+                UsbSerialService.start(context, modem.mode())
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Serve a computer on USB") }
