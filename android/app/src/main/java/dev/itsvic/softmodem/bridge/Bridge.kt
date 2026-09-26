@@ -36,6 +36,7 @@ private val NORMAL_PARAMETERS = listOf("Set_BGS_UL_Mute=1", "Set_BGS_DL_Mute=0",
 /** Carries a cellular voice call to a softmodem on the UDP wire, as root: `Bridge <port> <uplink gain>`. */
 object Bridge {
     private lateinit var audio: AudioManager
+    private val tuning = SpeechTuning(::setParameters) { command -> exec(*command) }
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -43,6 +44,7 @@ object Bridge {
         val thread = Class.forName("android.app.ActivityThread").getMethod("systemMain").invoke(null)
         val context = thread.javaClass.getMethod("getSystemContext").invoke(thread) as Context
         audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        tuning.restore()
         serve(args[0].toInt(), args[1].toFloat())
     }
 
@@ -59,6 +61,7 @@ object Bridge {
                 call(socket, peer, uplinkGain)
             } finally {
                 NORMAL_PARAMETERS.forEach(::setParameters)
+                tuning.restore()
             }
             println("bridge: call ended")
         }
@@ -77,6 +80,7 @@ object Bridge {
 
     // True once the call is up and its digits keyed, false if it failed or the modem gave up.
     private fun placeCall(socket: DatagramSocket, peer: SocketAddress, number: String): Boolean {
+        if (!tuning.apply()) println("bridge: no speech parameters to tune")
         exec("am", "start", "-a", "android.intent.action.CALL", "-d", "tel:" + Uri.encode(number))
         var abandoned = false
         val gaveUp = {
@@ -96,6 +100,7 @@ object Bridge {
         if (answered && !abandoned) return true
         println(if (abandoned) "bridge: the modem hung up" else "bridge: not answered")
         NORMAL_PARAMETERS.forEach(::setParameters)
+        tuning.restore()
         endCall()
         if (!abandoned) send(socket, peer, "BUSY")
         return false
