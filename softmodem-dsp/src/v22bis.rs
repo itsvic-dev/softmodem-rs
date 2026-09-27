@@ -17,8 +17,8 @@ use crate::scrambler::{Descrambler, Scrambler};
 use crate::tone::Tone;
 use crate::uart::Decoder;
 use crate::v22::{
-    GUARD_TONE_DBM0, GUARD_TONE_HZ, HIGH_CHANNEL_DBM0, LOCKED_ERROR, LOW_CHANNEL_DBM0, Run,
-    SETTLE_SAMPLES, UNLOCKED_ERROR, USB1_BITS, WAIT_SAMPLES,
+    GUARD_TONE_DBM0, GUARD_TONE_HZ, HIGH_CHANNEL_DBM0, LOW_CHANNEL_DBM0, Lock, Run, SETTLE_SAMPLES,
+    USB1_BITS, WAIT_SAMPLES,
 };
 
 const S1_SAMPLES: usize = 800;
@@ -167,7 +167,7 @@ pub(crate) struct V22bis {
     lost_since: Option<usize>,
     retrained_at: Option<usize>,
     // Whether 1200 bit/s data comes from the equalised demodulator.
-    fast_locked: bool,
+    fast_locked: Lock,
     ready: bool,
     connected: bool,
     round_trip: Option<usize>,
@@ -218,7 +218,7 @@ impl V22bis {
             rate: Rate::Bps1200,
             lost_since: None,
             retrained_at: None,
-            fast_locked: false,
+            fast_locked: Lock::default(),
             ready: false,
             connected: false,
             round_trip: None,
@@ -538,13 +538,7 @@ impl DataPump for V22bis {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
-        let limit = if self.fast_locked {
-            UNLOCKED_ERROR
-        } else {
-            LOCKED_ERROR
-        };
-        self.fast_locked = self.fast.error() < limit;
-        let coherent_slow = self.fast_locked
+        let coherent_slow = self.fast_locked.update(self.fast.error())
             && self.trained_rate() == Some(Rate::Bps1200)
             && self.ready_ones >= READY_ONES;
         let mut line = Vec::new();
@@ -737,11 +731,16 @@ mod tests {
         crosses(&mut caller, &mut answerer);
     }
 
-    #[test]
-    fn changes_rate_down_to_1200_and_back_up() {
+    fn trained_at_1200() -> (V22bis, V22bis) {
         let (mut caller, mut answerer) = trained();
         answerer.initiate(Rate::Bps1200);
         settle(&mut caller, &mut answerer);
+        (caller, answerer)
+    }
+
+    #[test]
+    fn changes_rate_down_to_1200_and_back_up() {
+        let (mut caller, mut answerer) = trained_at_1200();
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (1200, 1200));
         crosses(&mut caller, &mut answerer);
 
@@ -754,9 +753,7 @@ mod tests {
 
     #[test]
     fn equalises_1200_bit_s_on_a_line_that_smears_the_symbols() {
-        let (mut caller, mut answerer) = trained();
-        answerer.initiate(Rate::Bps1200);
-        settle(&mut caller, &mut answerer);
+        let (mut caller, mut answerer) = trained_at_1200();
         let message = random_bits(6000);
         answerer.push_bits(&message);
         let (mut smear, mut down) = (Smear::new(), false);

@@ -29,8 +29,21 @@ const SCRAMBLED_SAMPLES: usize = SCRAMBLED_BITS * 8000 / BIT_RATE as usize;
 pub(crate) const WAIT_SAMPLES: usize = 3648;
 pub(crate) const SETTLE_SAMPLES: usize = 6120;
 // Random decisions leave about 0.3; a trained equaliser on a poor line 0.04.
-pub(crate) const LOCKED_ERROR: f64 = 0.1;
-pub(crate) const UNLOCKED_ERROR: f64 = 0.2;
+const LOCKED_ERROR: f64 = 0.1;
+const UNLOCKED_ERROR: f64 = 0.2;
+
+/// Whether a coherent demodulator's decisions are good enough for data,
+/// from its equaliser error, with some hysteresis.
+#[derive(Debug, Default)]
+pub(crate) struct Lock(bool);
+
+impl Lock {
+    pub(crate) fn update(&mut self, error: f64) -> bool {
+        let limit = if self.0 { UNLOCKED_ERROR } else { LOCKED_ERROR };
+        self.0 = error < limit;
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -89,7 +102,7 @@ pub(crate) struct V22 {
     coherent: qam::Demodulator,
     // Its own, as the equaliser can settle a symbol later than the other.
     coherent_descrambler: Descrambler,
-    locked: bool,
+    locked: Lock,
     guard: Option<Tone>,
     scrambler: Scrambler,
     descrambler: Descrambler,
@@ -124,7 +137,7 @@ impl V22 {
             demodulator: Demodulator::new(receive_hz),
             coherent: qam::Demodulator::new(receive_hz),
             coherent_descrambler: Descrambler::new(),
-            locked: false,
+            locked: Lock::default(),
             guard,
             scrambler: Scrambler::new(),
             descrambler: Descrambler::new(),
@@ -245,13 +258,7 @@ impl DataPump for V22 {
             .into_iter()
             .map(|bit| descrambler.descramble(bit))
             .collect();
-        let limit = if self.locked {
-            UNLOCKED_ERROR
-        } else {
-            LOCKED_ERROR
-        };
-        self.locked = self.coherent.error() < limit;
-        if self.locked && self.receiving() {
+        if self.locked.update(self.coherent.error()) && self.receiving() {
             bits.extend(coherent);
             for bit in line {
                 self.descrambler.descramble(bit);
