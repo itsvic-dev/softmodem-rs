@@ -66,8 +66,15 @@ V.22 with V.42 is the best choice for a far end that has V.42, as most
 modems do. V.21 is the default, for any far end. The app warns when you
 choose another modulation.
 
-An equalizer in the receiver does not help, because the codec damages whole
-frames. How many characters arrive wrong changes from call to call, with the
+The phone's calls use AMR-NB at 12.2 kbit/s, and the codec sets the limit.
+It passes a V.22 signal with a signal to noise ratio of about 14 dB,
+whatever the level. At 1200 bit/s, with four points, the equalised receiver
+then makes almost no errors, and what LAPM resends comes from the radio. At
+2400 bit/s, with 16 points, about 2% of the symbols arrive wrong on a clean
+radio link, and 5 to 9% on a real one, so neither direction holds V.22bis
+at 2400 bit/s. The 1800 Hz guard tone that the answering end adds doubles
+those errors. V.34, even at 2400 baud, keeps only about 7 dB through the
+codec. How many characters arrive wrong changes from call to call, with the
 radio. The codec also fades the carrier out for a second at times, so the
 app sets `S10=50` and waits 5 seconds before it takes a lost carrier as the
 end of the call.
