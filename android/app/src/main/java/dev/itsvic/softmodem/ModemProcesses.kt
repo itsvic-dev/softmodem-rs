@@ -33,9 +33,8 @@ class ModemProcesses(private val context: Context) {
         val app = context.applicationInfo
         bridge = log(
             "bridge",
-            ProcessBuilder(
-                "su", "-c",
-                "CLASSPATH=${app.sourceDir} exec app_process /system/bin dev.itsvic.softmodem.bridge.Bridge " +
+            asRoot(
+                "CLASSPATH=${app.sourceDir} app_process /system/bin dev.itsvic.softmodem.bridge.Bridge " +
                     "$BRIDGE_PORT $UPLINK_GAIN",
             ),
         )
@@ -50,7 +49,7 @@ class ModemProcesses(private val context: Context) {
             arguments += listOf("--dump", File(context.filesDir, "dumps").path)
         }
         val builder = if (root) {
-            ProcessBuilder("su", "-c", "NO_COLOR=1 exec " + arguments.joinToString(" ", transform = ::quote))
+            asRoot("NO_COLOR=1 " + arguments.joinToString(" ", transform = ::quote))
         } else {
             ProcessBuilder(arguments).apply { environment()["NO_COLOR"] = "1" }
         }
@@ -94,3 +93,9 @@ class ModemProcesses(private val context: Context) {
 }
 
 private fun quote(argument: String) = "'" + argument.replace("'", "'\\''") + "'"
+
+// Android cannot kill a root process, so it ends when the app's end of its stdin closes.
+private fun asRoot(command: String) = ProcessBuilder(
+    "su", "-c",
+    "exec 3<&0; $command & p=\$!; (read x <&3; kill \$p) & w=\$!; wait \$p; s=\$?; kill \$w; exit \$s",
+)
