@@ -389,30 +389,34 @@ async fn two_modems_connect_with_v42_and_carry_data_both_ways() {
     a.expect("hello from the answerer").await;
 }
 
-#[tokio::test(start_paused = true)]
-async fn connects_with_v42_at_v22_up_to_a_mobile_round_trip_of_1_7_s() {
+async fn connects_with_v42_up_to_a_mobile_round_trip(caller: &str, connect: &str) {
     for one_way in [0, 400, 850].map(Duration::from_millis) {
         let (a, b) = loopback::pair();
         let late = move |call: Call, _| (call.delayed(one_way), None);
-        let mut a = attach_with(a, profile("ATE0+ER=1;+MS=V22,0").unwrap(), late);
+        let mut a = attach_with(a, profile(caller).unwrap(), late);
         let mut b = attach_with(b, profile("ATE0S0=1+ER=1").unwrap(), late);
         a.command("ATDT0300").await;
-        a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 1200\r\n").await;
-        b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 1200\r\n").await;
+        a.expect(connect).await;
+        b.expect(connect).await;
     }
 }
 
 #[tokio::test(start_paused = true)]
+async fn connects_with_v42_at_v22_up_to_a_mobile_round_trip_of_1_7_s() {
+    connects_with_v42_up_to_a_mobile_round_trip(
+        "ATE0+ER=1;+MS=V22,0",
+        "\r\n+ER: LAPM\r\n\r\nCONNECT 1200\r\n",
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn connects_with_v42_at_v22bis_up_to_a_mobile_round_trip_of_1_7_s() {
-    for one_way in [0, 400, 850].map(Duration::from_millis) {
-        let (a, b) = loopback::pair();
-        let late = move |call: Call, _| (call.delayed(one_way), None);
-        let mut a = attach_with(a, profile("ATE0+ER=1;+MS=V22B,0").unwrap(), late);
-        let mut b = attach_with(b, profile("ATE0S0=1+ER=1").unwrap(), late);
-        a.command("ATDT0300").await;
-        a.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
-        b.expect("\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n").await;
-    }
+    connects_with_v42_up_to_a_mobile_round_trip(
+        "ATE0+ER=1;+MS=V22B,0",
+        "\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n",
+    )
+    .await;
 }
 
 #[tokio::test(start_paused = true)]
