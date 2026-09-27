@@ -29,8 +29,8 @@ const SCRAMBLED_SAMPLES: usize = SCRAMBLED_BITS * 8000 / BIT_RATE as usize;
 pub(crate) const WAIT_SAMPLES: usize = 3648;
 pub(crate) const SETTLE_SAMPLES: usize = 6120;
 // Random decisions leave about 0.3; a trained equaliser on a poor line 0.04.
-const LOCKED_ERROR: f64 = 0.1;
-const UNLOCKED_ERROR: f64 = 0.2;
+pub(crate) const LOCKED_ERROR: f64 = 0.1;
+pub(crate) const UNLOCKED_ERROR: f64 = 0.2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -299,7 +299,7 @@ impl DataPump for V22 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const FRAME: usize = 160;
@@ -359,28 +359,57 @@ mod tests {
         assert!(found(&at_answerer), "the answerer lost the caller's data");
     }
 
-    // An echo half a symbol late, and noise.
-    fn smear(samples: &mut [i16], history: &mut VecDeque<i16>, seed: &mut u32) {
-        for sample in samples {
-            history.push_back(*sample);
-            let echo = if history.len() > ECHO_SAMPLES {
-                history.pop_front().unwrap_or_default()
-            } else {
-                0
-            };
-            *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let noise = i32::from((*seed >> 16) as u16) - 32_768;
-            let smeared =
-                i32::from(*sample) + i32::from(echo) * ECHO_PERCENT / 100 + noise * NOISE / 32_768;
-            *sample = i16::try_from(smeared.clamp(-32_768, 32_767)).unwrap_or_default();
-        }
-    }
-
     const ECHO_SAMPLES: usize = 7;
     const ECHO_PERCENT: i32 = 70;
     const NOISE: i32 = 4000;
 
-    fn errors(received: &[bool], message: &[bool]) -> usize {
+    /// A line with an echo half a symbol late, and noise.
+    pub(crate) struct Smear {
+        history: VecDeque<i16>,
+        seed: u32,
+    }
+
+    impl Smear {
+        pub(crate) fn new() -> Self {
+            Self {
+                history: VecDeque::new(),
+                seed: 1,
+            }
+        }
+
+        pub(crate) fn apply(&mut self, samples: &mut [i16]) {
+            for sample in samples {
+                self.history.push_back(*sample);
+                let echo = if self.history.len() > ECHO_SAMPLES {
+                    self.history.pop_front().unwrap_or_default()
+                } else {
+                    0
+                };
+                self.seed = self
+                    .seed
+                    .wrapping_mul(1_664_525)
+                    .wrapping_add(1_013_904_223);
+                let noise = i32::from((self.seed >> 16) as u16) - 32_768;
+                let smeared = i32::from(*sample)
+                    + i32::from(echo) * ECHO_PERCENT / 100
+                    + noise * NOISE / 32_768;
+                *sample = i16::try_from(smeared.clamp(-32_768, 32_767)).unwrap_or_default();
+            }
+        }
+    }
+
+    pub(crate) fn random_bits(count: usize) -> Vec<bool> {
+        let mut seed = 7u32;
+        (0..count)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                seed >> 16 & 1 == 1
+            })
+            .collect()
+    }
+
+    /// The fewest bits that differ between `message` and any stretch of `received`.
+    pub(crate) fn errors(received: &[bool], message: &[bool]) -> usize {
         (0..received.len().saturating_sub(message.len()))
             .map(|at| {
                 received[at..at + message.len()]
@@ -397,18 +426,12 @@ mod tests {
     fn equalises_a_line_that_smears_the_symbols() {
         let mut caller = V22::new(Role::Originate);
         let mut answerer = V22::new(Role::Answer);
-        let (mut history, mut seed) = (VecDeque::new(), 1);
+        let mut smear = Smear::new();
         let mut up = [0; FRAME];
         let mut down = [0; FRAME];
         let mut at_caller = Vec::new();
         let mut line = Vec::new();
-        let mut seed_bits = 7u32;
-        let message: Vec<bool> = (0..6000)
-            .map(|_| {
-                seed_bits = seed_bits.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-                seed_bits >> 16 & 1 == 1
-            })
-            .collect();
+        let message = random_bits(6000);
         for frame in 0..450 {
             if frame == 150 {
                 answerer.push_bits(&message);
@@ -416,7 +439,7 @@ mod tests {
             }
             caller.transmit(&mut up);
             answerer.transmit(&mut down);
-            smear(&mut down, &mut history, &mut seed);
+            smear.apply(&mut down);
             answerer.receive(&up, &mut Vec::new());
             caller.receive(&down, &mut at_caller);
             if frame >= 120 {

@@ -17,8 +17,8 @@ use crate::scrambler::{Descrambler, Scrambler};
 use crate::tone::Tone;
 use crate::uart::Decoder;
 use crate::v22::{
-    GUARD_TONE_DBM0, GUARD_TONE_HZ, HIGH_CHANNEL_DBM0, LOW_CHANNEL_DBM0, Run, SETTLE_SAMPLES,
-    USB1_BITS, WAIT_SAMPLES,
+    GUARD_TONE_DBM0, GUARD_TONE_HZ, HIGH_CHANNEL_DBM0, LOCKED_ERROR, LOW_CHANNEL_DBM0, Run,
+    SETTLE_SAMPLES, UNLOCKED_ERROR, USB1_BITS, WAIT_SAMPLES,
 };
 
 const S1_SAMPLES: usize = 800;
@@ -166,6 +166,8 @@ pub(crate) struct V22bis {
     rate: Rate,
     lost_since: Option<usize>,
     retrained_at: Option<usize>,
+    // Whether 1200 bit/s data comes from the equalised demodulator.
+    fast_locked: bool,
     ready: bool,
     connected: bool,
     round_trip: Option<usize>,
@@ -216,6 +218,7 @@ impl V22bis {
             rate: Rate::Bps1200,
             lost_since: None,
             retrained_at: None,
+            fast_locked: false,
             ready: false,
             connected: false,
             round_trip: None,
@@ -535,11 +538,24 @@ impl DataPump for V22bis {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        let limit = if self.fast_locked {
+            UNLOCKED_ERROR
+        } else {
+            LOCKED_ERROR
+        };
+        self.fast_locked = self.fast.error() < limit;
+        let coherent_slow = self.fast_locked
+            && self.trained_rate() == Some(Rate::Bps1200)
+            && self.ready_ones >= READY_ONES;
         let mut line = Vec::new();
+        let mut slow_bits = Vec::new();
         self.slow.process(input, &mut line);
         for dibit in line.chunks(2) {
             let s1_ended = self.s1.push(quarter_turns(dibit[0], dibit[1]));
-            self.slow_dibit((dibit[0], dibit[1]), bits);
+            self.slow_dibit(
+                (dibit[0], dibit[1]),
+                if coherent_slow { &mut slow_bits } else { bits },
+            );
             if s1_ended {
                 self.s1_ended();
             }
@@ -554,10 +570,12 @@ impl DataPump for V22bis {
                 ..
             })
         );
-        if fast && self.exchange == Exchange::Idle {
-            for bit in line {
-                let descrambled = self.fast_descrambler.descramble(bit);
+        for bit in line {
+            let descrambled = self.fast_descrambler.descramble(bit);
+            if fast && self.exchange == Exchange::Idle {
                 self.ready_bit(descrambled, bits);
+            } else if coherent_slow && self.trained_rate() == Some(Rate::Bps1200) {
+                bits.push(descrambled);
             }
         }
     }
@@ -615,6 +633,7 @@ impl DataPump for V22bis {
 mod tests {
     use super::*;
     use crate::v22::V22;
+    use crate::v22::tests::{Smear, errors, random_bits};
 
     const FRAME: usize = 160;
 
@@ -731,6 +750,23 @@ mod tests {
         settle(&mut caller, &mut answerer);
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (2400, 2400));
         crosses(&mut caller, &mut answerer);
+    }
+
+    #[test]
+    fn equalises_1200_bit_s_on_a_line_that_smears_the_symbols() {
+        let (mut caller, mut answerer) = trained();
+        answerer.initiate(Rate::Bps1200);
+        settle(&mut caller, &mut answerer);
+        let message = random_bits(6000);
+        answerer.push_bits(&message);
+        let (mut smear, mut down) = (Smear::new(), false);
+        let (at_caller, _) = exchange_with(&mut caller, &mut answerer, 300, |samples| {
+            if down {
+                smear.apply(samples);
+            }
+            down = !down;
+        });
+        assert_eq!(errors(&at_caller, &message), 0);
     }
 
     #[test]
