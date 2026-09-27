@@ -389,6 +389,36 @@ async fn two_modems_connect_with_v42_and_carry_data_both_ways() {
     a.expect("hello from the answerer").await;
 }
 
+async fn connects_with_v42_up_to_a_mobile_round_trip(caller: &str, connect: &str) {
+    for one_way in [0, 400, 850].map(Duration::from_millis) {
+        let (a, b) = loopback::pair();
+        let late = move |call: Call, _| (call.delayed(one_way), None);
+        let mut a = attach_with(a, profile(caller).unwrap(), late);
+        let mut b = attach_with(b, profile("ATE0S0=1+ER=1").unwrap(), late);
+        a.command("ATDT0300").await;
+        a.expect(connect).await;
+        b.expect(connect).await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn connects_with_v42_at_v22_up_to_a_mobile_round_trip_of_1_7_s() {
+    connects_with_v42_up_to_a_mobile_round_trip(
+        "ATE0+ER=1;+MS=V22,0",
+        "\r\n+ER: LAPM\r\n\r\nCONNECT 1200\r\n",
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn connects_with_v42_at_v22bis_up_to_a_mobile_round_trip_of_1_7_s() {
+    connects_with_v42_up_to_a_mobile_round_trip(
+        "ATE0+ER=1;+MS=V22B,0",
+        "\r\n+ER: LAPM\r\n\r\nCONNECT 2400\r\n",
+    )
+    .await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn falls_back_to_plain_data_when_one_end_has_no_v42() {
     for (caller, answerer) in [("\\N0", ""), ("", "\\N0"), ("+ES=1", "+ES=,,2")] {
@@ -700,6 +730,30 @@ async fn ato1_retrains_and_the_call_goes_on() {
         a.command("ATO1").await;
         a.expect_next(format!("\r\n{connect}").as_bytes()).await;
         sleep(Duration::from_secs(8)).await;
+        a.send(b"after the retrain").await;
+        b.expect("after the retrain").await;
+        b.send(b"and back").await;
+        a.expect("and back").await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn v22bis_retrains_from_either_end_over_a_mobile_round_trip_of_1_7_s() {
+    for caller_retrains in [true, false] {
+        let (a, b) = loopback::pair();
+        let late = |call: Call, _| (call.delayed(Duration::from_millis(850)), None);
+        let mut a = attach_with(a, profile("ATE0+MS=V22B,0").unwrap(), late);
+        let mut b = attach_with(b, profile("ATE0S0=1").unwrap(), late);
+        a.command("ATDT0300").await;
+        a.expect("CONNECT 2400\r\n").await;
+        b.expect("CONNECT 2400\r\n").await;
+
+        let retraining = if caller_retrains { &mut a } else { &mut b };
+        retraining.escape().await;
+        retraining.expect_next(b"\r\nOK\r\n").await;
+        retraining.command("ATO1").await;
+        retraining.expect_next(b"\r\nCONNECT 2400\r\n").await;
+        sleep(Duration::from_secs(15)).await;
         a.send(b"after the retrain").await;
         b.expect("after the retrain").await;
         b.send(b"and back").await;

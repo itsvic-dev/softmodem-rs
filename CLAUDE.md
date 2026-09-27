@@ -8,9 +8,10 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
 - `softmodem-link`: V.42 over a pump's bits: the detection phase, HDLC
   framing, LAPM, V.42bis, and the plain V.14 fallback. No IO, and time comes
   in as an argument.
-- `softmodem-terminal`: what the computer sees. The pseudoterminal, the CUSE
-  and TCP ports, the AT command parser, settings and S-registers, the line
-  editor and the `+++` escape. No IO outside `pty`, `cuse` and `tcp`.
+- `softmodem-terminal`: what the computer sees. The pseudoterminal, the CUSE,
+  TCP and tty ports, the AT command parser, settings and S-registers, the
+  line editor and the `+++` escape. No IO outside `pty`, `cuse`, `tcp` and
+  `tty`.
 - `softmodem-transport`: carries audio frames for a call, and rings, answers
   and refuses calls. A-law, the reorder window, the UDP wire, an in-memory
   loopback, SIP through a registrar, WAV recording, and the speaker on the
@@ -39,7 +40,7 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   `softmodem wire --local 127.0.0.1:5300 --pty /tmp/isp --init ATS0=1 --dump dumps`
   and `softmodem wire --local 127.0.0.1:5301 --peer 127.0.0.1:5300 --pty /tmp/caller --dump dumps`,
   then a terminal program on `/tmp/caller` and `ATDT0300`. Without `--pty`,
-  `--cuse` or `--tcp` the serial port is stdin and stdout.
+  `--cuse`, `--tcp` or `--serial` the serial port is stdin and stdout.
 - `softmodem replay dumps/<seconds>-<role>` plays a call recorded with
   `--dump` again, from its journal and WAV files, logs each stage on the
   call's clock, and names the first sample it sends that the recording

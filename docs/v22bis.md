@@ -87,10 +87,14 @@ V.22bis shares the V.22 transmitter and front end. At 2400 bit/s the point
 inside a quadrant is absolute, so its receiver adds an AGC, a 17-tap
 equaliser at half-symbol spacing adapted by normalised LMS, and a
 second-order phase locked loop, both driven by decisions. They train on the
-scrambled ones at 1200 bit/s that follow S1. The handshake signals
-themselves, S1 during data, and the V.22 fallback go through the
+scrambled ones at 1200 bit/s that follow S1. The equaliser step is 0.25 for
+the first 300 symbols after it restarts, and 0.1 after that, which adds
+less of its own noise to each decision. The handshake signals themselves,
+S1 during data, the rate dibits and the V.22 fallback go through the
 differential V.22 demodulator running beside it: a decision-directed
 equaliser learns to flatten S1, which repeats every two symbols, and so
-would erase it.
+would erase it. Data at a trained 1200 bit/s comes from the coherent
+receiver once the 32 binary 1 before data have passed, while it is locked,
+as in [V.22](v22.md).
 
 spandsp's V.22bis modem at 2400 bit/s is the reference.

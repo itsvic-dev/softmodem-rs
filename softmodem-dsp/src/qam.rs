@@ -14,6 +14,9 @@ const CARRIER_OFF_SAMPLES: u32 = 416;
 
 const EQUALIZER_TAPS: usize = 17;
 const EQUALIZER_STEP: f64 = 0.25;
+// A smaller step once trained adds less of its own noise to each decision.
+const TRACKING_STEP: f64 = 0.1;
+const TRAINING_SYMBOLS: u32 = 300;
 const POWER_SMOOTHING: f64 = 1.0 / 64.0;
 const PHASE_GAIN: f64 = 0.08;
 const FREQUENCY_GAIN: f64 = 0.004;
@@ -132,6 +135,7 @@ pub struct Demodulator {
     frequency: f64,
     quadrant: u8,
     error: f64,
+    trained_for: u32,
 }
 
 impl Demodulator {
@@ -150,6 +154,7 @@ impl Demodulator {
             frequency: 0.0,
             quadrant: 0,
             error: 1.0,
+            trained_for: 0,
         }
     }
 
@@ -171,6 +176,7 @@ impl Demodulator {
         self.taps[EQUALIZER_TAPS / 2] = (1.0, 0.0);
         self.rate = Rate::Bps1200;
         self.error = 1.0;
+        self.trained_for = 0;
     }
 
     /// The mean square distance of recent symbols from their decisions, on a
@@ -224,7 +230,13 @@ impl Demodulator {
         self.error += POWER_SMOOTHING * (power(error) - self.error);
         let error = multiply(error, conjugate(rotation));
         let energy: f64 = self.line.iter().map(|&x| power(x)).sum();
-        let gain = EQUALIZER_STEP / energy.max(f64::EPSILON);
+        self.trained_for = self.trained_for.saturating_add(1);
+        let step = if self.trained_for > TRAINING_SYMBOLS {
+            TRACKING_STEP
+        } else {
+            EQUALIZER_STEP
+        };
+        let gain = step / energy.max(f64::EPSILON);
         for (w, &x) in self.taps.iter_mut().zip(&self.line) {
             let step = scale(multiply(error, conjugate(x)), gain);
             *w = (w.0 + step.0, w.1 + step.1);

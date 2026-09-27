@@ -6,6 +6,7 @@
 //! per call.
 
 use std::fmt::Debug;
+use std::time::Duration;
 
 use crate::uart::Decoder;
 use crate::v21::V21;
@@ -121,6 +122,13 @@ pub trait DataPump: Debug + Send {
     /// Whether the two ends have agreed to end the call, from either side.
     fn cleared(&self) -> bool {
         false
+    }
+
+    /// The time from this end's signal to the far end's answer, less the
+    /// time each end takes to hear the other, for a handshake that
+    /// measures it.
+    fn round_trip(&self) -> Option<Duration> {
+        None
     }
 
     /// Queues bits to send. The line idles on mark when none are queued.

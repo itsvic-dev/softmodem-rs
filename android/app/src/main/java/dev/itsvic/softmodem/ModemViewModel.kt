@@ -5,11 +5,9 @@
 package dev.itsvic.softmodem
 
 import android.app.Application
-import android.content.pm.ApplicationInfo
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.InetSocketAddress
@@ -23,16 +21,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val TAG = "softmodem"
-private const val BRIDGE_PORT = 5300
-private const val MODEM_PORT = 5301
 private const val SERIAL_PORT = 5302
-private const val UPLINK_GAIN = "0.5"
 private val FAILURES = listOf("NO CARRIER", "BUSY", "NO ANSWER", "NO DIALTONE", "ERROR")
 
-enum class Modulation(val label: String, val command: String) {
-    V21("V.21, 300 bit/s", "V21,0"),
-    V22("V.22, 1200 bit/s", "V22,0"),
-    V22BIS("V.22bis, 2400 bit/s", "V22B,0"),
+enum class Modulation(val label: String, val carrier: String) {
+    V21("V.21, 300 bit/s", "V21"),
+    V22("V.22, 1200 bit/s", "V22"),
+    V22BIS("V.22bis, 2400 bit/s", "V22B"),
+    V34("V.34, 33600 bit/s", "V34"),
+    V90("V.90, 56000 bit/s", "V90"),
+}
+
+/** The highest modulation for a call, and whether automode may fall back from it. */
+data class Mode(val modulation: Modulation, val automode: Boolean) {
+    val command: String get() = "${modulation.carrier},${if (automode) 1 else 0}"
+    val label: String get() = if (automode) "${modulation.label}, with automode" else modulation.label
 }
 
 sealed interface CallState {
@@ -52,9 +55,11 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
 
     val number = MutableStateFlow("")
     val modulation = MutableStateFlow(Modulation.V21)
+    val automode = MutableStateFlow(false)
 
-    private var modem: Process? = null
-    private var bridge: Process? = null
+    fun mode() = Mode(modulation.value, automode.value)
+
+    private val processes = ModemProcesses(application)
     private var serial: Socket? = null
 
     fun dial() {
@@ -66,7 +71,7 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
                 val socket = serial ?: connect()
                 // Rides out the codec's fades, which outlast the default 1.4 s.
                 write(socket, "ATE0V1S10=50\r")
-                write(socket, "AT+MS=${modulation.value.command}\r")
+                write(socket, "AT+MS=${mode().command}\r")
                 write(socket, "ATDT$number\r")
             } catch (error: IOException) {
                 Log.w(TAG, "dial failed", error)
@@ -114,48 +119,20 @@ class ModemViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun start() = withContext(Dispatchers.IO) {
-        if (modem?.isAlive == true && bridge?.isAlive == true) return@withContext
-        stop()
-        val app = getApplication<Application>().applicationInfo
-        val binary = File(app.nativeLibraryDir, "libsoftmodem.so").path
-        bridge = log(
-            "bridge",
-            ProcessBuilder(
-                "su", "-c",
-                "CLASSPATH=${app.sourceDir} exec app_process /system/bin dev.itsvic.softmodem.bridge.Bridge " +
-                    "$BRIDGE_PORT $UPLINK_GAIN",
-            ),
-        )
-        val arguments = mutableListOf(
-            binary, "wire",
-            "--local", "127.0.0.1:$MODEM_PORT",
-            "--peer", "127.0.0.1:$BRIDGE_PORT",
-            "--tcp", "127.0.0.1:$SERIAL_PORT",
-        )
-        if (app.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            arguments += listOf("--dump", File(getApplication<Application>().filesDir, "dumps").path)
-        }
-        modem = log("modem", ProcessBuilder(arguments).apply { environment()["NO_COLOR"] = "1" })
+        if (processes.alive) return@withContext
+        closeSerial()
+        processes.start(listOf("--tcp", "127.0.0.1:$SERIAL_PORT"))
     }
 
-    private fun log(name: String, builder: ProcessBuilder): Process {
-        val process = builder.redirectErrorStream(true).start()
-        viewModelScope.launch(Dispatchers.IO) {
-            process.inputStream.bufferedReader().forEachLine { Log.i(TAG, "$name: $it") }
-        }
-        return process
+    /** Stops the modem, so that the USB serial port can have the bridge. */
+    fun stop() {
+        closeSerial()
+        processes.stop()
     }
 
-    private fun stop() {
+    private fun closeSerial() {
         serial?.let { runCatching { it.close() } }
         serial = null
-        modem?.destroy()
-        bridge?.destroy()
-        // The bridge runs under su, beyond the reach of destroy().
-        runCatching {
-            ProcessBuilder("su", "-c", "pkill -f dev.itsvic.softmodem.bridge.Bridge; pkill -f libsoftmodem.so")
-                .start().waitFor()
-        }
     }
 
     private fun read(socket: Socket) {

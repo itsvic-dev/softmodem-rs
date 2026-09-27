@@ -211,6 +211,23 @@ turns hardware flow control on by default, and a guest with it on does not
 send while CTS is off, so a Windows guest needs a TCP or pipe backend. The `&C1` in Windows' init
 string does nothing on a TCP port.
 
+`--serial PATH` opens a tty device that the host already has, such as a
+UART, a USB serial adapter, or a USB gadget's `/dev/ttyGS0`. The port is
+raw and 8-bit clean at `--baud`, 115200 by default, with no hardware flow
+control. The modem is the DTE end of the device, so it signals DCD on its
+own DTR, which a null-modem cable takes to the computer's DCD and DSR. The
+computer's DTR comes back on the modem's DCD. CLOCAL is off, so when the
+computer drops DTR the kernel hangs the device up. The modem takes a
+hang-up as DTR dropping, as it does for the end of a TCP connection. It
+then reopens the device a second later, and again each second until the
+device opens. While the device is closed, the modem's output is lost. RI
+is not signalled.
+
+A device with no control lines, such as Linux's ACM gadget, refuses
+`TIOCMBIC`, and the modem then does not signal DCD. On the gadget, a
+hang-up comes only when the USB host goes away, so the computer hangs up
+with `+++` and `ATH`.
+
 Which port for what:
 
 | Computer | Port |
@@ -220,6 +237,7 @@ Which port for what:
 | 86Box, on Linux | `--cuse`, with the host serial backend |
 | 86Box, elsewhere | `--pty`, with the pipe backend, reconnect on |
 | `pppd` on the host | `--pty` |
+| Another computer, through a cable | `--serial` |
 
 ## Not modelled
 

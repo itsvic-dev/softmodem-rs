@@ -6,9 +6,12 @@
 //! carrier handshake of its § 6.3.1.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
+use crate::SAMPLE_RATE;
 use crate::dpsk::{Demodulator, Modulator, V22_HIGH_HZ, V22_LOW_HZ};
 use crate::pump::{DataPump, Role};
+use crate::qam;
 use crate::scrambler::{Descrambler, Scrambler};
 use crate::tone::Tone;
 use crate::uart::Decoder;
@@ -22,8 +25,25 @@ pub(crate) const GUARD_TONE_DBM0: f64 = -19.97;
 
 pub(crate) const USB1_BITS: usize = 186;
 const SCRAMBLED_BITS: usize = 324;
+const SCRAMBLED_SAMPLES: usize = SCRAMBLED_BITS * 8000 / BIT_RATE as usize;
 pub(crate) const WAIT_SAMPLES: usize = 3648;
 pub(crate) const SETTLE_SAMPLES: usize = 6120;
+// Random decisions leave about 0.3; a trained equaliser on a poor line 0.04.
+const LOCKED_ERROR: f64 = 0.1;
+const UNLOCKED_ERROR: f64 = 0.2;
+
+/// Whether a coherent demodulator's decisions are good enough for data,
+/// from its equaliser error, with some hysteresis.
+#[derive(Debug, Default)]
+pub(crate) struct Lock(bool);
+
+impl Lock {
+    pub(crate) fn update(&mut self, error: f64) -> bool {
+        let limit = if self.0 { UNLOCKED_ERROR } else { LOCKED_ERROR };
+        self.0 = error < limit;
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -65,12 +85,24 @@ impl Run {
 /// stays silent until it has heard unscrambled ones for 155 ms, waits
 /// 456 ms, sends scrambled ones, and goes to data 765 ms after it hears them
 /// back.
+///
+/// Over a long round trip, the caller shortens its 765 ms to what the
+/// answerer can still need, as the answerer's own 765 ms started a round
+/// trip earlier. Its data, the V.42 ODP first, then reaches an answerer
+/// whose detection phase is still open.
 #[derive(Debug)]
 pub(crate) struct V22 {
     role: Role,
     phase: Phase,
+    scrambled_from: usize,
+    round_trip: Option<usize>,
     modulator: Modulator,
     demodulator: Demodulator,
+    // Hears the data with an equaliser, as a mobile codec smears the signal.
+    coherent: qam::Demodulator,
+    // Its own, as the equaliser can settle a symbol later than the other.
+    coherent_descrambler: Descrambler,
+    locked: Lock,
     guard: Option<Tone>,
     scrambler: Scrambler,
     descrambler: Descrambler,
@@ -82,16 +114,16 @@ pub(crate) struct V22 {
 
 impl V22 {
     pub(crate) fn new(role: Role) -> Self {
-        let (modulator, demodulator, guard, phase) = match role {
+        let (modulator, receive_hz, guard, phase) = match role {
             Role::Originate => (
                 Modulator::new(V22_LOW_HZ, LOW_CHANNEL_DBM0),
-                Demodulator::new(V22_HIGH_HZ),
+                V22_HIGH_HZ,
                 None,
                 Phase::Listening,
             ),
             Role::Answer => (
                 Modulator::new(V22_HIGH_HZ, HIGH_CHANNEL_DBM0),
-                Demodulator::new(V22_LOW_HZ),
+                V22_LOW_HZ,
                 Some(Tone::new(GUARD_TONE_HZ, GUARD_TONE_DBM0)),
                 Phase::UnscrambledOnes,
             ),
@@ -99,8 +131,13 @@ impl V22 {
         Self {
             role,
             phase,
+            scrambled_from: 0,
+            round_trip: None,
             modulator,
-            demodulator,
+            demodulator: Demodulator::new(receive_hz),
+            coherent: qam::Demodulator::new(receive_hz),
+            coherent_descrambler: Descrambler::new(),
+            locked: Lock::default(),
             guard,
             scrambler: Scrambler::new(),
             descrambler: Descrambler::new(),
@@ -115,6 +152,7 @@ impl V22 {
         self.phase = Phase::Settling {
             until: self.sent + SETTLE_SAMPLES,
         };
+        self.coherent.restart();
     }
 
     // § 6.3.1.1: the caller's 765 ms wait holds back only what it sends.
@@ -137,9 +175,21 @@ impl V22 {
                 };
             }
             Phase::UnscrambledOnes if self.run.scrambled() => self.settle(),
-            Phase::ScrambledOnes if self.run.scrambled() && self.run.value => self.settle(),
+            Phase::ScrambledOnes if self.run.scrambled() && self.run.value => self.answered(),
             _ => {}
         }
+    }
+
+    // The answerer went to data 765 ms after it heard our scrambled ones.
+    fn answered(&mut self) {
+        let heard_after = self.sent - self.scrambled_from;
+        self.round_trip = Some(heard_after.saturating_sub(2 * SCRAMBLED_SAMPLES));
+        self.phase = Phase::Settling {
+            until: self
+                .sent
+                .max(self.scrambled_from + SCRAMBLED_SAMPLES + SETTLE_SAMPLES),
+        };
+        self.coherent.restart();
     }
 }
 
@@ -165,6 +215,7 @@ impl DataPump for V22 {
             && self.sent >= until
         {
             self.phase = Phase::ScrambledOnes;
+            self.scrambled_from = self.sent;
         }
         if let Phase::Settling { until } = self.phase
             && self.sent >= until
@@ -200,6 +251,20 @@ impl DataPump for V22 {
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
         let mut line = Vec::new();
         self.demodulator.process(input, &mut line);
+        let mut coherent = Vec::new();
+        self.coherent.process(input, &mut coherent);
+        let descrambler = &mut self.coherent_descrambler;
+        let coherent: Vec<bool> = coherent
+            .into_iter()
+            .map(|bit| descrambler.descramble(bit))
+            .collect();
+        if self.locked.update(self.coherent.error()) && self.receiving() {
+            bits.extend(coherent);
+            for bit in line {
+                self.descrambler.descramble(bit);
+            }
+            return;
+        }
         for bit in line {
             if self.receiving() {
                 bits.push(self.descrambler.descramble(bit));
@@ -221,6 +286,12 @@ impl DataPump for V22 {
         self.phase == Phase::Data
     }
 
+    #[expect(clippy::cast_precision_loss, reason = "a few seconds of samples")]
+    fn round_trip(&self) -> Option<Duration> {
+        self.round_trip
+            .map(|samples| Duration::from_secs_f64(samples as f64 / SAMPLE_RATE))
+    }
+
     fn stage(&self) -> String {
         let stage = match self.phase {
             Phase::Listening => "listening for unscrambled ones",
@@ -235,7 +306,7 @@ impl DataPump for V22 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const FRAME: usize = 160;
@@ -293,5 +364,107 @@ mod tests {
         let found = |bits: &[bool]| bits.windows(message.len()).any(|w| w == message);
         assert!(found(&at_caller), "the caller lost the answerer's data");
         assert!(found(&at_answerer), "the answerer lost the caller's data");
+    }
+
+    const ECHO_SAMPLES: usize = 7;
+    const ECHO_PERCENT: i32 = 70;
+    const NOISE: i32 = 4000;
+
+    /// A line with an echo half a symbol late, and noise.
+    pub(crate) struct Smear {
+        history: VecDeque<i16>,
+        seed: u32,
+    }
+
+    impl Smear {
+        pub(crate) fn new() -> Self {
+            Self {
+                history: VecDeque::new(),
+                seed: 1,
+            }
+        }
+
+        pub(crate) fn apply(&mut self, samples: &mut [i16]) {
+            for sample in samples {
+                self.history.push_back(*sample);
+                let echo = if self.history.len() > ECHO_SAMPLES {
+                    self.history.pop_front().unwrap_or_default()
+                } else {
+                    0
+                };
+                self.seed = self
+                    .seed
+                    .wrapping_mul(1_664_525)
+                    .wrapping_add(1_013_904_223);
+                let noise = i32::from((self.seed >> 16) as u16) - 32_768;
+                let smeared = i32::from(*sample)
+                    + i32::from(echo) * ECHO_PERCENT / 100
+                    + noise * NOISE / 32_768;
+                *sample = i16::try_from(smeared.clamp(-32_768, 32_767)).unwrap_or_default();
+            }
+        }
+    }
+
+    pub(crate) fn random_bits(count: usize) -> Vec<bool> {
+        let mut seed = 7u32;
+        (0..count)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                seed >> 16 & 1 == 1
+            })
+            .collect()
+    }
+
+    /// The fewest bits that differ between `message` and any stretch of `received`.
+    pub(crate) fn errors(received: &[bool], message: &[bool]) -> usize {
+        (0..received.len().saturating_sub(message.len()))
+            .map(|at| {
+                received[at..at + message.len()]
+                    .iter()
+                    .zip(message)
+                    .filter(|(a, b)| a != b)
+                    .count()
+            })
+            .min()
+            .unwrap_or(message.len())
+    }
+
+    #[test]
+    fn equalises_a_line_that_smears_the_symbols() {
+        let mut caller = V22::new(Role::Originate);
+        let mut answerer = V22::new(Role::Answer);
+        let mut smear = Smear::new();
+        let mut up = [0; FRAME];
+        let mut down = [0; FRAME];
+        let mut at_caller = Vec::new();
+        let mut line = Vec::new();
+        let message = random_bits(6000);
+        for frame in 0..450 {
+            if frame == 150 {
+                answerer.push_bits(&message);
+                at_caller.clear();
+            }
+            caller.transmit(&mut up);
+            answerer.transmit(&mut down);
+            smear.apply(&mut down);
+            answerer.receive(&up, &mut Vec::new());
+            caller.receive(&down, &mut at_caller);
+            if frame >= 120 {
+                line.extend_from_slice(&down);
+            }
+        }
+        let mut differential = Demodulator::new(V22_HIGH_HZ);
+        let mut descrambler = Descrambler::new();
+        let mut bits = Vec::new();
+        differential.process(&line, &mut bits);
+        let bits: Vec<bool> = bits
+            .into_iter()
+            .map(|bit| descrambler.descramble(bit))
+            .collect();
+        assert_eq!(errors(&at_caller, &message), 0);
+        assert!(
+            errors(&bits, &message) > 10,
+            "the line is too clean to tell"
+        );
     }
 }

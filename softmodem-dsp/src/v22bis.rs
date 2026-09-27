@@ -7,7 +7,9 @@
 //! the rate change of § 6.6.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
+use crate::SAMPLE_RATE;
 use crate::dpsk::{self, V22_HIGH_HZ, V22_LOW_HZ, quarter_turns};
 use crate::pump::{DataPump, Role};
 use crate::qam::{self, Modulator, Rate};
@@ -15,7 +17,7 @@ use crate::scrambler::{Descrambler, Scrambler};
 use crate::tone::Tone;
 use crate::uart::Decoder;
 use crate::v22::{
-    GUARD_TONE_DBM0, GUARD_TONE_HZ, HIGH_CHANNEL_DBM0, LOW_CHANNEL_DBM0, Run, SETTLE_SAMPLES,
+    GUARD_TONE_DBM0, GUARD_TONE_HZ, HIGH_CHANNEL_DBM0, LOW_CHANNEL_DBM0, Lock, Run, SETTLE_SAMPLES,
     USB1_BITS, WAIT_SAMPLES,
 };
 
@@ -164,8 +166,11 @@ pub(crate) struct V22bis {
     rate: Rate,
     lost_since: Option<usize>,
     retrained_at: Option<usize>,
+    // Whether 1200 bit/s data comes from the equalised demodulator.
+    fast_locked: Lock,
     ready: bool,
     connected: bool,
+    round_trip: Option<usize>,
 }
 
 impl V22bis {
@@ -213,8 +218,10 @@ impl V22bis {
             rate: Rate::Bps1200,
             lost_since: None,
             retrained_at: None,
+            fast_locked: Lock::default(),
             ready: false,
             connected: false,
+            round_trip: None,
         }
     }
 
@@ -228,7 +235,12 @@ impl V22bis {
     // § 6.6.1 f): an S1 heard soon after ours is the reply, not a new request.
     fn replies_to_ours(&self) -> bool {
         self.s1_sent_until
-            .is_some_and(|until| self.sent < until + REPLY_SAMPLES)
+            .is_some_and(|until| self.sent < until + REPLY_SAMPLES + self.round_trip_samples())
+    }
+
+    // A reply comes a round trip late, after the far end may have repeated its S1.
+    fn round_trip_samples(&self) -> usize {
+        self.round_trip.unwrap_or(0)
     }
 
     fn add_guard(&mut self, out: &mut [i16]) {
@@ -247,7 +259,7 @@ impl V22bis {
         self.dibit = rate_dibit(rate);
         self.send_s1();
         self.exchange = Exchange::Initiated {
-            repeat_at: self.sent + S1_SAMPLES + REPEAT_SAMPLES,
+            repeat_at: self.sent + S1_SAMPLES + REPEAT_SAMPLES + self.round_trip_samples(),
         };
         self.ready = false;
         self.ready_ones = 0;
@@ -267,8 +279,11 @@ impl V22bis {
         self.heard_dibits = RateDibits::default();
         match self.exchange {
             _ if !self.connected => {
-                if self.s1_sent_until.is_none() {
-                    self.send_s1();
+                match self.s1_sent_until {
+                    Some(until) => {
+                        self.round_trip = Some(self.sent.saturating_sub(until + S1_SAMPLES));
+                    }
+                    None => self.send_s1(),
                 }
                 self.train_from(self.sent);
             }
@@ -523,11 +538,18 @@ impl DataPump for V22bis {
     }
 
     fn receive(&mut self, input: &[i16], bits: &mut Vec<bool>) {
+        let coherent_slow = self.fast_locked.update(self.fast.error())
+            && self.trained_rate() == Some(Rate::Bps1200)
+            && self.ready_ones >= READY_ONES;
         let mut line = Vec::new();
+        let mut slow_bits = Vec::new();
         self.slow.process(input, &mut line);
         for dibit in line.chunks(2) {
             let s1_ended = self.s1.push(quarter_turns(dibit[0], dibit[1]));
-            self.slow_dibit((dibit[0], dibit[1]), bits);
+            self.slow_dibit(
+                (dibit[0], dibit[1]),
+                if coherent_slow { &mut slow_bits } else { bits },
+            );
             if s1_ended {
                 self.s1_ended();
             }
@@ -542,10 +564,12 @@ impl DataPump for V22bis {
                 ..
             })
         );
-        if fast && self.exchange == Exchange::Idle {
-            for bit in line {
-                let descrambled = self.fast_descrambler.descramble(bit);
+        for bit in line {
+            let descrambled = self.fast_descrambler.descramble(bit);
+            if fast && self.exchange == Exchange::Idle {
                 self.ready_bit(descrambled, bits);
+            } else if coherent_slow && self.trained_rate() == Some(Rate::Bps1200) {
+                bits.push(descrambled);
             }
         }
     }
@@ -560,6 +584,12 @@ impl DataPump for V22bis {
 
     fn connected(&self) -> bool {
         self.connected
+    }
+
+    #[expect(clippy::cast_precision_loss, reason = "a few seconds of samples")]
+    fn round_trip(&self) -> Option<Duration> {
+        self.round_trip
+            .map(|samples| Duration::from_secs_f64(samples as f64 / SAMPLE_RATE))
     }
 
     fn stage(&self) -> String {
@@ -597,6 +627,7 @@ impl DataPump for V22bis {
 mod tests {
     use super::*;
     use crate::v22::V22;
+    use crate::v22::tests::{Smear, errors, random_bits};
 
     const FRAME: usize = 160;
 
@@ -700,11 +731,16 @@ mod tests {
         crosses(&mut caller, &mut answerer);
     }
 
-    #[test]
-    fn changes_rate_down_to_1200_and_back_up() {
+    fn trained_at_1200() -> (V22bis, V22bis) {
         let (mut caller, mut answerer) = trained();
         answerer.initiate(Rate::Bps1200);
         settle(&mut caller, &mut answerer);
+        (caller, answerer)
+    }
+
+    #[test]
+    fn changes_rate_down_to_1200_and_back_up() {
+        let (mut caller, mut answerer) = trained_at_1200();
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (1200, 1200));
         crosses(&mut caller, &mut answerer);
 
@@ -713,6 +749,21 @@ mod tests {
         settle(&mut caller, &mut answerer);
         assert_eq!((caller.bit_rate(), answerer.bit_rate()), (2400, 2400));
         crosses(&mut caller, &mut answerer);
+    }
+
+    #[test]
+    fn equalises_1200_bit_s_on_a_line_that_smears_the_symbols() {
+        let (mut caller, mut answerer) = trained_at_1200();
+        let message = random_bits(6000);
+        answerer.push_bits(&message);
+        let (mut smear, mut down) = (Smear::new(), false);
+        let (at_caller, _) = exchange_with(&mut caller, &mut answerer, 300, |samples| {
+            if down {
+                smear.apply(samples);
+            }
+            down = !down;
+        });
+        assert_eq!(errors(&at_caller, &message), 0);
     }
 
     #[test]

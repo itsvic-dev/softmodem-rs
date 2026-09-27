@@ -15,9 +15,11 @@ pub mod wire;
 
 use std::fmt;
 use std::io;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::{Instant, sleep_until};
 
 /// Samples in one 20 ms frame at 8 kHz.
 pub const FRAME_SAMPLES: usize = 160;
@@ -40,6 +42,39 @@ impl Call {
         drop(self.audio_in);
         for task in self.tasks {
             let _ = task.await;
+        }
+    }
+
+    /// The same call, with each received frame held back by `delay`, as over
+    /// a long path such as a mobile network's.
+    #[must_use]
+    pub fn delayed(self, delay: Duration) -> Self {
+        let Self {
+            audio_out,
+            mut audio_in,
+            mut tasks,
+        } = self;
+        let (stamped, mut in_flight) = mpsc::unbounded_channel();
+        tasks.push(tokio::spawn(async move {
+            while let Some(frame) = audio_in.recv().await {
+                if stamped.send((Instant::now() + delay, frame)).is_err() {
+                    break;
+                }
+            }
+        }));
+        let (late, delayed_in) = mpsc::channel(64);
+        tasks.push(tokio::spawn(async move {
+            while let Some((due, frame)) = in_flight.recv().await {
+                sleep_until(due).await;
+                if late.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        }));
+        Self {
+            audio_out,
+            audio_in: delayed_in,
+            tasks,
         }
     }
 }
