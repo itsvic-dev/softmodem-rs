@@ -209,6 +209,15 @@ impl Link {
         }
     }
 
+    /// I frames LAPM has sent again.
+    #[must_use]
+    pub fn retransmissions(&self) -> u64 {
+        match &self.phase {
+            Phase::Protocol(lapm) => lapm.retransmissions(),
+            _ => 0,
+        }
+    }
+
     /// Queues data from the DTE.
     pub fn send(&mut self, bytes: &[u8]) {
         self.set_up_codec();
