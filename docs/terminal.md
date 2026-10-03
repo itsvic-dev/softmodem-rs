@@ -50,6 +50,9 @@ command mode, on hook.
 | `+DS?`, `+DS=?` | Read the compression, list the values supported. |
 | `+DR=0`, `+DR=1` | Report the compression in use before `CONNECT`, off, on. |
 | `%C0` to `%C3` | `%C0` no V.42bis (`+DS=0`), `%C1` to `%C3` both directions (`+DS=3`). |
+| `+GMI`, `+GMM`, `+GMR`, `+GCAP` | Manufacturer, model, version, and the extended commands supported, as V.250 § 6.1. |
+| `+FCLASS?`, `+FCLASS=?`, `+FCLASS=0` | Only class `0`, data. Any other class gives `ERROR`. |
+| `+GCI?`, `+GCI=?`, `+GCI=B5` | Only the United States, T.35 code `B5`. Any other country gives `ERROR`. |
 
 `+ES` takes these values:
 

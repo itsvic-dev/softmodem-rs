@@ -81,8 +81,30 @@ pub enum Command {
     ReadCompressionReport,
     /// `+DR=?`.
     ListCompressionReport,
+    /// A question whose answer never changes.
+    Query(Query),
     /// An extended or vendor command, accepted without effect.
     Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Query {
+    /// `+GMI`.
+    Manufacturer,
+    /// `+GMM`.
+    Model,
+    /// `+GMR`.
+    Revision,
+    /// `+GCAP`.
+    Capabilities,
+    /// `+FCLASS?`.
+    Class,
+    /// `+FCLASS=?`.
+    Classes,
+    /// `+GCI?`.
+    Country,
+    /// `+GCI=?`.
+    Countries,
 }
 
 /// A dial string with its modifiers taken out.
@@ -238,6 +260,12 @@ impl Parser<'_> {
                     b"ER" => self.error_report()?,
                     b"DS" => self.compression()?,
                     b"DR" => self.compression_report()?,
+                    b"GMI" => self.identity(Query::Manufacturer)?,
+                    b"GMM" => self.identity(Query::Model)?,
+                    b"GMR" => self.identity(Query::Revision)?,
+                    b"GCAP" => self.identity(Query::Capabilities)?,
+                    b"FCLASS" => self.class()?,
+                    b"GCI" => self.country()?,
                     _ => {
                         self.skip_extended();
                         Command::Ignored
@@ -344,6 +372,51 @@ impl Parser<'_> {
                 Command::ListErrorReport
             }
             (Some(b'='), _) => Command::ReportErrorControl(self.value(1)? == 1),
+            _ => return Err(ParseError),
+        };
+        self.end_extended(command)
+    }
+
+    fn identity(&mut self, query: Query) -> Result<Command, ParseError> {
+        let command = match (self.peek(), self.text.get(self.at + 1)) {
+            (Some(b'='), Some(b'?')) => {
+                self.at += 2;
+                Command::Ignored
+            }
+            _ => Command::Query(query),
+        };
+        self.end_extended(command)
+    }
+
+    // The modem has no fax or voice, so data is the only class.
+    fn class(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::Query(Query::Class),
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::Query(Query::Classes)
+            }
+            (Some(b'='), _) => {
+                self.value(0)?;
+                Command::Ignored
+            }
+            _ => return Err(ParseError),
+        };
+        self.end_extended(command)
+    }
+
+    // T.35 code B5, the United States, is the only country.
+    fn country(&mut self) -> Result<Command, ParseError> {
+        let command = match (self.next(), self.peek()) {
+            (Some(b'?'), _) => Command::Query(Query::Country),
+            (Some(b'='), Some(b'?')) => {
+                self.at += 1;
+                Command::Query(Query::Countries)
+            }
+            (Some(b'='), _) => match (self.next(), self.next()) {
+                (Some(b'B'), Some(b'5')) => Command::Ignored,
+                _ => return Err(ParseError),
+            },
             _ => return Err(ParseError),
         };
         self.end_extended(command)
@@ -521,6 +594,46 @@ mod tests {
                 Command::Echo(true),
             ]
         );
+    }
+
+    #[test]
+    fn parses_identification_queries() {
+        assert_eq!(
+            parse(b"+GMI;+GMM;+GMR;+GCAP;+GMM=?").unwrap(),
+            [
+                Command::Query(Query::Manufacturer),
+                Command::Query(Query::Model),
+                Command::Query(Query::Revision),
+                Command::Query(Query::Capabilities),
+                Command::Ignored,
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_only_the_data_class() {
+        assert_eq!(
+            parse(b"+FCLASS?;+FCLASS=?;+FCLASS=0").unwrap(),
+            [
+                Command::Query(Query::Class),
+                Command::Query(Query::Classes),
+                Command::Ignored,
+            ]
+        );
+        assert_eq!(parse(b"+FCLASS=1"), Err(ParseError));
+    }
+
+    #[test]
+    fn accepts_only_the_united_states() {
+        assert_eq!(
+            parse(b"+GCI?;+GCI=?;+GCI=b5").unwrap(),
+            [
+                Command::Query(Query::Country),
+                Command::Query(Query::Countries),
+                Command::Ignored,
+            ]
+        );
+        assert_eq!(parse(b"+GCI=3D"), Err(ParseError));
     }
 
     fn error_control(orig_rqst: u8, orig_fbk: u8, ans_fbk: u8) -> Command {
