@@ -1,7 +1,8 @@
 # Front panel
 
 `--panel` shows the modem as an external modem on a desk, with the row of
-lights of a US Robotics Courier and a line of text under it. Each process
+lights of a US Robotics Courier, and a strip of embossing tape under it
+that says what the call is doing. Each process
 has its own window, titled with its serial port. Closing the window hangs up
 and stops the modem, as Ctrl-C does, and the window closes when the modem
 stops.
@@ -56,6 +57,10 @@ and fades each light towards what the status says, so that it does not
 depend on how often the modem publishes.
 
 gpui must own the main thread on macOS, so with `--panel` the tokio runtime
-runs on a second thread. The case and its printing are one SVG, drawn at
-twice its size so that it stays sharp on a Retina screen. The lights and
-the text are drawn over it.
+runs on a second thread. The desk, the case and its printing are one SVG,
+drawn at twice its size so that it stays sharp on a Retina screen. Its
+textures are SVG filters: lit noise for the moulded plastic, and stretched,
+displaced noise for the wood. It is drawn once, before the window opens,
+because an image that gpui loads by itself appears only at the next redraw,
+and an idle panel does not redraw. The lights and the tape are drawn over
+it.
