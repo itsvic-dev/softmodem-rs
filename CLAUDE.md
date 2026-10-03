@@ -16,6 +16,10 @@ over SIP. The design is in `docs/`, starting at `docs/README.md`.
   and refuses calls. A-law, the reorder window, the UDP wire, an in-memory
   loopback, SIP through a registrar, WAV recording, and the speaker on the
   host sound output.
+- `softmodem-panel`: the front panel, its lights and text from the modem's
+  status, and with the `window` feature a gpui window that draws them. The
+  binary shows it with `--panel` when built with its `panel` feature. See
+  `docs/panel.md`.
 - `softmodem`: the modem state machine that joins them, and the binary.
 - `softmodem-interop`: tests only, against spandsp's V.21, V.22, V.22bis,
   V.8, V.42, V.42bis and answer tones. It links spandsp through pkg-config, which only
