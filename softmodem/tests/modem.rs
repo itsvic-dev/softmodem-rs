@@ -355,6 +355,18 @@ async fn identifies_itself() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn answers_the_queries_windows_sends() {
+    let (mut a, _b) = two_modems("ATE0", "");
+    a.command("AT+GMM").await;
+    a.expect_next(b"\r\n+GMM: softmodem V.90\r\n\r\nOK\r\n")
+        .await;
+    a.command("AT+FCLASS=?").await;
+    a.expect_next(b"\r\n0\r\n\r\nOK\r\n").await;
+    a.command("AT+GCI?").await;
+    a.expect_next(b"\r\n+GCI: B5\r\n\r\nOK\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn reads_and_lists_the_error_control() {
     let (mut a, _b) = two_modems("ATE0\\N2", "");
     a.command("AT+ES?;+ER?").await;

@@ -12,7 +12,7 @@ use softmodem_dsp::dtmf::DtmfSender;
 use softmodem_dsp::pump::{Modulation, Offer, Role};
 use softmodem_link::v42bis::{Directions, Parameters};
 use softmodem_link::{CompressionSetup, Setup};
-use softmodem_terminal::command::{self, Command, Dial};
+use softmodem_terminal::command::{self, Command, Dial, Query};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
 use softmodem_terminal::port::SerialPort;
@@ -673,10 +673,23 @@ fn identify(n: u8) -> Option<String> {
     }
 }
 
+fn answer(query: Query) -> String {
+    match query {
+        Query::Manufacturer => "+GMI: softmodem".into(),
+        Query::Model => "+GMM: softmodem V.90".into(),
+        Query::Revision => format!("+GMR: {}", env!("CARGO_PKG_VERSION")),
+        Query::Capabilities => "+GCAP: +FCLASS,+MS,+ES,+DS".into(),
+        Query::Class | Query::Classes => "0".into(),
+        Query::Country => "+GCI: B5".into(),
+        Query::Countries => "+GCI: (B5)".into(),
+    }
+}
+
 /// The text that `command` answers with before `OK`, if it asks for any.
 fn information(settings: &Settings, command: &Command) -> Option<String> {
     Some(match *command {
         Command::Identify(n) => return identify(n),
+        Command::Query(query) => answer(query),
         Command::ReadRegister(register) => format!("{:03}", settings.register(register)),
         Command::ReadCarrier => {
             let modulation = settings.modulation;
