@@ -5,75 +5,138 @@ SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1760" height="720" viewBox="0 0 880 360">
   <defs>
-    <radialGradient id="backdrop" cx="0.5" cy="0.35" r="0.85">
-      <stop offset="0" stop-color="#2b2c2f"/>
-      <stop offset="1" stop-color="#0c0c0d"/>
+    <filter id="wood" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.004 0.02" numOctaves="2" seed="21" result="figure"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.006 0.32" numOctaves="3" seed="11" result="lines"/>
+      <feDisplacementMap in="lines" in2="figure" scale="40" xChannelSelector="R" yChannelSelector="G" result="grain"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.05 0.9" numOctaves="1" seed="4" result="pores"/>
+      <feComposite in="grain" in2="figure" operator="arithmetic" k2="0.55" k3="0.45" result="tone"/>
+      <feComposite in="tone" in2="pores" operator="arithmetic" k2="0.9" k3="0.12" k4="-0.06" result="mixed"/>
+      <feColorMatrix in="mixed" type="matrix" values="0.40 0 0 0 0.06  0.25 0 0 0 0.025  0.14 0 0 0 0.008  0 0 0 0 1"/>
+    </filter>
+    <radialGradient id="vignette" cx="0.5" cy="0.45" r="0.75">
+      <stop offset="0.35" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.72"/>
     </radialGradient>
+    <linearGradient id="lamp" x1="0" y1="0" x2="1" y2="0.3">
+      <stop offset="0" stop-color="#ffd9a0" stop-opacity="0.10"/>
+      <stop offset="0.6" stop-color="#ffd9a0" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="plastic" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="3" result="noise"/>
+      <feDiffuseLighting in="noise" surfaceScale="2.2" diffuseConstant="1.2" lighting-color="#ffffff" result="lit">
+        <feDistantLight azimuth="245" elevation="45"/>
+      </feDiffuseLighting>
+      <feComposite in="lit" in2="SourceGraphic" operator="arithmetic" k1="1.5" result="textured"/>
+      <feComposite in="textured" in2="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="soft" x="-20%" y="-50%" width="140%" height="200%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="contact" x="-5%" y="-100%" width="110%" height="300%">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+    <filter id="inner" x="0" y="0" width="100%" height="100%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+
     <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1b1b1d"/>
-      <stop offset="1" stop-color="#2e2e31"/>
+      <stop offset="0" stop-color="#222225"/>
+      <stop offset="1" stop-color="#38383c"/>
+    </linearGradient>
+    <linearGradient id="top-sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.035"/>
+      <stop offset="0.35" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.75" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.02"/>
     </linearGradient>
     <linearGradient id="vent" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0d0d0e"/>
-      <stop offset="1" stop-color="#161618"/>
+      <stop offset="0" stop-color="#050505"/>
+      <stop offset="1" stop-color="#0e0e0f"/>
     </linearGradient>
     <linearGradient id="rib" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3a3a3e"/>
-      <stop offset="0.5" stop-color="#232326"/>
-      <stop offset="1" stop-color="#0a0a0b"/>
+      <stop offset="0" stop-color="#4a4a4f"/>
+      <stop offset="0.35" stop-color="#2c2c30"/>
+      <stop offset="1" stop-color="#0c0c0d"/>
     </linearGradient>
     <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4a4a4f"/>
-      <stop offset="1" stop-color="#1d1d20"/>
+      <stop offset="0" stop-color="#5c5c62"/>
+      <stop offset="0.5" stop-color="#2e2e32"/>
+      <stop offset="1" stop-color="#18181a"/>
     </linearGradient>
     <linearGradient id="front" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#232326"/>
-      <stop offset="0.6" stop-color="#18181a"/>
-      <stop offset="1" stop-color="#101011"/>
+      <stop offset="0" stop-color="#2a2a2e"/>
+      <stop offset="0.55" stop-color="#1c1c1f"/>
+      <stop offset="1" stop-color="#111113"/>
+    </linearGradient>
+    <linearGradient id="front-sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.05"/>
+      <stop offset="0.3" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000"/>
+      <stop offset="1" stop-color="#2a2a2d"/>
     </linearGradient>
     <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2a0807"/>
-      <stop offset="0.5" stop-color="#170404"/>
-      <stop offset="1" stop-color="#220605"/>
+      <stop offset="0" stop-color="#2e0907"/>
+      <stop offset="0.45" stop-color="#170404"/>
+      <stop offset="1" stop-color="#250605"/>
     </linearGradient>
     <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.045"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
     </linearGradient>
     <linearGradient id="stripe" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#7a0d10"/>
-      <stop offset="0.5" stop-color="#d81e22"/>
+      <stop offset="0.5" stop-color="#e02226"/>
       <stop offset="1" stop-color="#7a0d10"/>
     </linearGradient>
     <linearGradient id="badge" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#d9dadc"/>
-      <stop offset="0.45" stop-color="#8d8f93"/>
-      <stop offset="0.55" stop-color="#6c6e72"/>
-      <stop offset="1" stop-color="#b5b7ba"/>
+      <stop offset="0" stop-color="#eeeff1"/>
+      <stop offset="0.45" stop-color="#9a9ca0"/>
+      <stop offset="0.55" stop-color="#76787c"/>
+      <stop offset="1" stop-color="#c4c6c9"/>
     </linearGradient>
-    <filter id="grain" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="7" result="noise"/>
-      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.09 0" result="speckle"/>
-      <feComposite in="speckle" in2="SourceGraphic" operator="in"/>
-    </filter>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="160%">
-      <feGaussianBlur stdDeviation="9"/>
+    <filter id="brushed" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9 0.01" numOctaves="2" seed="9" result="lines"/>
+      <feColorMatrix in="lines" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.35 0 0 0 -0.1" result="streaks"/>
+      <feComposite in="streaks" in2="SourceGraphic" operator="in" result="clipped"/>
+      <feMerge>
+        <feMergeNode in="SourceGraphic"/>
+        <feMergeNode in="clipped"/>
+      </feMerge>
     </filter>
     <clipPath id="lens-clip">
       <rect x="66" y="176" width="560" height="74" rx="3"/>
     </clipPath>
+    <clipPath id="vent-clip">
+      <path d="M 268 34 L 612 34 L 632 122 L 248 122 Z"/>
+    </clipPath>
   </defs>
 
-  <rect width="880" height="360" fill="url(#backdrop)"/>
+  <rect width="880" height="360" fill="#000" filter="url(#wood)"/>
+  <rect width="880" height="360" fill="url(#lamp)"/>
+  <rect width="880" height="360" fill="url(#vignette)"/>
 
-  <ellipse cx="440" cy="292" rx="430" ry="16" fill="#000" opacity="0.75" filter="url(#shadow)"/>
+  <ellipse cx="440" cy="290" rx="440" ry="20" fill="#000" opacity="0.8" filter="url(#soft)"/>
+  <rect x="46" y="276" width="788" height="8" rx="3" fill="#000" opacity="0.9" filter="url(#contact)"/>
 
-  <path d="M 92 22 L 788 22 Q 798 22 802 30 L 838 140 L 42 140 L 78 30 Q 82 22 92 22 Z" fill="url(#top)"/>
-  <path d="M 92 22 L 788 22 Q 798 22 802 30 L 838 140 L 42 140 L 78 30 Q 82 22 92 22 Z" fill="#fff" filter="url(#grain)"/>
-  <path d="M 92 22.5 L 788 22.5" stroke="#4a4a4e" stroke-width="1" opacity="0.6"/>
+  <path d="M 92 22 L 788 22 Q 798 22 802 30 L 838 140 L 42 140 L 78 30 Q 82 22 92 22 Z" fill="url(#top)" filter="url(#plastic)"/>
+  <path d="M 92 22 L 788 22 Q 798 22 802 30 L 838 140 L 42 140 L 78 30 Q 82 22 92 22 Z" fill="url(#top-sheen)"/>
+  <path d="M 90 22.5 L 790 22.5" stroke="#6a6a70" stroke-width="1" opacity="0.55"/>
+  <path d="M 78.5 30 L 42.5 140" stroke="#55555a" stroke-width="0.8" opacity="0.4"/>
+  <path d="M 801.5 30 L 837.5 140" stroke="#000" stroke-width="0.8" opacity="0.5"/>
 
-  <path d="M 268 34 L 612 34 L 632 122 L 248 122 Z" fill="url(#vent)" stroke="#060606" stroke-width="1.5"/>
-  <g>
+  <path d="M 266 32 L 614 32 L 635 124 L 245 124 Z" fill="#000" opacity="0.6"/>
+  <path d="M 268 34 L 612 34 L 632 122 L 248 122 Z" fill="url(#vent)"/>
+  <g clip-path="url(#vent-clip)">
     <path d="M 274 40 L 606 40 L 607.6 45 L 272.4 45 Z" fill="url(#rib)"/>
     <path d="M 272 50 L 608 50 L 609.7 55.5 L 270.3 55.5 Z" fill="url(#rib)"/>
     <path d="M 270 60.5 L 610 60.5 L 611.8 66.5 L 268.2 66.5 Z" fill="url(#rib)"/>
@@ -81,25 +144,34 @@ SPDX-License-Identifier: GPL-3.0-or-later
     <path d="M 265.2 83 L 614.8 83 L 616.8 90 L 263.2 90 Z" fill="url(#rib)"/>
     <path d="M 262.6 95 L 617.4 95 L 619.5 102.5 L 260.5 102.5 Z" fill="url(#rib)"/>
     <path d="M 260 107.5 L 620 107.5 L 622.2 115.5 L 257.8 115.5 Z" fill="url(#rib)"/>
+    <path d="M 268 34 L 612 34 L 632 122 L 248 122 Z" fill="none" stroke="#000" stroke-width="8" opacity="0.8" filter="url(#inner)"/>
   </g>
+  <path d="M 248.5 122.5 L 631.5 122.5" stroke="#5a5a60" stroke-width="0.8" opacity="0.5"/>
 
-  <rect x="42" y="140" width="796" height="6" fill="url(#lip)"/>
-  <rect x="42" y="146" width="796" height="132" rx="4" fill="url(#front)"/>
-  <rect x="42" y="146" width="796" height="132" rx="4" fill="#fff" filter="url(#grain)"/>
-  <path d="M 42 146.5 L 838 146.5" stroke="#5a5a60" stroke-width="1" opacity="0.7"/>
+  <rect x="42" y="140" width="796" height="7" fill="url(#lip)"/>
+  <rect x="42" y="147" width="796" height="131" rx="4" fill="url(#front)" filter="url(#plastic)"/>
+  <rect x="42" y="147" width="796" height="131" rx="4" fill="url(#front-sheen)"/>
+  <path d="M 42 147.5 L 838 147.5" stroke="#000" stroke-width="1" opacity="0.6"/>
   <path d="M 44 277.5 L 836 277.5" stroke="#000" stroke-width="1"/>
 
-  <rect x="396" y="152" width="88" height="18" rx="2" fill="url(#badge)" stroke="#2a2a2c" stroke-width="0.8"/>
-  <rect x="397.5" y="153.5" width="85" height="15" rx="1.5" fill="none" stroke="#f2f2f3" stroke-width="0.6" opacity="0.7"/>
-  <text x="440" y="165" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" text-anchor="middle" fill="#2a2b2d">softmodem</text>
+  <rect x="395" y="151" width="90" height="20" rx="2.5" fill="#000" opacity="0.7"/>
+  <rect x="396" y="152" width="88" height="18" rx="2" fill="url(#badge)" filter="url(#brushed)"/>
+  <rect x="396.5" y="152.5" width="87" height="17" rx="1.8" fill="none" stroke="#fff" stroke-width="0.6" opacity="0.6"/>
+  <text x="440" y="165.6" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" text-anchor="middle" fill="#fff" opacity="0.55">softmodem</text>
+  <text x="440" y="165" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" text-anchor="middle" fill="#232426">softmodem</text>
 
-  <rect x="62" y="172" width="568" height="82" rx="5" fill="#070707"/>
+  <rect x="61" y="171" width="570" height="84" rx="5.5" fill="url(#bezel)"/>
   <rect x="66" y="176" width="560" height="74" rx="3" fill="url(#lens)"/>
   <rect x="66" y="181" width="560" height="1.6" fill="url(#stripe)"/>
-  <rect x="66" y="176" width="560" height="22" rx="3" fill="url(#gloss)" clip-path="url(#lens-clip)"/>
-  <rect x="66.5" y="176.5" width="559" height="73" rx="3" fill="none" stroke="#000" stroke-opacity="0.8"/>
+  <g clip-path="url(#lens-clip)">
+    <rect x="66" y="176" width="560" height="22" fill="url(#gloss)"/>
+    <path d="M 180 176 L 260 176 L 200 250 L 120 250 Z" fill="url(#sweep)"/>
+    <path d="M 430 176 L 470 176 L 410 250 L 370 250 Z" fill="url(#sweep)" opacity="0.6"/>
+  </g>
+  <rect x="66.5" y="176.5" width="559" height="73" rx="3" fill="none" stroke="#000" stroke-opacity="0.85"/>
+  <path d="M 69 249.5 L 623 249.5" stroke="#ff6a5a" stroke-width="0.6" opacity="0.18"/>
 
-  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="0.6" fill="#c9c9cc" text-anchor="middle">
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="0.6" fill="#d2d2d5" text-anchor="middle">
     <text x="93" y="240">HS</text>
     <text x="139" y="240">AA</text>
     <text x="185" y="240">CD</text>
@@ -114,12 +186,12 @@ SPDX-License-Identifier: GPL-3.0-or-later
     <text x="599" y="240">ARQ</text>
   </g>
 
-  <text x="818" y="214" font-family="Times New Roman, Times, serif" font-size="27" fill="#36a9b4" text-anchor="end" letter-spacing="0.5">softmodem</text>
-  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="8.5" font-weight="700" fill="#d8d8da" text-anchor="end" letter-spacing="0.3">
+  <text x="818" y="214" font-family="Times New Roman, Times, serif" font-size="27" fill="#3fb3be" text-anchor="end" letter-spacing="0.5">softmodem</text>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="8.5" font-weight="700" fill="#dcdcde" text-anchor="end" letter-spacing="0.3">
     <text x="818" y="229">V.90 · V.34 · V.22bis</text>
     <text x="818" y="240">with V.42bis</text>
   </g>
 
-  <rect x="58" y="278" width="40" height="5" rx="2" fill="#080808"/>
-  <rect x="782" y="278" width="40" height="5" rx="2" fill="#080808"/>
+  <rect x="58" y="278" width="40" height="5" rx="2" fill="#060606"/>
+  <rect x="782" y="278" width="40" height="5" rx="2" fill="#060606"/>
 </svg>
