@@ -5418,6 +5418,7 @@ dependencies = [
  "rustix",
  "softmodem-dsp",
  "softmodem-link",
+ "softmodem-panel",
  "softmodem-terminal",
  "softmodem-transport",
  "tokio",

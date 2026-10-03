@@ -18535,6 +18535,10 @@ rec {
             packageId = "softmodem-link";
           }
           {
+            name = "softmodem-panel";
+            packageId = "softmodem-panel";
+          }
+          {
             name = "softmodem-terminal";
             packageId = "softmodem-terminal";
           }
@@ -18656,11 +18660,12 @@ rec {
           {
             name = "tokio";
             packageId = "tokio";
+            optional = true;
             features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
           }
         ];
         features = {
-          "window" = [ "dep:gpui" "dep:gpui_platform" ];
+          "window" = [ "dep:gpui" "dep:gpui_platform" "dep:tokio" ];
         };
         resolvedDefaultFeatures = [ "window" ];
       };

@@ -9,13 +9,12 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-window = ["dep:gpui", "dep:gpui_platform"]
+window = ["dep:gpui", "dep:gpui_platform", "dep:tokio"]
 
 [dependencies]
-tokio.workspace = true
-
 gpui = { workspace = true, optional = true }
 gpui_platform = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [lints]
 workspace = true
