@@ -240,73 +240,12 @@ where
                     self.put_down().await;
                     self.off_hook = false;
                 }
-                Command::Identify(n) => {
-                    if let Some(text) = identify(n) {
-                        self.write(&self.settings.line(&text)).await?;
-                    }
-                }
-                Command::ReadRegister(register) => {
-                    let value = self.settings.register(register);
-                    self.write(&self.settings.line(&format!("{value:03}")))
-                        .await?;
-                }
-                Command::ReadCarrier => {
-                    let modulation = self.settings.modulation;
-                    let text = format!(
-                        "+MS: {},{}",
-                        modulation.carrier.name(),
-                        u8::from(modulation.automode)
-                    );
-                    self.write(&self.settings.line(&text)).await?;
-                }
-                Command::ListCarriers => {
-                    let names: Vec<&str> = Carrier::ALL.iter().map(|c| c.name()).collect();
-                    let text = format!("+MS: ({}),(0,1)", names.join(","));
-                    self.write(&self.settings.line(&text)).await?;
-                }
-                Command::ReadErrorControl => {
-                    let control = self.settings.error_control;
-                    let text = format!(
-                        "+ES: {},{},{}",
-                        control.orig_rqst, control.orig_fbk, control.ans_fbk
-                    );
-                    self.write(&self.settings.line(&text)).await?;
-                }
-                Command::ListErrorControl => {
-                    self.write(&self.settings.line("+ES: (0-3),(0-3),(0-5)"))
-                        .await?;
-                }
-                Command::ReadErrorReport => {
-                    let text = format!("+ER: {}", u8::from(self.settings.error_control.report));
-                    self.write(&self.settings.line(&text)).await?;
-                }
-                Command::ListErrorReport => {
-                    self.write(&self.settings.line("+ER: (0,1)")).await?;
-                }
-                Command::ReadCompression => {
-                    let asked = self.settings.compression;
-                    let text = format!(
-                        "+DS: {},{},{},{}",
-                        asked.direction,
-                        u8::from(asked.required),
-                        asked.max_dict,
-                        asked.max_string
-                    );
-                    self.write(&self.settings.line(&text)).await?;
-                }
-                Command::ListCompression => {
-                    let text = "+DS: (0-3),(0,1),(512-65535),(6-250)";
-                    self.write(&self.settings.line(text)).await?;
-                }
-                Command::ReadCompressionReport => {
-                    let text = format!("+DR: {}", u8::from(self.settings.compression.report));
-                    self.write(&self.settings.line(&text)).await?;
-                }
-                Command::ListCompressionReport => {
-                    self.write(&self.settings.line("+DR: (0,1)")).await?;
-                }
                 other => {
-                    self.settings.apply(&other);
+                    if let Some(text) = information(&self.settings, &other) {
+                        self.write(&self.settings.line(&text)).await?;
+                    } else {
+                        self.settings.apply(&other);
+                    }
                 }
             }
         }
@@ -732,6 +671,54 @@ fn identify(n: u8) -> Option<String> {
         ),
         _ => None,
     }
+}
+
+/// The text that `command` answers with before `OK`, if it asks for any.
+fn information(settings: &Settings, command: &Command) -> Option<String> {
+    Some(match *command {
+        Command::Identify(n) => return identify(n),
+        Command::ReadRegister(register) => format!("{:03}", settings.register(register)),
+        Command::ReadCarrier => {
+            let modulation = settings.modulation;
+            format!(
+                "+MS: {},{}",
+                modulation.carrier.name(),
+                u8::from(modulation.automode)
+            )
+        }
+        Command::ListCarriers => {
+            let names: Vec<&str> = Carrier::ALL.iter().map(|c| c.name()).collect();
+            format!("+MS: ({}),(0,1)", names.join(","))
+        }
+        Command::ReadErrorControl => {
+            let control = settings.error_control;
+            format!(
+                "+ES: {},{},{}",
+                control.orig_rqst, control.orig_fbk, control.ans_fbk
+            )
+        }
+        Command::ListErrorControl => "+ES: (0-3),(0-3),(0-5)".into(),
+        Command::ReadErrorReport => {
+            format!("+ER: {}", u8::from(settings.error_control.report))
+        }
+        Command::ListErrorReport => "+ER: (0,1)".into(),
+        Command::ReadCompression => {
+            let asked = settings.compression;
+            format!(
+                "+DS: {},{},{},{}",
+                asked.direction,
+                u8::from(asked.required),
+                asked.max_dict,
+                asked.max_string
+            )
+        }
+        Command::ListCompression => "+DS: (0-3),(0,1),(512-65535),(6-250)".into(),
+        Command::ReadCompressionReport => {
+            format!("+DR: {}", u8::from(settings.compression.report))
+        }
+        Command::ListCompressionReport => "+DR: (0,1)".into(),
+        _ => return None,
+    })
 }
 
 /// What a line starts with in `role` under `settings`.
