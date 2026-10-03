@@ -1,0 +1,125 @@
+<!--
+SPDX-FileCopyrightText: 2026 Wiktor Bryk <contact@itsvic.dev>
+
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="720" viewBox="0 0 880 360">
+  <defs>
+    <radialGradient id="backdrop" cx="0.5" cy="0.35" r="0.85">
+      <stop offset="0" stop-color="#2b2c2f"/>
+      <stop offset="1" stop-color="#0c0c0d"/>
+    </radialGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1b1d"/>
+      <stop offset="1" stop-color="#2e2e31"/>
+    </linearGradient>
+    <linearGradient id="vent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d0d0e"/>
+      <stop offset="1" stop-color="#161618"/>
+    </linearGradient>
+    <linearGradient id="rib" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3a3e"/>
+      <stop offset="0.5" stop-color="#232326"/>
+      <stop offset="1" stop-color="#0a0a0b"/>
+    </linearGradient>
+    <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a4a4f"/>
+      <stop offset="1" stop-color="#1d1d20"/>
+    </linearGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232326"/>
+      <stop offset="0.6" stop-color="#18181a"/>
+      <stop offset="1" stop-color="#101011"/>
+    </linearGradient>
+    <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a0807"/>
+      <stop offset="0.5" stop-color="#170404"/>
+      <stop offset="1" stop-color="#220605"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="stripe" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7a0d10"/>
+      <stop offset="0.5" stop-color="#d81e22"/>
+      <stop offset="1" stop-color="#7a0d10"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9dadc"/>
+      <stop offset="0.45" stop-color="#8d8f93"/>
+      <stop offset="0.55" stop-color="#6c6e72"/>
+      <stop offset="1" stop-color="#b5b7ba"/>
+    </linearGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="7" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.09 0" result="speckle"/>
+      <feComposite in="speckle" in2="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <clipPath id="lens-clip">
+      <rect x="66" y="176" width="560" height="74" rx="3"/>
+    </clipPath>
+  </defs>
+
+  <rect width="880" height="360" fill="url(#backdrop)"/>
+
+  <ellipse cx="440" cy="292" rx="430" ry="16" fill="#000" opacity="0.75" filter="url(#shadow)"/>
+
+  <path d="M 92 22 L 788 22 Q 798 22 802 30 L 838 140 L 42 140 L 78 30 Q 82 22 92 22 Z" fill="url(#top)"/>
+  <path d="M 92 22 L 788 22 Q 798 22 802 30 L 838 140 L 42 140 L 78 30 Q 82 22 92 22 Z" fill="#fff" filter="url(#grain)"/>
+  <path d="M 92 22.5 L 788 22.5" stroke="#4a4a4e" stroke-width="1" opacity="0.6"/>
+
+  <path d="M 268 34 L 612 34 L 632 122 L 248 122 Z" fill="url(#vent)" stroke="#060606" stroke-width="1.5"/>
+  <g>
+    <path d="M 274 40 L 606 40 L 607.6 45 L 272.4 45 Z" fill="url(#rib)"/>
+    <path d="M 272 50 L 608 50 L 609.7 55.5 L 270.3 55.5 Z" fill="url(#rib)"/>
+    <path d="M 270 60.5 L 610 60.5 L 611.8 66.5 L 268.2 66.5 Z" fill="url(#rib)"/>
+    <path d="M 267.6 71.5 L 612.4 71.5 L 614.2 78 L 265.8 78 Z" fill="url(#rib)"/>
+    <path d="M 265.2 83 L 614.8 83 L 616.8 90 L 263.2 90 Z" fill="url(#rib)"/>
+    <path d="M 262.6 95 L 617.4 95 L 619.5 102.5 L 260.5 102.5 Z" fill="url(#rib)"/>
+    <path d="M 260 107.5 L 620 107.5 L 622.2 115.5 L 257.8 115.5 Z" fill="url(#rib)"/>
+  </g>
+
+  <rect x="42" y="140" width="796" height="6" fill="url(#lip)"/>
+  <rect x="42" y="146" width="796" height="132" rx="4" fill="url(#front)"/>
+  <rect x="42" y="146" width="796" height="132" rx="4" fill="#fff" filter="url(#grain)"/>
+  <path d="M 42 146.5 L 838 146.5" stroke="#5a5a60" stroke-width="1" opacity="0.7"/>
+  <path d="M 44 277.5 L 836 277.5" stroke="#000" stroke-width="1"/>
+
+  <rect x="396" y="152" width="88" height="18" rx="2" fill="url(#badge)" stroke="#2a2a2c" stroke-width="0.8"/>
+  <rect x="397.5" y="153.5" width="85" height="15" rx="1.5" fill="none" stroke="#f2f2f3" stroke-width="0.6" opacity="0.7"/>
+  <text x="440" y="165" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" text-anchor="middle" fill="#2a2b2d">softmodem</text>
+
+  <rect x="62" y="172" width="568" height="82" rx="5" fill="#070707"/>
+  <rect x="66" y="176" width="560" height="74" rx="3" fill="url(#lens)"/>
+  <rect x="66" y="181" width="560" height="1.6" fill="url(#stripe)"/>
+  <rect x="66" y="176" width="560" height="22" rx="3" fill="url(#gloss)" clip-path="url(#lens-clip)"/>
+  <rect x="66.5" y="176.5" width="559" height="73" rx="3" fill="none" stroke="#000" stroke-opacity="0.8"/>
+
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="0.6" fill="#c9c9cc" text-anchor="middle">
+    <text x="93" y="240">HS</text>
+    <text x="139" y="240">AA</text>
+    <text x="185" y="240">CD</text>
+    <text x="231" y="240">OH</text>
+    <text x="277" y="240">RD</text>
+    <text x="323" y="240">SD</text>
+    <text x="369" y="240">TR</text>
+    <text x="415" y="240">MR</text>
+    <text x="461" y="240">RS</text>
+    <text x="507" y="240">CS</text>
+    <text x="553" y="240">SYN</text>
+    <text x="599" y="240">ARQ</text>
+  </g>
+
+  <text x="818" y="214" font-family="Times New Roman, Times, serif" font-size="27" fill="#36a9b4" text-anchor="end" letter-spacing="0.5">softmodem</text>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="8.5" font-weight="700" fill="#d8d8da" text-anchor="end" letter-spacing="0.3">
+    <text x="818" y="229">V.90 · V.34 · V.22bis</text>
+    <text x="818" y="240">with V.42bis</text>
+  </g>
+
+  <rect x="58" y="278" width="40" height="5" rx="2" fill="#080808"/>
+  <rect x="782" y="278" width="40" height="5" rx="2" fill="#080808"/>
+</svg>
