@@ -60,6 +60,10 @@ impl SerialPort for TcpPort {
     fn takes_another(&self) -> bool {
         true
     }
+
+    fn terminal_ready(&self) -> bool {
+        self.computer.is_some()
+    }
 }
 
 impl AsyncRead for TcpPort {
@@ -118,5 +122,28 @@ impl AsyncWrite for TcpPort {
 
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn the_terminal_is_ready_while_a_computer_is_connected() {
+        let mut port = TcpPort::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+        assert!(!port.terminal_ready());
+        let mut computer = TcpStream::connect(port.local_addr().unwrap())
+            .await
+            .unwrap();
+        computer.write_all(b"AT\r").await.unwrap();
+        let mut buf = [0; 3];
+        port.read_exact(&mut buf).await.unwrap();
+        assert!(port.terminal_ready());
+        drop(computer);
+        assert_eq!(port.read(&mut buf).await.unwrap(), 0);
+        assert!(!port.terminal_ready());
     }
 }
