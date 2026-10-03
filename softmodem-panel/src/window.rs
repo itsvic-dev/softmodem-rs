@@ -9,10 +9,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, BoxShadow, Context, Div, Hsla, Image, ImageFormat, Render, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, div, hsla, img, prelude::*, px, size,
+    App, Bounds, BoxShadow, Context, Div, Hsla, Image, ImageFormat, Render, RenderImage,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, div, hsla, img, prelude::*, px, size,
 };
 use tokio::sync::watch;
+use tracing::warn;
 
 use crate::lights::Lights;
 use crate::{Status, text};
@@ -66,7 +67,7 @@ struct Panel {
     status: watch::Receiver<Status>,
     lights: Lights,
     summary: Vec<String>,
-    case: Arc<Image>,
+    case: Option<Arc<RenderImage>>,
 }
 
 impl Panel {
@@ -82,14 +83,19 @@ impl Panel {
             }
         })
         .detach();
+        // Drawn now, as an image gpui loads by itself shows only at the next redraw.
+        let case = Image::from_bytes(
+            ImageFormat::Svg,
+            include_bytes!("../assets/case.svg").to_vec(),
+        )
+        .to_image_data(cx.svg_renderer())
+        .inspect_err(|error| warn!(%error, "could not draw the case"))
+        .ok();
         Self {
             status,
             lights: Lights::new(&shown, now),
             summary: text::summary(&shown, now),
-            case: Arc::new(Image::from_bytes(
-                ImageFormat::Svg,
-                include_bytes!("../assets/case.svg").to_vec(),
-            )),
+            case,
         }
     }
 
@@ -114,7 +120,11 @@ impl Render for Panel {
             .relative()
             .size_full()
             .bg(hsla(0.0, 0.0, 0.05, 1.0))
-            .child(img(self.case.clone()).absolute().w(px(WIDTH)).h(px(HEIGHT)))
+            .children(
+                self.case
+                    .clone()
+                    .map(|case| img(case).absolute().w(px(WIDTH)).h(px(HEIGHT))),
+            )
             .children(lights)
             .child(summary(&self.summary))
     }

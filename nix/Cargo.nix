@@ -18666,9 +18666,14 @@ rec {
             optional = true;
             features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" ];
           }
+          {
+            name = "tracing";
+            packageId = "tracing";
+            optional = true;
+          }
         ];
         features = {
-          "window" = [ "dep:gpui" "dep:gpui_platform" "dep:tokio" ];
+          "window" = [ "dep:gpui" "dep:gpui_platform" "dep:tokio" "dep:tracing" ];
         };
         resolvedDefaultFeatures = [ "window" ];
       };
