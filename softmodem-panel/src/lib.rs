@@ -6,6 +6,9 @@
 
 use std::time::Instant;
 
+pub mod lights;
+pub mod text;
+
 /// What the front panel shows, as the modem last left it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[expect(clippy::struct_excessive_bools, reason = "one for each light")]
