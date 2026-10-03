@@ -174,6 +174,8 @@ where
     async fn computer_sent(&mut self, bytes: &[u8]) -> io::Result<()> {
         if matches!(self.mode, Mode::Data { .. }) {
             trace!(bytes = %Hex(bytes), "from the computer");
+        } else {
+            trace!(text = %bytes.escape_ascii(), "from the computer");
         }
         for &byte in bytes {
             match &mut self.mode {
@@ -690,6 +692,9 @@ where
     async fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
         if bytes.is_empty() {
             return Ok(());
+        }
+        if !matches!(self.mode, Mode::Data { .. }) {
+            trace!(text = %bytes.escape_ascii(), "to the computer");
         }
         self.port.write_all(bytes).await?;
         self.port.flush().await
