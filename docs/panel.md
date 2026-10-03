@@ -60,7 +60,7 @@ gpui must own the main thread on macOS, so with `--panel` the tokio runtime
 runs on a second thread. The desk, the case and its printing are one SVG,
 drawn at twice its size so that it stays sharp on a Retina screen. Its
 textures are SVG filters: lit noise for the moulded plastic, and stretched,
-displaced noise for the wood. It is drawn once, before the window opens,
-because an image that gpui loads by itself appears only at the next redraw,
-and an idle panel does not redraw. The lights and the tape are drawn over
-it.
+displaced noise for the wood. The panel draws it once, on a background
+thread as the window opens, and fades it in. It does not let gpui load the
+image by itself, because such an image appears only at the next redraw, and
+an idle panel does not redraw. The lights and the tape are drawn over it.
