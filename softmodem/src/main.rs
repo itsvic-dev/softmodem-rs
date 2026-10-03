@@ -11,6 +11,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use softmodem::replay::{Recording, Script};
 use softmodem::{Journal, Modem, Role};
+use softmodem_panel::Status;
 use softmodem_terminal::cuse::CusePort;
 use softmodem_terminal::port::{Plain, SerialPort};
 use softmodem_terminal::pty::Pty;
@@ -22,6 +23,9 @@ use softmodem_transport::speaker::Speaker;
 use softmodem_transport::wire::{Impairment, Wire};
 use softmodem_transport::{Call, Transport, wav};
 use tokio::signal::unix::{SignalKind, signal};
+#[cfg(feature = "panel")]
+use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::Writer;
@@ -202,6 +206,25 @@ struct ModemArgs {
     /// Play each call on the default sound output, as ATL and ATM set.
     #[arg(long)]
     speaker: bool,
+    /// Show the modem's front panel in a window. Closing it stops the modem.
+    #[cfg(feature = "panel")]
+    #[arg(long)]
+    panel: bool,
+}
+
+#[cfg(feature = "panel")]
+impl ModemArgs {
+    fn port_name(&self) -> String {
+        if let Some(path) = self.pty.as_ref().or(self.serial.as_ref()) {
+            path.display().to_string()
+        } else if let Some(name) = &self.cuse {
+            format!("/dev/{name}")
+        } else if let Some(address) = self.tcp {
+            address.to_string()
+        } else {
+            "stdin".into()
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -225,10 +248,57 @@ fn main() -> anyhow::Result<()> {
     log.with_writer(std::io::stderr).init();
 
     let runtime = tokio::runtime::Runtime::new()?;
-    let result = runtime.block_on(run(command));
+    #[cfg(feature = "panel")]
+    if let Some(title) = panel_title(&command) {
+        return with_panel(runtime, command, title);
+    }
+    let result = runtime.block_on(run(command, None, shutdown_signal()));
     // A pending stdin read blocks a normal shutdown until the next line of input.
     runtime.shutdown_background();
     result
+}
+
+#[cfg(feature = "panel")]
+fn panel_title(command: &Command) -> Option<String> {
+    let modem = match command {
+        Command::Wire(args) => &args.modem,
+        Command::Sip(args) => &args.modem,
+        Command::Replay(_) => return None,
+    };
+    modem
+        .panel
+        .then(|| format!("softmodem on {}", modem.port_name()))
+}
+
+// The window takes the main thread, as macOS requires, and the modem runs beside it.
+#[cfg(feature = "panel")]
+fn with_panel(
+    runtime: tokio::runtime::Runtime,
+    command: Command,
+    title: String,
+) -> anyhow::Result<()> {
+    let (panel, status) = watch::channel(Status::default());
+    let (close, closed) = oneshot::channel::<()>();
+    let (finish, finished) = oneshot::channel::<()>();
+    let modem = std::thread::spawn(move || {
+        let stop = async {
+            tokio::select! {
+                () = shutdown_signal() => {}
+                _ = closed => {}
+            }
+        };
+        let result = runtime.block_on(run(command, Some(panel), stop));
+        let _ = finish.send(());
+        runtime.shutdown_background();
+        result
+    });
+    softmodem_panel::window::run(title, status, async {
+        let _ = finished.await;
+    });
+    let _ = close.send(());
+    modem
+        .join()
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("the modem thread panicked")))
 }
 
 // Seconds into the call being replayed.
@@ -297,7 +367,11 @@ fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
     name.into()
 }
 
-async fn run(command: Command) -> anyhow::Result<()> {
+async fn run(
+    command: Command,
+    panel: Option<watch::Sender<Status>>,
+    stop: impl Future<Output = ()>,
+) -> anyhow::Result<()> {
     match command {
         Command::Replay(args) => replay(&args),
         Command::Wire(args) => {
@@ -315,7 +389,7 @@ async fn run(command: Command) -> anyhow::Result<()> {
                 gateway_noise: args.gateway_noise,
             };
             let wire = Wire::bind(args.local, args.peer, impairment).await?;
-            serve(wire, args.modem).await
+            serve(wire, args.modem, panel, stop).await
         }
         Command::Sip(args) => {
             let sip = Sip::register(Account {
@@ -326,12 +400,17 @@ async fn run(command: Command) -> anyhow::Result<()> {
             })
             .await
             .context("registering")?;
-            Box::pin(serve(sip, args.modem)).await
+            Box::pin(serve(sip, args.modem, panel, stop)).await
         }
     }
 }
 
-async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()> {
+async fn serve(
+    transport: impl Transport,
+    args: ModemArgs,
+    panel: Option<watch::Sender<Status>>,
+    stop: impl Future<Output = ()>,
+) -> anyhow::Result<()> {
     let profile = softmodem::profile(&args.init).map_err(anyhow::Error::msg)?;
     if let Some(directory) = &args.dump {
         std::fs::create_dir_all(directory)
@@ -347,34 +426,34 @@ async fn serve(transport: impl Transport, args: ModemArgs) -> anyhow::Result<()>
         profile,
         dump: args.dump,
         speaker,
+        panel,
     };
 
     if let Some(link) = args.pty {
         let pty = Pty::open(Some(&link))?;
         info!(path = %pty.path().display(), link = %link.display(), "serial port ready");
-        station.run(pty).await
+        station.run(pty, stop).await
     } else if let Some(name) = args.cuse {
         let port = CusePort::open(&name).context("opening /dev/cuse")?;
         info!(device = %format!("/dev/{name}"), "serial port ready");
-        station.run(port).await
+        station.run(port, stop).await
     } else if let Some(address) = args.tcp {
         let port = TcpPort::bind(address)
             .await
             .with_context(|| format!("listening on {address}"))?;
         info!(address = %port.local_addr()?, "serial port ready");
-        station.run(port).await
+        station.run(port, stop).await
     } else if let Some(path) = args.serial {
         let port = TtyPort::open(&path, args.baud)
             .with_context(|| format!("opening {}", path.display()))?;
         info!(path = %path.display(), baud = args.baud, "serial port ready");
-        station.run(port).await
+        station.run(port, stop).await
     } else {
-        station
-            .run(Plain {
-                input: tokio::io::stdin(),
-                output: tokio::io::stdout(),
-            })
-            .await
+        let port = Plain {
+            input: tokio::io::stdin(),
+            output: tokio::io::stdout(),
+        };
+        station.run(port, stop).await
     }
 }
 
@@ -383,10 +462,15 @@ struct Station<T> {
     profile: Settings,
     dump: Option<PathBuf>,
     speaker: Option<Arc<Speaker>>,
+    panel: Option<watch::Sender<Status>>,
 }
 
 impl<T: Transport> Station<T> {
-    async fn run(self, port: impl SerialPort) -> anyhow::Result<()> {
+    async fn run(
+        self,
+        port: impl SerialPort,
+        stop: impl Future<Output = ()>,
+    ) -> anyhow::Result<()> {
         let dump = self.dump;
         let speaker = self.speaker.clone();
         let on_call = move |call: Call, role: Role| {
@@ -404,7 +488,10 @@ impl<T: Transport> Station<T> {
         if let Some(speaker) = self.speaker {
             modem = modem.with_speaker(move |gain| speaker.set_gain(gain));
         }
-        modem.run(shutdown_signal()).await?;
+        if let Some(panel) = self.panel {
+            modem = modem.with_panel(panel);
+        }
+        modem.run(stop).await?;
         Ok(())
     }
 }

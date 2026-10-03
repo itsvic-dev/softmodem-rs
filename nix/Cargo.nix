@@ -18568,7 +18568,10 @@ rec {
             features = [ "io-std" "io-util" "macros" "net" "rt-multi-thread" "signal" "sync" "time" "test-util" ];
           }
         ];
-
+        features = {
+          "panel" = [ "softmodem-panel/window" ];
+        };
+        resolvedDefaultFeatures = [ "panel" ];
       };
       "softmodem-dsp" = rec {
         crateName = "softmodem-dsp";
