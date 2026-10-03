@@ -9,8 +9,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, BoxShadow, Context, Div, Hsla, Image, ImageFormat, Render, RenderImage,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, hsla, img, prelude::*, px, size,
+    App, Bounds, BoxShadow, Context, Div, FontWeight, Hsla, Image, ImageFormat, Render,
+    RenderImage, TitlebarOptions, Window, WindowBounds, WindowOptions, div, hsla, img,
+    linear_color_stop, linear_gradient, prelude::*, px, size,
 };
 use tokio::sync::watch;
 use tracing::warn;
@@ -171,7 +172,41 @@ fn mix(from: Hsla, to: Hsla, amount: f32) -> Hsla {
     )
 }
 
+// A strip of embossing tape, its letters pressed up from behind.
 fn summary(items: &[String]) -> Div {
+    let words = items.join("  ·  ").to_uppercase();
+    let (across, down) = (14.0, 5.0);
+    let tape = div()
+        .relative()
+        .px(px(across))
+        .py(px(down))
+        .rounded(px(1.5))
+        .bg(linear_gradient(
+            180.0,
+            linear_color_stop(hsla(0.0, 0.0, 0.16, 1.0), 0.0),
+            linear_color_stop(hsla(0.0, 0.0, 0.05, 1.0), 0.6),
+        ))
+        .shadow(vec![
+            BoxShadow::new(px(0.0), px(2.0), hsla(0.0, 0.0, 0.0, 0.65)).blur_radius(px(4.0)),
+            BoxShadow::new(px(0.0), px(1.0), hsla(0.0, 0.0, 1.0, 0.12)).inset(),
+        ])
+        .font_family("Menlo")
+        .font_weight(FontWeight::BOLD)
+        .text_size(px(11.0))
+        .child(
+            div()
+                .absolute()
+                .left(px(across))
+                .top(px(down + 1.0))
+                .text_color(hsla(0.0, 0.0, 0.0, 0.9))
+                .child(words.clone()),
+        )
+        .child(
+            div()
+                .relative()
+                .text_color(hsla(0.0, 0.0, 0.9, 1.0))
+                .child(words),
+        );
     div()
         .absolute()
         .left(px(0.0))
@@ -179,9 +214,5 @@ fn summary(items: &[String]) -> Div {
         .w(px(WIDTH))
         .flex()
         .justify_center()
-        .gap(px(22.0))
-        .font_family("Menlo")
-        .text_size(px(11.5))
-        .text_color(hsla(0.0, 0.0, 0.62, 1.0))
-        .children(items.iter().map(|item| div().child(item.clone())))
+        .child(tape)
 }
