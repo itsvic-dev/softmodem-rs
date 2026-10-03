@@ -12,6 +12,7 @@ use softmodem_dsp::dtmf::DtmfSender;
 use softmodem_dsp::pump::{Modulation, Offer, Role};
 use softmodem_link::v42bis::{Directions, Parameters};
 use softmodem_link::{CompressionSetup, Setup};
+use softmodem_panel::{Connection, Status};
 use softmodem_terminal::command::{self, Command, Dial, Query};
 use softmodem_terminal::escape::{EscapeDetector, Timeout};
 use softmodem_terminal::line::{Input, LineEditor};
@@ -20,6 +21,7 @@ use softmodem_terminal::settings::{Carrier, Dcd, ResultCode, Settings};
 use softmodem_transport::{Call, DialError, Incoming, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::watch;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep, sleep_until};
 use tracing::{debug, info, trace, warn};
 
@@ -68,6 +70,10 @@ pub struct Modem<T: Transport, P, F> {
     ring_off: Option<Instant>,
     speaker: Option<Box<dyn FnMut(f32) + Send>>,
     speaker_gain: Option<f32>,
+    panel: Option<watch::Sender<Status>>,
+    connection: Option<Connection>,
+    received: u64,
+    sent: u64,
 }
 
 fn frame_clock() -> Interval {
@@ -104,7 +110,18 @@ where
             ring_off: None,
             speaker: None,
             speaker_gain: None,
+            panel: None,
+            connection: None,
+            received: 0,
+            sent: 0,
         }
+    }
+
+    /// Keeps `panel` up to date with what the front panel shows.
+    #[must_use]
+    pub fn with_panel(mut self, panel: watch::Sender<Status>) -> Self {
+        self.panel = Some(panel);
+        self
     }
 
     /// Calls `set_gain` with the speaker volume each time `L`, `M` or the
@@ -130,6 +147,7 @@ where
 
         loop {
             self.sync_speaker();
+            self.sync_panel();
             let in_data = matches!(self.mode, Mode::Data { .. });
             let want_input = !in_data || self.line.as_ref().is_some_and(Line::wants_input);
             let read_size = if in_data { DATA_READ } else { COMMAND_READ };
@@ -188,6 +206,7 @@ where
                         Instant::now().into_std(),
                         &mut data,
                     );
+                    self.sent += data.len() as u64;
                     if let Some(line) = &mut self.line {
                         line.send(&data, Instant::now().into_std());
                     }
@@ -515,6 +534,7 @@ where
         }
         if matches!(self.mode, Mode::Data { .. }) && !received.bytes.is_empty() {
             trace!(bytes = %Hex(&received.bytes), "to the computer");
+            self.received += received.bytes.len() as u64;
             self.write(&received.bytes).await?;
         }
         Ok(())
@@ -525,6 +545,14 @@ where
         let (protocol, compression) = (received.protocol(), received.compression_name());
         if let Some(line) = &self.line {
             info!("{}", line.connect_log(received));
+            self.connection = Some(Connection {
+                since: Instant::now().into_std(),
+                receive_rate: bit_rate,
+                transmit_rate: line.transmit_rate().unwrap_or(bit_rate),
+                error_control: received.reliable,
+                compression: received.compression.is_some(),
+                retransmissions: 0,
+            });
         }
         self.mode = Mode::Data {
             escape: EscapeDetector::new(Instant::now().into_std()),
@@ -585,6 +613,7 @@ where
         }
         self.mode = Mode::Command;
         self.carrier_lost_at = None;
+        self.connection = None;
     }
 
     async fn hang_up_with(&mut self, code: ResultCode) -> io::Result<()> {
@@ -621,6 +650,30 @@ where
             self.speaker_gain = Some(gain);
             set_gain(gain);
         }
+    }
+
+    fn sync_panel(&self) {
+        let Some(panel) = &self.panel else {
+            return;
+        };
+        let status = Status {
+            terminal_ready: self.port.terminal_ready(),
+            auto_answer: self.settings.register(0) > 0,
+            ringing: self.ring_off.is_some(),
+            off_hook: self.off_hook || self.line.is_some(),
+            stage: self.line.as_ref().and_then(Line::stage).map(str::to_owned),
+            connection: self.connection.map(|connection| Connection {
+                retransmissions: self.line.as_ref().map_or(0, Line::retransmissions),
+                ..connection
+            }),
+            received: self.received,
+            sent: self.sent,
+        };
+        panel.send_if_modified(|shown| {
+            let changed = *shown != status;
+            *shown = status;
+            changed
+        });
     }
 
     async fn report(&mut self, code: ResultCode) -> io::Result<()> {

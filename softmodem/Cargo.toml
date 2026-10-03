@@ -8,9 +8,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+panel = ["softmodem-panel/window"]
+
 [dependencies]
 softmodem-dsp.workspace = true
 softmodem-link.workspace = true
+softmodem-panel.workspace = true
 softmodem-terminal.workspace = true
 softmodem-transport.workspace = true
 

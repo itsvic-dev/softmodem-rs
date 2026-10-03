@@ -35,6 +35,11 @@ pub trait SerialPort: AsyncRead + AsyncWrite + Unpin {
     fn takes_another(&self) -> bool {
         false
     }
+
+    /// Whether a computer is on the port now, as DTR would say.
+    fn terminal_ready(&self) -> bool {
+        true
+    }
 }
 
 /// A port with no control lines, such as stdin and stdout.

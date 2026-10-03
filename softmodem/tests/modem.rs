@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use softmodem::replay::{Recording, Replayed, Script, replay};
 use softmodem::{Journal, Modem, Role, profile};
+use softmodem_panel::Status;
 use softmodem_terminal::port::SerialPort;
 use softmodem_terminal::settings::Settings;
 use softmodem_transport::loopback::{self, Loopback};
@@ -18,7 +19,7 @@ use softmodem_transport::{Call, wav};
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf, duplex,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep, timeout};
 
 const PATIENCE: Duration = Duration::from_secs(120);
@@ -154,10 +155,28 @@ fn attach(transport: Loopback, settings: Settings) -> Computer {
     attach_with(transport, settings, |call, _| (call, None))
 }
 
+fn attach_with_panel(
+    transport: Loopback,
+    settings: Settings,
+) -> (Computer, watch::Receiver<Status>) {
+    let (panel, status) = watch::channel(Status::default());
+    let computer = attach_to(transport, settings, |call, _| (call, None), Some(panel));
+    (computer, status)
+}
+
 fn attach_with(
     transport: Loopback,
     settings: Settings,
     on_call: impl FnMut(Call, Role) -> (Call, Option<Journal>) + Send + 'static,
+) -> Computer {
+    attach_to(transport, settings, on_call, None)
+}
+
+fn attach_to(
+    transport: Loopback,
+    settings: Settings,
+    on_call: impl FnMut(Call, Role) -> (Call, Option<Journal>) + Send + 'static,
+    panel: Option<watch::Sender<Status>>,
 ) -> Computer {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (computer, modem_side) = duplex(4096);
@@ -170,8 +189,11 @@ fn attach_with(
     };
     let speaker = Arc::<Mutex<Vec<f32>>>::default();
     let gains = speaker.clone();
-    let modem = Modem::new(transport, port, settings, on_call)
+    let mut modem = Modem::new(transport, port, settings, on_call)
         .with_speaker(move |gain| gains.lock().unwrap().push(gain));
+    if let Some(panel) = panel {
+        modem = modem.with_panel(panel);
+    }
     tokio::spawn(async move { modem.run(std::future::pending()).await.unwrap() });
     Computer {
         port: computer,
@@ -302,6 +324,40 @@ fn two_modems(caller: &str, answerer: &str) -> (Computer, Computer) {
         attach(a, profile(caller).unwrap()),
         attach(b, profile(answerer).unwrap()),
     )
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_panel_follows_a_call() {
+    let (a, b) = loopback::pair();
+    let (mut a, status) = attach_with_panel(a, profile("ATE0+MS=V22").unwrap());
+    let mut b = attach(b, profile("ATE0S0=1").unwrap());
+    a.command("AT").await;
+    a.expect("OK\r\n").await;
+    assert!(!status.borrow().off_hook);
+    a.command("ATDT0300").await;
+    a.expect("CONNECT 1200\r\n").await;
+    b.expect("CONNECT 1200\r\n").await;
+    a.send(b"hello").await;
+    b.expect("hello").await;
+    b.send(b"hi").await;
+    a.expect("hi").await;
+    {
+        let shown = status.borrow();
+        assert!(shown.off_hook);
+        assert!(!shown.training());
+        let connection = shown.connection.expect("no carrier on the panel");
+        assert_eq!(connection.receive_rate, 1200);
+        assert!(connection.error_control);
+        assert_eq!((shown.sent, shown.received), (5, 2));
+    }
+    a.escape().await;
+    a.command("ATH").await;
+    a.expect("OK\r\n").await;
+    a.command("AT").await;
+    a.expect("OK\r\n").await;
+    let shown = status.borrow();
+    assert!(!shown.off_hook);
+    assert_eq!(shown.connection, None);
 }
 
 #[tokio::test(start_paused = true)]

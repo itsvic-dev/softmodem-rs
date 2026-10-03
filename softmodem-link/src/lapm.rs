@@ -82,6 +82,7 @@ pub struct Lapm {
     rb: bool,
     /// I frames from N(S) = V(A) on, sent but not acknowledged.
     sent: VecDeque<Vec<u8>>,
+    resent: u64,
     queue: VecDeque<u8>,
     received: Vec<u8>,
     conditions: Conditions,
@@ -128,6 +129,7 @@ impl Lapm {
             vr: 0,
             rb: false,
             sent: VecDeque::new(),
+            resent: 0,
             queue: VecDeque::new(),
             received: Vec::new(),
             conditions: Conditions::default(),
@@ -155,6 +157,12 @@ impl Lapm {
     #[must_use]
     pub fn n401(&self) -> u16 {
         self.n401_tx
+    }
+
+    /// I frames sent again, after a REJ or in timer recovery.
+    #[must_use]
+    pub fn retransmissions(&self) -> u64 {
+        self.resent
     }
 
     /// Queues data from the DTE.
@@ -517,7 +525,9 @@ impl Lapm {
             return None;
         }
         let index = usize::from(self.vs.wrapping_sub(self.va) % MODULUS);
-        if index == self.sent.len() {
+        if index < self.sent.len() {
+            self.resent += 1;
+        } else {
             if self.sent.len() >= usize::from(self.k_tx) || self.queue.is_empty() {
                 return None;
             }
@@ -637,6 +647,8 @@ mod tests {
         });
         assert_eq!(pair.answerer.take_received(), data);
         assert_eq!(rejects, 1);
+        assert!(pair.caller.retransmissions() > 0);
+        assert_eq!(pair.answerer.retransmissions(), 0);
     }
 
     #[test]

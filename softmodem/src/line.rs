@@ -205,6 +205,20 @@ impl<C> Line<C> {
         self.handshake.is_some()
     }
 
+    pub(crate) fn stage(&self) -> Option<&str> {
+        self.handshake
+            .as_ref()
+            .map(|h| h.stage.as_str())
+            .filter(|stage| !stage.is_empty())
+    }
+
+    pub(crate) fn retransmissions(&self) -> u64 {
+        self.handshake
+            .as_ref()
+            .and_then(|h| h.link.as_ref())
+            .map_or(0, Link::retransmissions)
+    }
+
     pub(crate) fn bit_rate(&self) -> Option<u32> {
         self.handshake.as_ref().map(|h| h.pump.bit_rate())
     }
