@@ -27,6 +27,7 @@ const LIGHT_SPACING: f32 = 46.0;
 const LIGHT_Y: f32 = 207.0;
 const LIGHT_SIZE: (f32, f32) = (24.0, 7.0);
 const TEXT_Y: f32 = 304.0;
+const CASE_FADE: f32 = 0.3;
 
 /// Shows the panel for `status` in a window titled `title`, until the window
 /// closes or `done` completes. It takes the thread over, which on macOS must
@@ -68,7 +69,7 @@ struct Panel {
     status: watch::Receiver<Status>,
     lights: Lights,
     summary: Vec<String>,
-    case: Option<Arc<RenderImage>>,
+    case: Option<(Arc<RenderImage>, Instant)>,
 }
 
 impl Panel {
@@ -84,19 +85,38 @@ impl Panel {
             }
         })
         .detach();
-        // Drawn now, as an image gpui loads by itself shows only at the next redraw.
-        let case = Image::from_bytes(
-            ImageFormat::Svg,
-            include_bytes!("../assets/case.svg").to_vec(),
-        )
-        .to_image_data(cx.svg_renderer())
-        .inspect_err(|error| warn!(%error, "could not draw the case"))
-        .ok();
+        // An image gpui loads by itself shows only at the next redraw, which an idle panel never makes.
+        let renderer = cx.svg_renderer();
+        cx.spawn(async move |this, cx| {
+            let drawn = cx
+                .background_executor()
+                .spawn(async move {
+                    Image::from_bytes(
+                        ImageFormat::Svg,
+                        include_bytes!("../assets/case.svg").to_vec(),
+                    )
+                    .to_image_data(renderer)
+                })
+                .await;
+            match drawn {
+                Ok(case) => this
+                    .update(cx, |panel, cx| {
+                        panel.case = Some((case, Instant::now()));
+                        cx.notify();
+                    })
+                    .ok(),
+                Err(error) => {
+                    warn!(%error, "could not draw the case");
+                    None
+                }
+            };
+        })
+        .detach();
         Self {
             status,
             lights: Lights::new(&shown, now),
             summary: text::summary(&shown, now),
-            case,
+            case: None,
         }
     }
 
@@ -106,9 +126,15 @@ impl Panel {
         let summary = text::summary(&status, now);
         let changed = self.lights.update(&status, now) || summary != self.summary;
         self.summary = summary;
-        if changed {
+        if changed || self.case_opacity(now) < 1.0 {
             cx.notify();
         }
+    }
+
+    fn case_opacity(&self, now: Instant) -> f32 {
+        self.case.as_ref().map_or(0.0, |(_, drawn)| {
+            (now.saturating_duration_since(*drawn).as_secs_f32() / CASE_FADE).min(1.0)
+        })
     }
 }
 
@@ -120,12 +146,14 @@ impl Render for Panel {
         div()
             .relative()
             .size_full()
-            .bg(hsla(0.0, 0.0, 0.05, 1.0))
-            .children(
-                self.case
-                    .clone()
-                    .map(|case| img(case).absolute().w(px(WIDTH)).h(px(HEIGHT))),
-            )
+            .bg(hsla(0.07, 0.35, 0.06, 1.0))
+            .children(self.case.as_ref().map(|(case, _)| {
+                img(case.clone())
+                    .absolute()
+                    .w(px(WIDTH))
+                    .h(px(HEIGHT))
+                    .opacity(self.case_opacity(Instant::now()))
+            }))
             .children(lights)
             .child(summary(&self.summary))
     }
